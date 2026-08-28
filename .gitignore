@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local secrets and machine-specific environment files. Commit only the template.
+.env
+.env.*
+!.env.example
+
+# Competition inputs and generated artifacts must not be committed.
+data/
+*.tar.gz
+artifacts/
+runs/*/artifacts/
+runs/*/stdout/
+*.npz
+generated_experiments/

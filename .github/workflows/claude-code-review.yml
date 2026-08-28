@@ -12,6 +12,16 @@ jobs:
       pull-requests: read
       issues: read
       id-token: write
+    env:
+      # GLM Coding Plan (z.ai global) via its Anthropic-compatible endpoint.
+      # Auth flows through ANTHROPIC_AUTH_TOKEN; the anthropic_api_key input
+      # below must still be populated for the action to start.
+      ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+      ANTHROPIC_AUTH_TOKEN: ${{ secrets.GLM_API_KEY }}
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: glm-5.3-flash[1m]
+      ANTHROPIC_DEFAULT_SONNET_MODEL: glm-5.3[1m]
+      ANTHROPIC_DEFAULT_OPUS_MODEL: glm-5.3[1m]
+      API_TIMEOUT_MS: 3000000
     steps:
       - uses: actions/checkout@v6
         with:
@@ -19,7 +29,7 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.GLM_API_KEY }}
           plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
           plugins: "code-review@claude-code-plugins"
           prompt: "/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"

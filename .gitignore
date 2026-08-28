@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Competition inputs and generated artifacts must not be committed.
+data/
+*.tar.gz
+artifacts/
+runs/*/artifacts/
+runs/*/stdout/
+*.npz
+

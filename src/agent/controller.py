@@ -156,9 +156,26 @@ def main() -> None:
         default=Path("configs/baseline.json"),
         help="Path to an agent run configuration.",
     )
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        default=None,
+        help="Resume an existing autonomous research run directory.",
+    )
     args = parser.parse_args()
     config_path = args.config if args.config.is_absolute() else REPO_ROOT / args.config
-    run_agent(config_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if config.get("mode") == "research":
+        from .research_controller import run_research_agent
+
+        resume_dir = None
+        if args.resume is not None:
+            resume_dir = args.resume if args.resume.is_absolute() else REPO_ROOT / args.resume
+        run_research_agent(config_path, resume_dir=resume_dir)
+    else:
+        if args.resume is not None:
+            raise ValueError("--resume is supported only for research-mode configs.")
+        run_agent(config_path)
 
 
 if __name__ == "__main__":

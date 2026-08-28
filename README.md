@@ -15,10 +15,16 @@ The first implementation provides:
 - random, item-popularity, and official-FM validation baselines
 - JSONL iteration logs, best-checkpoint tracking, reflection, convergence, and
   global budget enforcement
+- a single role-based autonomous research loop using Researcher, Critic, Builder,
+  and Debugger passes over shared persisted memory
+- OpenAI Responses API structured outputs, optional primary-source web-search
+  fallback, retry handling, and exact token accounting
+- restricted agent-generated candidates with trusted metric computation
+- BPR and same-user group-softmax research cards and audited sampling utilities
 
 ## Setup
 
-Python 3.9+ and NumPy are required:
+Python 3.9+, NumPy, and the OpenAI Python SDK are required:
 
 ```powershell
 python -m pip install -r requirements.txt
@@ -40,6 +46,8 @@ From the repository root:
 ```powershell
 python -m src.agent.controller --config configs/baseline.json
 ```
+
+This command remains fully deterministic and does not require an API key.
 
 The baseline ladder should be approximately:
 
@@ -65,12 +73,82 @@ Each run creates `runs/<run-id>/` containing:
 python -m unittest discover -s tests -v
 ```
 
-## Next experiment
+The test suite uses a scripted provider and does not make paid API calls.
 
-After reproducing the official FM baseline, the first improvement should be a
-pairwise BPR objective using positive/negative interactions from the same user.
-This aligns optimization with the ranking metrics and avoids repeating the
-starter kit's known unproductive capacity/static-feature ablations.
+## Run the autonomous ranking-loss researcher
+
+Create your local environment file from the committed template, then add your
+API key to `.env`:
+
+```powershell
+Copy-Item .env.example .env
+# Edit .env and set OPENAI_API_KEY, then run:
+python -m src.agent.controller --config configs/ranking_losses.json
+```
+
+`.env` is loaded automatically and ignored by Git. An `OPENAI_API_KEY` already
+set in PowerShell or CI takes precedence over the file.
+
+The research run uses `gpt-5.5` with medium reasoning and low verbosity by
+default. Edit `configs/ranking_losses.json` to use a model available to your
+OpenAI project. It has an explicit 150,000-token research budget, eight training
+attempts, two debugger repairs per candidate, and the official six-hour ceiling.
+
+The run first reuses a passing official-FM run; if none exists it automatically
+reproduces the baseline gate. It must execute at least one BPR and one
+group-softmax candidate before convergence is allowed. An improvement greater
+than `0.002` queues exact seed-1 and seed-2 replications.
+
+Resume an interrupted research run with:
+
+```powershell
+python -m src.agent.controller `
+  --config configs/ranking_losses.json `
+  --resume runs/<research-run-id>
+```
+
+The agent never reads `data/judge/`. Final judge prediction generation remains a
+separate, explicit user-authorized step.
+
+### Generated candidate contract
+
+The Builder writes only under `generated_experiments/<run-id>/<iteration>/`.
+Candidate code defines:
+
+```python
+def run(context, parameters) -> CandidateOutput:
+    ...
+```
+
+Candidates receive encoded train features/labels, validation features without
+labels, and a trusted validation callback for early stopping. They return scores,
+checkpoint arrays, a training trace, and diagnostics. The trusted worker checks
+shape and finiteness and computes final GAUC/nDCG@5 itself; candidate-reported
+metric values are ignored.
+
+### Research audit files
+
+Research runs add:
+
+- `state.json` — atomic resumable state
+- `experiment_tree.json` — branch, family, parameters, outcome, and parent
+- `research_memory.jsonl` — role-call records and recovery events
+- `resources.json` — time, tokens, iterations, interventions, and GPU-hours
+- `passes/` — structured prompts and outputs for each role
+- `interventions.json` — explicit human-intervention ledger
+
+Generated source is statically checked before writing/execution. Judge paths,
+official evaluator imports, file/network/process access, dynamic execution, path
+traversal, and non-approved imports are rejected. Candidate unit tests run before
+training, and the Debugger gets at most two hypothesis-preserving repairs.
+
+## First research agenda
+
+The initial approved method catalog contains pairwise BPR and same-user
+group-softmax. The Researcher chooses the order and parameters, the Critic checks
+evidence and leakage, and the Builder generates each implementation. After both
+families have coverage, the deterministic policy permits exploitation,
+replication, or convergence.
 
 ## Latest verified baseline
 

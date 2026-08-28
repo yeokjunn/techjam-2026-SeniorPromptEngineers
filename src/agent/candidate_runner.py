@@ -142,6 +142,25 @@ class CandidateExecutor:
             metrics = {key: float(value) for key, value in payload["metrics"].items()}
             if any(not math.isfinite(value) for value in metrics.values()):
                 raise ValueError("Worker returned a non-finite trusted metric.")
+            test_scores_status = str(payload.get("test_scores_status", "not_required"))
+            if test_scores_status not in ("ok", "not_required"):
+                # Keep metrics so the ledger retains the number, but never
+                # promote: observe_success only runs for status == "success".
+                return ExperimentOutcome(
+                    status="failed",
+                    metrics=metrics,
+                    duration_seconds=duration,
+                    error=(
+                        "CandidateOutput.test_scores must be a finite 1-D float "
+                        "array of length 170588 (one score per "
+                        "data.load()['test'] row, same order)."
+                    ),
+                    recovery="Rejected before promotion; the previous best is intact.",
+                    stdout_path=str(stdout_path.relative_to(self.repo_root)),
+                    stderr_path=str(stderr_path.relative_to(self.repo_root)),
+                    command=command,
+                    failure_class="missing_test_scores",
+                )
             return ExperimentOutcome(
                 status="success",
                 metrics=metrics,
@@ -152,6 +171,7 @@ class CandidateExecutor:
                 stdout_path=str(stdout_path.relative_to(self.repo_root)),
                 stderr_path=str(stderr_path.relative_to(self.repo_root)),
                 command=command,
+                test_scores_path=payload.get("test_scores_path"),
             )
         except subprocess.TimeoutExpired:
             return ExperimentOutcome(

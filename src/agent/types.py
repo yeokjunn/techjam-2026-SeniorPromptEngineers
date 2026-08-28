@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .families import family_names
+
 
 def _required(value: dict[str, Any], name: str, expected_type):
     if name not in value or not isinstance(value[name], expected_type):
@@ -47,6 +49,7 @@ class ExperimentOutcome:
     stderr_path: str | None = None
     command: list[str] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    failure_class: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -106,7 +109,7 @@ class ResearchDecision:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ResearchDecision":
         family = str(_required(value, "family", str))
-        if family not in {"bpr", "group_softmax"}:
+        if family not in family_names():
             raise ValueError(f"Unsupported research family: {family}")
         action = str(_required(value, "action", str))
         if action not in {"explore", "exploit", "replicate"}:
@@ -235,6 +238,7 @@ class RunState:
     manual_interventions: int = 0
     stop_reason: str | None = None
     wall_clock_seconds: float = 0.0
+    data_card_path: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunState":

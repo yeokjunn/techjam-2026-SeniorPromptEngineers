@@ -7,6 +7,7 @@
   "method_catalog": "research/methods",
   "official_validation_baseline": 0.6016,
   "baseline_config": "configs/baseline.json",
+  "data_card_path": null,
   "llm": {
     "provider": "openai",
     "model": "gpt-5.5",
@@ -20,7 +21,8 @@
     "max_retries": 2
   },
   "budgets": {
-    "max_iterations": 8,
+    "max_iterations": 50,
+    "max_training_attempts": 50,
     "max_wall_clock_seconds": 21600,
     "experiment_timeout_seconds": 900,
     "test_timeout_seconds": 60,

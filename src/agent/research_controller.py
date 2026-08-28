@@ -9,12 +9,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..evaluation.gate import run_gate
 from .audit import ResearchAudit
 from .candidate_runner import CandidateExecutor, CandidateWorkspace, repaired_manifest
 from .catalog import MethodCatalog
 from .controller import REPO_ROOT, _resolve_repo_path, _source_manifest, run_agent
-from .llm import LLMProvider, OpenAIResponsesProvider
+from .llm import LLMProvider, build_provider
 from .policy import SearchPolicy, coverage_complete, required_family, sanitize_parameters
+from .report import render_reports
 from .roles import ResearchRoles
 from .types import (
     CandidateManifest,
@@ -81,7 +83,7 @@ class ResearchLoop:
         self.budgets = config["budgets"]
         self.convergence = config["convergence"]
         llm_config = config["llm"]
-        self.provider = provider or OpenAIResponsesProvider(llm_config)
+        self.provider = provider or build_provider(config)
         self.baseline_summary = baseline_summary or _ensure_baseline(config)
         baseline_primary = float(self.baseline_summary["best"]["metrics"]["primary"])
 
@@ -424,6 +426,15 @@ class ResearchLoop:
                 "candidate_dir": self.state.best_candidate_dir,
             },
         }
+        gate_result = run_gate(
+            self.run_dir,
+            Path(self.state.best_candidate_dir)
+            if self.state.best_candidate_dir
+            else self.run_dir,
+            self.data_dir,
+            REPO_ROOT / "kuairand-starter-kit",
+        )
+        summary["gate"] = asdict(gate_result)
         self.audit.write_json_atomic(self.run_dir / "summary.json", summary)
         self.audit.write_json_atomic(
             self.run_dir / "best.json", summary["best"]
@@ -445,6 +456,7 @@ class ResearchLoop:
                 for node in self.state.nodes
             ],
         )
+        render_reports(self.run_dir)
         print(json.dumps(summary, indent=2))
         return self.run_dir
 

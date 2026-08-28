@@ -320,3 +320,17 @@ class ScriptedProvider:
             retries=0,
             usage=usage,
         )
+
+
+def build_provider(config: dict[str, Any]) -> LLMProvider:
+    """Build the LLM provider named by ``config["llm"]["provider"]``."""
+    llm_config = config["llm"]
+    provider = str(llm_config.get("provider", "openai"))
+    if provider == "openai":
+        return OpenAIResponsesProvider(llm_config)
+    if provider == "scripted":
+        script_path = Path(llm_config["script_path"])
+        if not script_path.is_absolute():
+            script_path = PROJECT_ROOT / script_path
+        return ScriptedProvider(json.loads(script_path.read_text(encoding="utf-8")))
+    raise ValueError(f"Unsupported LLM provider: {provider!r}")

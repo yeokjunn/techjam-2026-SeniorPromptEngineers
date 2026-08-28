@@ -15,6 +15,7 @@ class CandidateContext:
     valid_users: tuple[str, ...]
     field_dimension: int
     evaluate_validation: Callable[[np.ndarray], dict[str, float]]
+    test_x: np.ndarray | None = None
 
 
 @dataclass
@@ -23,4 +24,5 @@ class CandidateOutput:
     checkpoint_state: dict[str, np.ndarray]
     training_trace: list[dict] = field(default_factory=list)
     diagnostics: dict = field(default_factory=dict)
+    test_scores: np.ndarray | None = None
 

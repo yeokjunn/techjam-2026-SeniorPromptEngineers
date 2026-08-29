@@ -63,6 +63,59 @@ class SafetyTests(unittest.TestCase):
             passed, output = executor.test(workspace)
             self.assertTrue(passed, output)
 
+    def test_builtins_open_subscript_is_rejected(self):
+        with self.assertRaises(SafetyViolation):
+            validate_source("__builtins__['open']('x.npz')")
+
+    def test_builtins_import_subscript_is_rejected(self):
+        with self.assertRaises(SafetyViolation):
+            validate_source("__builtins__['__import__']('os')")
+
+    def test_bare_dunder_name_is_rejected(self):
+        with self.assertRaises(SafetyViolation):
+            validate_source("leaked = __builtins__")
+
+    def test_aliased_forbidden_attribute_is_rejected(self):
+        source = """
+import numpy as np
+f = np.load
+f('x.npz')
+"""
+        with self.assertRaises(SafetyViolation):
+            validate_source(source)
+
+    def test_literal_dataset_path_is_rejected(self):
+        for source in (
+            "P = 'data/KuaiRand-Pure/data/log_standard_4_22_to_5_08_pure.csv'",
+            "P = 'log_random_4_22_to_5_08_pure'",
+            "P = 'KuaiRand-Pure'",
+            "P = '/data/'",
+        ):
+            with self.subTest(source=source), self.assertRaises(SafetyViolation):
+                validate_source(source)
+
+    def test_relative_import_is_rejected(self):
+        with self.assertRaises(SafetyViolation):
+            validate_source("from . import candidate", test_file=True)
+
+    def test_main_guard_and_string_methods_are_accepted(self):
+        source = """
+from __future__ import annotations
+
+import unittest
+
+import numpy.random
+
+
+def normalise(name):
+    return name.replace('_', '-')
+
+
+if __name__ == '__main__':
+    unittest.main()
+"""
+        validate_source(source, test_file=True)
+
 
 if __name__ == "__main__":
     unittest.main()

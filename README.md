@@ -21,6 +21,8 @@ The first implementation provides:
   fallback, retry handling, and exact token accounting
 - restricted agent-generated candidates with trusted metric computation
 - BPR and same-user group-softmax research cards and audited sampling utilities
+- coarse live-stage observability, structured agent decision notes, and immutable
+  per-iteration candidate patches for the local dashboard
 
 ## Setup
 
@@ -110,6 +112,43 @@ python -m src.agent.controller `
 The agent never reads `data/judge/`. Final judge prediction generation remains a
 separate, explicit user-authorized step.
 
+## Run the read-only research dashboard
+
+Install the optional UI dependencies:
+
+```powershell
+python -m pip install -r requirements-ui.txt
+```
+
+Optionally generate the aggregate-only train/validation EDA profile:
+
+```powershell
+python -m src.ui.profile_data --config configs/ui.json
+```
+
+Then launch the dashboard from the repository root:
+
+```powershell
+python -m streamlit run streamlit_app.py
+```
+
+Launching the nested file directly is also supported:
+
+```powershell
+python -m streamlit run src/ui/app.py
+```
+
+The Pipeline tab refreshes every five seconds only for a running research run.
+Its translucent execution overlay shows the active coarse stage, elapsed time,
+structured Agent Notes, finalized candidate changes, errors/repairs, and the
+recent transition timeline. It does not stream raw reasoning or full prompts.
+
+The dashboard is read-only: it cannot launch, resume, cancel, reconfigure, or
+authorize a run. It discovers artifacts under `runs/`, reads the explicit
+aggregate EDA profile under `artifacts/ui/`, and rejects judge-owned paths. Its
+CSV uploader performs local schema/finiteness checks only; judge row alignment
+is truthfully reported as unchecked.
+
 ### Generated candidate contract
 
 The Builder writes only under `generated_experiments/<run-id>/<iteration>/`.
@@ -136,6 +175,9 @@ Research runs add:
 - `resources.json` — time, tokens, iterations, interventions, and GPU-hours
 - `passes/` — structured prompts and outputs for each role
 - `interventions.json` — explicit human-intervention ledger
+- `activity.json` — atomic snapshot of the latest coarse stage transition
+- `activity.jsonl` — append-only live-stage transition timeline
+- `changes/` — per-iteration file/line summaries and reproducible candidate patches
 
 Generated source is statically checked before writing/execution. Judge paths,
 official evaluator imports, file/network/process access, dynamic execution, path

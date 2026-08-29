@@ -167,6 +167,23 @@ class ResearchLoopTests(unittest.TestCase):
             self.assertEqual({node["family"] for node in state["nodes"]}, {"bpr", "group_softmax"})
             self.assertEqual(summary["manual_interventions"], 0)
             self.assertTrue((run_dir / "experiment_tree.json").is_file())
+            activity = [
+                json.loads(line)
+                for line in (run_dir / "activity.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            for stage in (
+                "researcher",
+                "critic_preflight",
+                "builder",
+                "safety_tests",
+                "training_evaluation",
+                "critic_postflight",
+                "persistence",
+            ):
+                statuses = {item["status"] for item in activity if item["stage"] == stage}
+                self.assertIn("active", statuses, stage)
+                self.assertIn("completed", statuses, stage)
+            self.assertTrue((run_dir / "changes" / "001_candidate_bpr.patch").is_file())
             self.assertEqual(len(provider.calls), 8)
 
     def test_debugger_repairs_are_capped_at_two(self):

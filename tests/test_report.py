@@ -89,6 +89,12 @@ ITERATION_SUCCESS = {
         "recovery": None,
         "epoch_trace": [],
         "diagnostics": {},
+        # Absolute and Windows-shaped on purpose: the committed baseline run
+        # carries paths in exactly this form.
+        "test_scores_path": (
+            "C:\\Users\\Admin\\OneDrive - Nanyang Technological University"
+            "\\techjam\\runs\\test_run\\artifacts\\002_bpr_lr0005\\test_scores.npy"
+        ),
     },
     "postflight": {
         "approved": True,
@@ -414,6 +420,19 @@ class ReportTests(unittest.TestCase):
             self.assertIn("timeout", journal.lower())
             repair_mentioned = "repair" in journal.lower() or "1 repair" in journal.lower()
             self.assertTrue(repair_mentioned, "repairs not mentioned in journal")
+
+    def test_journal_links_the_test_scores_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            run_dir = _build_fixture(Path(d))
+            render_reports(run_dir)
+            journal = (run_dir / "journal.md").read_text(encoding="utf-8")
+            self.assertIn("test_scores.npy", journal)
+            # Anchored on the run directory, so the author's home dir is gone.
+            self.assertIn(
+                "test_run/artifacts/002_bpr_lr0005/test_scores.npy", journal
+            )
+            self.assertNotIn("OneDrive", journal)
+            self.assertNotIn("C:\\", journal)
 
     def test_results_reports_gate_deltas_tokens_and_interventions(self):
         with tempfile.TemporaryDirectory() as d:

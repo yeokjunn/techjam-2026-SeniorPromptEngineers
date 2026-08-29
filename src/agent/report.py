@@ -93,6 +93,18 @@ def _make_diff(parent_src: str | None, child_src: str, child_path: str,
     return lines
 
 
+def _display_path(raw: str, run_dir_name: str) -> str:
+    # Recorded paths are absolute and belong to whoever ran the experiment — the
+    # committed baseline run carries Windows OneDrive paths. Anchor on the run
+    # directory so the journal stays readable and drops the author's home dir.
+    parts = [p for p in re.split(r"[\\/]+", str(raw)) if p]
+    if not parts:
+        return str(raw)
+    if run_dir_name in parts:
+        return "/".join(parts[parts.index(run_dir_name):])
+    return "/".join(parts[-3:])
+
+
 def _fmt_delta(val: float | None) -> str:
     if val is None:
         return _NR
@@ -289,6 +301,13 @@ def _render_journal(records: list[dict], run_dir: Path, run_config: dict | None,
                 d_best = _fmt_delta(val - best_before if val is not None and key == "primary" else None)
                 d_base = _fmt_delta(delta_baseline if key == "primary" else None)
                 lines.append(f"| {key} | {val_str} | {d_best} | {d_base} |")
+            lines.append("")
+
+        test_scores_path = outcome.get("test_scores_path")
+        if test_scores_path:
+            lines.append(
+                f"**Test scores:** `{_display_path(test_scores_path, run_dir.name)}`"
+            )
             lines.append("")
 
         failure_class = outcome.get("failure_class")

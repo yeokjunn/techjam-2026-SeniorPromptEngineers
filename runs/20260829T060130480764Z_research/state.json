@@ -1,0 +1,63 @@
+{
+  "baseline_primary": 0.6014695167541504,
+  "best_artifact_path": "C:/Users/Admin/OneDrive - Nanyang Technological University/2026_projects/tiktok_techjam_clean/techjam-2026-SeniorPromptEngineers/runs/20260829T060130480764Z_research/artifacts/001_offline_bpr_smoke_candidate/model.npz",
+  "best_candidate_dir": "generated_experiments\\20260829T060130480764Z_research\\001_offline_bpr_smoke_candidate",
+  "best_experiment_id": "offline_bpr_smoke_candidate",
+  "best_metrics": {
+    "GAUC": 0.6678825616836548,
+    "nDCG@5": 0.5359782576560974,
+    "primary": 0.6019303798675537,
+    "rows": 124909.0,
+    "users": 22377.0
+  },
+  "data_card_path": null,
+  "iteration_count": 1,
+  "manual_interventions": 0,
+  "meaningful_best": 0.6014695167541504,
+  "nodes": [
+    {
+      "action": "explore",
+      "artifact_path": "C:/Users/Admin/OneDrive - Nanyang Technological University/2026_projects/tiktok_techjam_clean/techjam-2026-SeniorPromptEngineers/runs/20260829T060130480764Z_research/artifacts/001_offline_bpr_smoke_candidate/model.npz",
+      "candidate_dir": "generated_experiments\\20260829T060130480764Z_research\\001_offline_bpr_smoke_candidate",
+      "experiment_id": "offline_bpr_smoke_candidate",
+      "family": "bpr",
+      "hypothesis_id": "offline_bpr_smoke",
+      "iteration": 1,
+      "metrics": {
+        "GAUC": 0.6678825616836548,
+        "nDCG@5": 0.5359782576560974,
+        "primary": 0.6019303798675537,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 3,
+        "k": 16,
+        "learning_rate": 0.001,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "seed": 0
+      },
+      "parent_experiment": null,
+      "replicated_from": null,
+      "status": "success"
+    }
+  ],
+  "pending_replications": [],
+  "proposal_attempts": 1,
+  "run_id": "20260829T060130480764Z_research",
+  "stagnant_iterations": 1,
+  "started_at": "2026-08-29T06:01:30.483410+00:00",
+  "status": "completed",
+  "stop_reason": "iteration_budget_reached",
+  "token_usage": {
+    "cached_tokens": 0,
+    "input_tokens": 970,
+    "output_tokens": 1470,
+    "total_tokens": 2440,
+    "web_search_calls": 0
+  },
+  "training_attempts": 1,
+  "wall_clock_seconds": 141.30838450000192
+}

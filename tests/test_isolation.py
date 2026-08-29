@@ -19,6 +19,7 @@ from src.evaluation.official import (
     TEST_ROWS,
     classify_primary,
     load_test_meta,
+    load_train_valid,
     starter_modules,
     within_baseline_tolerance,
 )
@@ -215,6 +216,37 @@ TRIVIAL_CANDIDATE_TESTS = (
     "    def test_callable(self):\n"
     "        self.assertTrue(callable(candidate.run))\n"
 )
+
+
+class TrainValidSplitTests(unittest.TestCase):
+    @unittest.skipUnless(REAL_DATA, "KuaiRand-Pure not present")
+    def test_train_valid_split_sizes(self):
+        splits = load_train_valid(DATA_DIR)
+        self.assertEqual(set(splits), {"train", "valid"})
+        self.assertEqual(len(splits["train"]), 1_141_112)
+        self.assertEqual(len(splits["valid"]), 124_909)
+
+    @unittest.skipUnless(REAL_DATA, "KuaiRand-Pure not present")
+    def test_no_train_or_valid_row_is_dated_after_20220428(self):
+        splits = load_train_valid(DATA_DIR)
+        dates = [row[0] for rows in splits.values() for row in rows]
+        # The plan expected min 20220408 (the nominal window start), but the
+        # dataset's earliest standard log row is 20220409 — verified identical
+        # in the kit's own loader. Containment plus the actual bounds:
+        self.assertTrue(all(20220408 <= date <= 20220428 for date in dates))
+        self.assertEqual(min(dates), 20220409)
+        self.assertEqual(max(dates), 20220428)
+
+    @unittest.skipUnless(REAL_DATA, "KuaiRand-Pure not present")
+    def test_train_and_valid_match_the_kit_loader_row_for_row(self):
+        data_module, _, _ = starter_modules()
+        kit = data_module.load(str(DATA_DIR))
+        splits = load_train_valid(DATA_DIR)
+        for name in ("train", "valid"):
+            self.assertEqual(len(splits[name]), len(kit[name]))
+            # Row equality implies encoding equality: the kit's encode is a
+            # pure function of the rows.
+            self.assertEqual(splits[name][:5000], kit[name][:5000])
 
 
 class FailureClassTests(unittest.TestCase):

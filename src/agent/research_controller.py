@@ -582,15 +582,48 @@ class ResearchLoop:
                 "candidate_dir": self.state.best_candidate_dir,
             },
         }
-        gate_result = run_gate(
-            self.run_dir,
-            Path(self.state.best_candidate_dir)
+        # I-1. Two separate concerns, both the loop's and neither the gate's.
+        #
+        # ``best_candidate_dir`` is stored **repo-relative** (``_execute`` at
+        # :363, copied onto the state by ``policy.py:87``), so the old
+        # ``Path(...)`` resolved it against the *process* working directory and
+        # the gate looked for ``test_scores.npy`` under wherever the run was
+        # launched from. ``_resolve_repo_path`` is this module's own resolver —
+        # the one ``__init__`` uses for every configured path — and it is also
+        # correct for the absolute spelling ``_execute``'s ``except ValueError``
+        # fallback produces for a workspace outside the repo.
+        #
+        # The ``try`` is containment in depth, not a fix for a fault in B's
+        # module: ``gate.py:218`` is deliberately written so it cannot raise, but
+        # ``summary.json`` is the one file the organizers read, and its survival
+        # must not depend on another module keeping that promise. Keyword
+        # arguments so a signature change cannot silently reorder the four paths.
+        node_dir = (
+            _resolve_repo_path(self.state.best_candidate_dir)
             if self.state.best_candidate_dir
-            else self.run_dir,
-            self.data_dir,
-            REPO_ROOT / "kuairand-starter-kit",
+            else self.run_dir
         )
-        summary["gate"] = asdict(gate_result)
+        try:
+            gate_result = run_gate(
+                run_dir=self.run_dir,
+                node_dir=node_dir,
+                data_dir=self.data_dir,
+                kit_dir=REPO_ROOT / "kuairand-starter-kit",
+            )
+            summary["gate"] = asdict(gate_result)
+        except Exception as exc:
+            # ``reason`` is not in the brief's literal dict, but B's gate sets one
+            # on *every* error it returns (``gate.py:107-108``, and ``"unexpected"``
+            # for a fault in its own wrapper at ``:231``), so consumers may treat
+            # ``details["reason"]`` as always present. This is the one error shape
+            # B cannot produce from their side; containment is more useful when it
+            # is indistinguishable from the producer's real errors. ``error`` stays
+            # the brief's ``str(exc)``.
+            summary["gate"] = {
+                "status": "error",
+                "submission_path": None,
+                "details": {"reason": "unexpected", "error": str(exc)},
+            }
         self.audit.write_json_atomic(self.run_dir / "summary.json", summary)
         self.audit.write_json_atomic(
             self.run_dir / "best.json", summary["best"]
@@ -612,7 +645,21 @@ class ResearchLoop:
                 for node in self.state.nodes
             ],
         )
-        render_reports(self.run_dir)
+        # Reporting is the last thing the run does and the least of what it owes:
+        # every artifact above is already on disk, so a rendering fault must cost
+        # the reports and nothing else. It is recorded rather than swallowed, and
+        # in ``research_memory.jsonl`` because ``summary.json`` is already written.
+        try:
+            render_reports(self.run_dir)
+        except Exception as exc:
+            self.audit.append_jsonl(
+                self.run_dir / "research_memory.jsonl",
+                {
+                    "type": "report_error",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
         print(json.dumps(summary, indent=2))
         return self.run_dir
 

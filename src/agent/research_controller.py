@@ -399,10 +399,6 @@ class ResearchLoop:
         )
         self.session_started = time.monotonic()
         self.consecutive_harness_errors = 0
-        # Logged-once flag for the mid-run convergence line, not run state: a
-        # resume re-logs it, which costs a duplicate journal line and no
-        # correctness (`summary.json` is recomputed from the nodes).
-        self._official_converged_iteration: int | None = None
         initialized = self.audit.start_activity(
             0,
             "initializing",
@@ -979,35 +975,22 @@ class ResearchLoop:
                     self.state.stop_reason = "llm_token_budget_reached"
                     break
                 if kind == "proposal":
-                    # The model's fault and already re-prompted: drop this
-                    # proposal, keep the run.
                     self.consecutive_harness_errors = 0
                     self._record_failed_proposal(iteration, exc, "proposal_failed")
                     continue
-                self.consecutive_harness_errors += 1
-                if self.consecutive_harness_errors >= int(
-                    self.budgets.get("max_consecutive_harness_errors", 3)
-                ):
-                    self.audit.write_json_atomic(
-                        self.run_dir / "error.json",
-                        {
-                            "error": str(exc),
-                            "error_type": type(exc).__name__,
-                            "kind": kind,
-                            "iteration": iteration,
-                            "consecutive_harness_errors": self.consecutive_harness_errors,
-                        },
+                if kind == "harness":
+                    self.consecutive_harness_errors += 1
+                    max_consecutive = int(
+                        self.budgets.get("max_consecutive_harness_errors", 3)
                     )
-                    failed = self.audit.start_activity(
-                        self.state.iteration_count,
-                        "persistence",
-                        objective="Record an unexpected controller failure without corrupting the previous best.",
-                    )
-                    self.audit.finish_activity(failed, status="failed", error=str(exc))
-                    self.state.stop_reason = "harness_error_breaker"
-                    break
-                self._record_failed_proposal(iteration, exc, "harness_error")
-                continue
+                    if self.consecutive_harness_errors >= max_consecutive:
+                        self.state.stop_reason = "harness_error_breaker"
+                        self.audit.write_json_atomic(
+                            self.run_dir / "error.json", {"error": str(exc)}
+                        )
+                        break
+                    self._record_failed_proposal(iteration, exc, "harness_error")
+                    continue
 
         self.state.status = "completed"
         self._save()

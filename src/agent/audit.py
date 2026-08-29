@@ -47,7 +47,11 @@ class ResearchAudit:
     ) -> None:
         self.write_json_atomic(
             self.passes_dir / f"{iteration:03d}_{role}_{sequence}.json",
-            {"prompt": prompt, "result": result.to_record()},
+            {
+                "recorded_at": utc_now(),
+                "prompt": prompt,
+                "result": result.to_record(),
+            },
         )
         memory_record = result.to_record()
         memory_record["iteration"] = iteration

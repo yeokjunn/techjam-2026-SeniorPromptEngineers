@@ -12,6 +12,7 @@ from .models import (
     ChangeSummary,
     DashboardConfig,
     IterationSnapshot,
+    RolePass,
     RunSnapshot,
     StageTransition,
     SubmissionCheck,
@@ -19,6 +20,15 @@ from .models import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+ROLE_EXECUTION_ORDER = {
+    "researcher": 0,
+    "researcher_web": 1,
+    "critic_preflight": 2,
+    "builder": 3,
+    "debugger": 4,
+    "critic_postflight": 5,
+}
 
 
 def _resolve(value: str | Path, base: Path = REPO_ROOT) -> Path:
@@ -136,20 +146,154 @@ def _transition(value: dict[str, Any]) -> StageTransition:
     )
 
 
-def _iteration(value: dict[str, Any]) -> IterationSnapshot:
+def load_role_passes(run_dir: Path | None, iteration: int) -> tuple[RolePass, ...]:
+    if run_dir is None:
+        return ()
+    passes_dir = run_dir / "passes"
+    if not passes_dir.is_dir():
+        return ()
+    pattern = f"{iteration:03d}_*.json"
+    entries: list[tuple[Path, dict[str, Any], str, int]] = []
+    for file_path in passes_dir.glob(pattern):
+        data = _read_json(file_path, {}) or {}
+        if not isinstance(data, dict):
+            continue
+        res = data.get("result") or {}
+        role = str(
+            res.get("role")
+            or data.get("role")
+            or file_path.stem.split("_", 1)[-1]
+        )
+        try:
+            modified_ns = file_path.stat().st_mtime_ns
+        except OSError:
+            modified_ns = 0
+        entries.append((file_path, data, role, modified_ns))
+
+    if entries and all(item[1].get("recorded_at") for item in entries):
+        entries.sort(
+            key=lambda item: (
+                str(item[1]["recorded_at"]),
+                item[3],
+                item[0].name,
+            )
+        )
+    else:
+        entries.sort(
+            key=lambda item: (
+                ROLE_EXECUTION_ORDER.get(item[2], len(ROLE_EXECUTION_ORDER)),
+                item[3],
+                item[0].name,
+            )
+        )
+
+    results: list[RolePass] = []
+    for index, (file_path, data, role, _modified_ns) in enumerate(entries):
+        res = data.get("result") or {}
+        model = str(res.get("model", "unknown"))
+        latency = float(res.get("latency_seconds", 0.0))
+        usage = dict(res.get("usage") or {})
+        res_data = dict(res.get("data") or {})
+        sources = tuple(dict(s) for s in res.get("sources", []))
+        results.append(
+            RolePass(
+                sequence=index,
+                role=role,
+                model=model,
+                latency_seconds=latency,
+                usage=usage,
+                data=res_data,
+                sources=sources,
+            )
+        )
+    return tuple(results)
+
+
+def load_candidate_files(
+    run_dir: Path, candidate_dir: str | Path | None
+) -> tuple[str | None, str | None]:
+    code: str | None = None
+    tests: str | None = None
+    if candidate_dir:
+        raw_path = Path(candidate_dir)
+        candidates = (
+            (raw_path,)
+            if raw_path.is_absolute()
+            else (REPO_ROOT / raw_path, run_dir / raw_path)
+        )
+        for cand_path in dict.fromkeys(path.resolve() for path in candidates):
+            _reject_judge_path(cand_path)
+            if not cand_path.is_dir():
+                continue
+            code_file = cand_path / "candidate.py"
+            test_file = cand_path / "test_candidate.py"
+            if code_file.is_file():
+                try:
+                    code = code_file.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+            if test_file.is_file():
+                try:
+                    tests = test_file.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+            break
+    return code, tests
+
+
+def load_gate_result(
+    run_dir: Path, summary: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    summary = (
+        summary
+        if isinstance(summary, dict)
+        else (_read_json(run_dir / "summary.json") or {})
+    )
+    if isinstance(summary.get("gate"), dict):
+        return summary["gate"]
+    gate_done = _read_json(run_dir / "gate_done.json")
+    if isinstance(gate_done, dict):
+        return gate_done
+    return None
+
+
+def load_journal_reports(run_dir: Path) -> tuple[str | None, str | None]:
+    journal_text: str | None = None
+    results_text: str | None = None
+    journal_path = run_dir / "journal.md"
+    results_path = run_dir / "results.md"
+    if journal_path.is_file():
+        try:
+            journal_text = journal_path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    if results_path.is_file():
+        try:
+            results_text = results_path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    return journal_text, results_text
+
+
+def _iteration(
+    value: dict[str, Any], candidate_dir: str | None = None
+) -> IterationSnapshot:
     proposal = value.get("proposal") if isinstance(value.get("proposal"), dict) else {}
     outcome = value.get("outcome") if isinstance(value.get("outcome"), dict) else {}
+    manifest = value.get("manifest") if isinstance(value.get("manifest"), dict) else {}
     experiment_id = (
-        (value.get("manifest") or {}).get("candidate_id")
-        if isinstance(value.get("manifest"), dict)
-        else None
-    ) or value.get("experiment_id") or f"iteration_{value.get('iteration', 0)}"
+        manifest.get("candidate_id")
+        or value.get("experiment_id")
+        or f"iteration_{value.get('iteration', 0)}"
+    )
     parameters = proposal.get("parameters") or value.get("configuration") or {}
     hypothesis = proposal.get("hypothesis") or value.get("hypothesis") or ""
     family = proposal.get("family") or value.get("kind") or ""
     parent = proposal.get("parent_experiment") or value.get("parent_experiment")
+    it_num = int(value.get("iteration", 0))
+
     return IterationSnapshot(
-        iteration=int(value.get("iteration", 0)),
+        iteration=it_num,
         experiment_id=str(experiment_id),
         status=str(value.get("status") or outcome.get("status") or "unknown"),
         hypothesis=str(hypothesis),
@@ -162,8 +306,38 @@ def _iteration(value: dict[str, Any]) -> IterationSnapshot:
         repairs=int(value.get("repairs", 0)),
         change_summary=_change(value.get("change_summary")),
         agent_notes=dict(value.get("agent_notes") or {}),
+        candidate_dir=candidate_dir,
         raw=value,
     )
+
+
+def _candidate_dir_for_iteration(
+    value: dict[str, Any], nodes: list[dict[str, Any]]
+) -> str | None:
+    manifest = value.get("manifest") if isinstance(value.get("manifest"), dict) else {}
+    experiment_id = manifest.get("candidate_id") or value.get("experiment_id")
+    if experiment_id:
+        match = next(
+            (node for node in nodes if str(node.get("experiment_id")) == str(experiment_id)),
+            None,
+        )
+        if match:
+            return match.get("candidate_dir")
+
+    proposal = value.get("proposal") if isinstance(value.get("proposal"), dict) else {}
+    hypothesis_id = proposal.get("hypothesis_id")
+    iteration = int(value.get("iteration", 0))
+    candidates: list[dict[str, Any]] = []
+    for node in nodes:
+        try:
+            node_iteration = int(node.get("iteration", -1))
+        except (TypeError, ValueError):
+            continue
+        if node_iteration == iteration and (
+            not hypothesis_id or node.get("hypothesis_id") == hypothesis_id
+        ):
+            candidates.append(node)
+    return candidates[0].get("candidate_dir") if len(candidates) == 1 else None
 
 
 def load_current_activity(run_dir: Path) -> StageTransition | None:
@@ -192,14 +366,26 @@ def load_patch_text(run_dir: Path, relative_path: str | None) -> str:
         return ""
 
 
-def load_run_snapshot(run_dir: Path, official_baseline: float = 0.6016) -> RunSnapshot:
+def load_run_snapshot(
+    run_dir: Path,
+    official_baseline: float = 0.6016,
+    *,
+    include_details: bool = True,
+) -> RunSnapshot:
     run_dir = run_dir.resolve()
     _reject_judge_path(run_dir)
     summary = _read_json(run_dir / "summary.json", {}) or {}
     state = _read_json(run_dir / "state.json", {}) or {}
-    resources = _read_json(run_dir / "resources.json", {}) or {}
-    records, iteration_warnings = _read_jsonl(run_dir / "iterations.jsonl")
-    timeline, activity_warnings = load_activity_timeline(run_dir)
+    if include_details:
+        resources = _read_json(run_dir / "resources.json", {}) or {}
+        run_config = _read_json(run_dir / "run_config.json", {}) or {}
+        records, iteration_warnings = _read_jsonl(run_dir / "iterations.jsonl")
+        timeline, activity_warnings = load_activity_timeline(run_dir)
+    else:
+        resources = {}
+        run_config = {}
+        records, iteration_warnings = [], []
+        timeline, activity_warnings = (), ()
     current = load_current_activity(run_dir)
     best = summary.get("best") or {}
     if not best and state:
@@ -215,7 +401,16 @@ def load_run_snapshot(run_dir: Path, official_baseline: float = 0.6016) -> RunSn
         status = "running"
     else:
         status = "incomplete"
-    nodes = state.get("nodes") or _read_json(run_dir / "experiment_tree.json", []) or []
+    nodes = (
+        state.get("nodes") or _read_json(run_dir / "experiment_tree.json", []) or []
+    ) if include_details else []
+    gate_info = load_gate_result(run_dir, summary) if include_details else None
+    journal_md, results_md = (
+        load_journal_reports(run_dir) if include_details else (None, None)
+    )
+    iterations = tuple(
+        _iteration(item, _candidate_dir_for_iteration(item, nodes)) for item in records
+    )
     return RunSnapshot(
         run_id=str(summary.get("run_id") or state.get("run_id") or run_dir.name),
         path=run_dir,
@@ -225,12 +420,16 @@ def load_run_snapshot(run_dir: Path, official_baseline: float = 0.6016) -> RunSn
         best_experiment_id=best.get("experiment_id"),
         best_metrics=_metrics(best.get("metrics")),
         baseline_primary=float(state.get("baseline_primary", official_baseline)),
-        iterations=tuple(_iteration(item) for item in records),
+        iterations=iterations,
         activity=current,
         transitions=timeline,
         resources=dict(resources),
         nodes=tuple(nodes),
         warnings=tuple(iteration_warnings) + tuple(activity_warnings),
+        gate_info=gate_info,
+        journal_markdown=journal_md,
+        results_markdown=results_md,
+        run_config=dict(run_config),
     )
 
 
@@ -241,7 +440,10 @@ def discover_runs(run_root: Path, official_baseline: float = 0.6016) -> list[Run
         return []
     directories = [path for path in run_root.iterdir() if path.is_dir()]
     directories.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    return [load_run_snapshot(path, official_baseline) for path in directories]
+    return [
+        load_run_snapshot(path, official_baseline, include_details=False)
+        for path in directories
+    ]
 
 
 def activity_age_seconds(activity: StageTransition | None) -> float | None:

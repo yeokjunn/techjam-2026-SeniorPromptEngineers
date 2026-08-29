@@ -1,0 +1,146 @@
+[
+  {
+    "action": "explore",
+    "artifact_path": "runs/kj_20260829T164704368024Z_research/artifacts/002_bpr-dim16-same-user-negatives-v1/model.npz",
+    "candidate_dir": "generated_experiments/kj_20260829T164704368024Z_research/002_bpr-dim16-same-user-negatives-v1",
+    "experiment_id": "bpr-dim16-same-user-negatives-v1",
+    "family": "bpr",
+    "hypothesis_id": "bpr-vs-pointwise-baseline-dim16",
+    "iteration": 2,
+    "metrics": {
+      "GAUC": 0.6688013672828674,
+      "nDCG@5": 0.5366709232330322,
+      "primary": 0.6027361154556274,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_positive": 1,
+      "patience": 3,
+      "seed": 42
+    },
+    "parent_experiment": null,
+    "replicated_from": null,
+    "status": "success"
+  },
+  {
+    "action": "explore",
+    "artifact_path": "runs/kj_20260829T164704368024Z_research/artifacts/003_group-softmax-k4-t1-dim16-v1-builder/model.npz",
+    "candidate_dir": "generated_experiments/kj_20260829T164704368024Z_research/003_group-softmax-k4-t1-dim16-v1-builder",
+    "experiment_id": "group-softmax-k4-t1-dim16-v1-builder",
+    "family": "group_softmax",
+    "hypothesis_id": "group-softmax-k4-t1-dim16-v1",
+    "iteration": 3,
+    "metrics": {
+      "GAUC": 0.6703860759735107,
+      "nDCG@5": 0.5369408130645752,
+      "primary": 0.603663444519043,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 1024,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_group": 4,
+      "patience": 3,
+      "seed": 42,
+      "temperature": 1.0
+    },
+    "parent_experiment": "bpr-dim16-same-user-negatives-v1",
+    "replicated_from": null,
+    "status": "success"
+  },
+  {
+    "action": "replicate",
+    "artifact_path": "runs/kj_20260829T164704368024Z_research/artifacts/004_group-softmax-k4-t1-dim16-v1-builder_seed1/model.npz",
+    "candidate_dir": "generated_experiments/kj_20260829T164704368024Z_research/004_group-softmax-k4-t1-dim16-v1-builder_seed1",
+    "experiment_id": "group-softmax-k4-t1-dim16-v1-builder_seed1",
+    "family": "group_softmax",
+    "hypothesis_id": "group-softmax-k4-t1-dim16-v1",
+    "iteration": 4,
+    "metrics": {
+      "GAUC": 0.6701099276542664,
+      "nDCG@5": 0.5367714166641235,
+      "primary": 0.6034406423568726,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 1024,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_group": 4,
+      "patience": 3,
+      "seed": 1,
+      "temperature": 1.0
+    },
+    "parent_experiment": "group-softmax-k4-t1-dim16-v1-builder",
+    "replicated_from": "group-softmax-k4-t1-dim16-v1-builder",
+    "status": "success"
+  },
+  {
+    "action": "replicate",
+    "artifact_path": "runs/kj_20260829T164704368024Z_research/artifacts/005_group-softmax-k4-t1-dim16-v1-builder_seed2/model.npz",
+    "candidate_dir": "generated_experiments/kj_20260829T164704368024Z_research/005_group-softmax-k4-t1-dim16-v1-builder_seed2",
+    "experiment_id": "group-softmax-k4-t1-dim16-v1-builder_seed2",
+    "family": "group_softmax",
+    "hypothesis_id": "group-softmax-k4-t1-dim16-v1",
+    "iteration": 5,
+    "metrics": {
+      "GAUC": 0.670300304889679,
+      "nDCG@5": 0.5366848707199097,
+      "primary": 0.6034926176071167,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 1024,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_group": 4,
+      "patience": 3,
+      "seed": 2,
+      "temperature": 1.0
+    },
+    "parent_experiment": "group-softmax-k4-t1-dim16-v1-builder",
+    "replicated_from": "group-softmax-k4-t1-dim16-v1-builder",
+    "status": "success"
+  },
+  {
+    "action": "explore",
+    "artifact_path": "runs/kj_20260829T164704368024Z_research/artifacts/006_group-softmax-k8-t1-dim16-v1-builder/model.npz",
+    "candidate_dir": "generated_experiments/kj_20260829T164704368024Z_research/006_group-softmax-k8-t1-dim16-v1-builder",
+    "experiment_id": "group-softmax-k8-t1-dim16-v1-builder",
+    "family": "group_softmax",
+    "hypothesis_id": "group-softmax-k8-t1-dim16-v1",
+    "iteration": 6,
+    "metrics": {
+      "GAUC": 0.6694723963737488,
+      "nDCG@5": 0.5372894406318665,
+      "primary": 0.6033809185028076,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 1024,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_group": 8,
+      "patience": 3,
+      "seed": 42,
+      "temperature": 1.0
+    },
+    "parent_experiment": "group-softmax-k4-t1-dim16-v1-builder",
+    "replicated_from": null,
+    "status": "success"
+  }
+]

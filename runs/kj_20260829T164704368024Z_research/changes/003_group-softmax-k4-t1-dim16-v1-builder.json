@@ -1,0 +1,21 @@
+{
+  "candidate_id": "group-softmax-k4-t1-dim16-v1-builder",
+  "files": [
+    {
+      "lines_added": 120,
+      "lines_deleted": 82,
+      "path": "candidate.py",
+      "status": "modified"
+    },
+    {
+      "lines_added": 80,
+      "lines_deleted": 59,
+      "path": "test_candidate.py",
+      "status": "modified"
+    }
+  ],
+  "iteration": 3,
+  "lines_added": 200,
+  "lines_deleted": 141,
+  "patch_path": "changes/003_group-softmax-k4-t1-dim16-v1-builder.patch"
+}

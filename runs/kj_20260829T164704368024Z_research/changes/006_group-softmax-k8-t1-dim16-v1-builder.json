@@ -1,0 +1,21 @@
+{
+  "candidate_id": "group-softmax-k8-t1-dim16-v1-builder",
+  "files": [
+    {
+      "lines_added": 101,
+      "lines_deleted": 133,
+      "path": "candidate.py",
+      "status": "modified"
+    },
+    {
+      "lines_added": 48,
+      "lines_deleted": 78,
+      "path": "test_candidate.py",
+      "status": "modified"
+    }
+  ],
+  "iteration": 6,
+  "lines_added": 149,
+  "lines_deleted": 211,
+  "patch_path": "changes/006_group-softmax-k8-t1-dim16-v1-builder.patch"
+}

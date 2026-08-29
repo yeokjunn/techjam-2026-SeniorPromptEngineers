@@ -1,0 +1,37 @@
+{
+  "selected": "runs/20260829T163453666715Z_baseline/summary.json",
+  "skipped": [
+    {
+      "path": "runs/20260829T041834051989Z_baseline/summary.json",
+      "reason": "revision_mismatch"
+    },
+    {
+      "path": "runs/20260829T045038655855Z_research/summary.json",
+      "reason": "revision_mismatch"
+    },
+    {
+      "path": "runs/20260829T060130480764Z_research/summary.json",
+      "reason": "experiment_id_mismatch"
+    },
+    {
+      "path": "runs/20260829T154049069215Z_baseline/summary.json",
+      "reason": "revision_mismatch"
+    },
+    {
+      "path": "runs/20260829T161419449412Z_baseline/summary.json",
+      "reason": "revision_mismatch"
+    },
+    {
+      "path": "runs/kjsmoke_20260829T154120895773Z_research/summary.json",
+      "reason": "revision_mismatch"
+    },
+    {
+      "path": "runs/kjsmoke_20260829T161450137124Z_research/summary.json",
+      "reason": "revision_mismatch"
+    },
+    {
+      "path": "runs/kjsmoke_20260829T163523757540Z_research/summary.json",
+      "reason": "experiment_id_mismatch"
+    }
+  ]
+}

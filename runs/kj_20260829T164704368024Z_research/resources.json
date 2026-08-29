@@ -1,0 +1,14 @@
+{
+  "gpu_hours": 0.0,
+  "iteration_count": 6,
+  "manual_interventions": 0,
+  "token_usage": {
+    "cached_tokens": 14400,
+    "input_tokens": 71906,
+    "output_tokens": 48266,
+    "total_tokens": 120172,
+    "web_search_calls": 0
+  },
+  "training_attempts": 5,
+  "wall_clock_seconds": 1192.9101930850156
+}

@@ -1,0 +1,41 @@
+{
+  "best": {
+    "artifact_path": "runs/kj_20260829T164704368024Z_research/artifacts/003_group-softmax-k4-t1-dim16-v1-builder/model.npz",
+    "candidate_dir": "generated_experiments/kj_20260829T164704368024Z_research/003_group-softmax-k4-t1-dim16-v1-builder",
+    "experiment_id": "group-softmax-k4-t1-dim16-v1-builder",
+    "metrics": {
+      "GAUC": 0.6703860759735107,
+      "nDCG@5": 0.5369408130645752,
+      "primary": 0.603663444519043,
+      "rows": 124909.0,
+      "users": 22377.0
+    }
+  },
+  "converged_official": true,
+  "converged_official_iteration": 5,
+  "gate": {
+    "details": {
+      "check_stdout": "\u2713 \u683c\u5f0f\u4e0e\u5bf9\u9f50\u6821\u9a8c\u901a\u8fc7\uff1a170,588 \u884c\uff0csplit=test\n",
+      "checked_with": "/Users/nathanpua/Desktop/tt_techjam/.venv/bin/python",
+      "rows": 170588,
+      "scored": false,
+      "sha256": "65edc02e4386af920faa944736d3b04772e5176bf01390c209aca97faa31af6b"
+    },
+    "status": "ok",
+    "submission_path": "runs/kj_20260829T164704368024Z_research/submission.csv"
+  },
+  "iterations": 6,
+  "manual_interventions": 0,
+  "run_id": "kj_20260829T164704368024Z_research",
+  "status": "completed",
+  "stop_reason": "converged",
+  "token_usage": {
+    "cached_tokens": 14400,
+    "input_tokens": 71906,
+    "output_tokens": 48266,
+    "total_tokens": 120172,
+    "web_search_calls": 0
+  },
+  "training_attempts": 5,
+  "wall_clock_seconds": 1192.9101930850156
+}

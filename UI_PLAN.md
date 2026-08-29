@@ -22,7 +22,7 @@ Use five tabs: Pipeline, EDA, Feature Lab, Iterations, and Results. Represent th
 - Add a separate profiling command:
   `python -m src.ui.profile_data --config configs/ui.json`
   It must call the trusted `load_train_valid`, skip rows after 2022-04-28 before reading labels, and atomically write only aggregate statistics to `artifacts/ui/kuairand_pure_eda.json`.
-- Keep the first experiment-tree representation deterministic and component-free; a table is preferred until the run schema supports a stable graph layout.
+- Render experiment lineage with Streamlit's built-in Graphviz support, deterministic synthetic node IDs, and a tabular view of the same trusted run metadata.
 
 ### Interface behavior
 

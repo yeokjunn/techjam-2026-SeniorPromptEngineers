@@ -181,7 +181,6 @@ class ResearchLoop:
         self.session_started = time.monotonic()
         self.consecutive_harness_errors = 0
         initialized = self.audit.start_activity(
-        initialized = self.audit.start_activity(
             0,
             "initializing",
             objective="Load the frozen configuration, baseline, method catalog, and run state.",
@@ -689,17 +688,23 @@ class ResearchLoop:
                 if kind == "budget":
                     self.state.stop_reason = "llm_token_budget_reached"
                     break
-                self.state.stop_reason = "controller_error"
-                self.audit.write_json_atomic(
-                    self.run_dir / "error.json", {"error": str(exc)}
-                )
-                failed = self.audit.start_activity(
-                    self.state.iteration_count,
-                    "persistence",
-                    objective="Record an unexpected controller failure without corrupting the previous best.",
-                )
-                self.audit.finish_activity(failed, status="failed", error=str(exc))
-                break
+                if kind == "proposal":
+                    self.consecutive_harness_errors = 0
+                    self._record_failed_proposal(iteration, exc, "proposal_failed")
+                    continue
+                if kind == "harness":
+                    self.consecutive_harness_errors += 1
+                    max_consecutive = int(
+                        self.budgets.get("max_consecutive_harness_errors", 3)
+                    )
+                    if self.consecutive_harness_errors >= max_consecutive:
+                        self.state.stop_reason = "harness_error_breaker"
+                        self.audit.write_json_atomic(
+                            self.run_dir / "error.json", {"error": str(exc)}
+                        )
+                        break
+                    self._record_failed_proposal(iteration, exc, "harness_error")
+                    continue
 
         self.state.status = "completed"
         self._save()

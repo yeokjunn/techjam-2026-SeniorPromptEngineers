@@ -126,35 +126,102 @@ class DashboardLoaderTests(unittest.TestCase):
             passes_dir.mkdir(parents=True)
             cand_dir.mkdir(parents=True)
 
-            pass_file = passes_dir / "001_researcher_0.json"
-            pass_file.write_text(
-                json.dumps(
-                    {
-                        "prompt": "ROLE: Researcher",
-                        "result": {
-                            "role": "researcher",
-                            "model": "gpt-5.5",
-                            "latency_seconds": 1.25,
-                            "usage": {"total_tokens": 100, "input_tokens": 80, "output_tokens": 20},
-                            "data": {"hypothesis": "Test BPR"},
-                            "sources": [{"title": "BPR", "url": "https://arxiv.org/abs/1205.2618"}],
-                        },
-                    }
-                ),
-                encoding="utf-8",
+            role_payloads = (
+                ("builder", {"candidate_id": "candidate_bpr"}),
+                ("critic_postflight", {"decision": "keep"}),
+                ("critic_preflight", {"approved": True}),
+                ("researcher", {"hypothesis": "Test BPR"}),
             )
+            for role, data in role_payloads:
+                (passes_dir / f"001_{role}_0.json").write_text(
+                    json.dumps(
+                        {
+                            "prompt": f"ROLE: {role}",
+                            "result": {
+                                "role": role,
+                                "model": "gpt-5.5",
+                                "latency_seconds": 1.25,
+                                "usage": {
+                                    "total_tokens": 100,
+                                    "input_tokens": 80,
+                                    "output_tokens": 20,
+                                },
+                                "data": data,
+                                "sources": [
+                                    {
+                                        "title": "BPR",
+                                        "url": "https://arxiv.org/abs/1205.2618",
+                                    }
+                                ],
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
             (cand_dir / "candidate.py").write_text("def run(c, p): pass", encoding="utf-8")
             (cand_dir / "test_candidate.py").write_text("def test_ok(): pass", encoding="utf-8")
 
             passes = load_role_passes(run_dir, 1)
-            self.assertEqual(len(passes), 1)
+            self.assertEqual(len(passes), 4)
+            self.assertEqual(
+                [item.role for item in passes],
+                ["researcher", "critic_preflight", "builder", "critic_postflight"],
+            )
             self.assertEqual(passes[0].role, "researcher")
             self.assertEqual(passes[0].model, "gpt-5.5")
             self.assertEqual(len(passes[0].sources), 1)
 
-            code, tests = load_candidate_files(run_dir, cand_dir)
+            code, tests = load_candidate_files(run_dir, Path("gen") / "001_candidate")
             self.assertEqual(code, "def run(c, p): pass")
             self.assertEqual(tests, "def test_ok(): pass")
+
+    def test_snapshot_joins_real_iteration_manifest_to_node_candidate_dir_lazily(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            candidate_dir = run_dir / "generated" / "001_candidate_bpr"
+            candidate_dir.mkdir(parents=True)
+            (candidate_dir / "candidate.py").write_text("CODE", encoding="utf-8")
+            (candidate_dir / "test_candidate.py").write_text("TESTS", encoding="utf-8")
+            (run_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "run",
+                        "status": "completed",
+                        "nodes": [
+                            {
+                                "iteration": 1,
+                                "experiment_id": "candidate_bpr",
+                                "hypothesis_id": "h1",
+                                "candidate_dir": "generated/001_candidate_bpr",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "iterations.jsonl").write_text(
+                json.dumps(
+                    {
+                        "iteration": 1,
+                        "proposal": {"hypothesis_id": "h1", "hypothesis": "Try BPR"},
+                        "manifest": {
+                            "candidate_id": "candidate_bpr",
+                            "code_sha256": "abc",
+                            "tests_sha256": "def",
+                        },
+                        "status": "success",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            snapshot = load_run_snapshot(run_dir)
+            iteration = snapshot.iterations[0]
+            self.assertEqual(iteration.candidate_dir, "generated/001_candidate_bpr")
+            self.assertEqual(
+                load_candidate_files(run_dir, iteration.candidate_dir), ("CODE", "TESTS")
+            )
 
     def test_load_gate_result_and_journal_reports(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -163,12 +230,24 @@ class DashboardLoaderTests(unittest.TestCase):
             (run_dir / "gate_done.json").write_text(
                 json.dumps({"status": "ok", "details": {"rows": 170588}}), encoding="utf-8"
             )
+            (run_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "gate": {
+                            "status": "error",
+                            "details": {"reason": "missing_test_scores"},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
             (run_dir / "journal.md").write_text("# Journal\nContent", encoding="utf-8")
             (run_dir / "results.md").write_text("# Results\nContent", encoding="utf-8")
 
             gate = load_gate_result(run_dir)
             self.assertIsNotNone(gate)
-            self.assertEqual(gate["status"], "ok")
+            self.assertEqual(gate["status"], "error")
+            self.assertEqual(gate["details"]["reason"], "missing_test_scores")
 
             journal, results = load_journal_reports(run_dir)
             self.assertEqual(journal, "# Journal\nContent")

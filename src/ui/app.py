@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import html
 import json
-import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,12 +21,14 @@ from src.agent.activity import STAGE_ORDER
 from src.ui.loaders import (
     activity_age_seconds,
     discover_runs,
+    load_candidate_files,
     load_dashboard_config,
     load_patch_text,
+    load_role_passes,
     load_run_snapshot,
     validate_submission,
 )
-from src.ui.models import IterationSnapshot, RolePass, RunSnapshot, StageTransition
+from src.ui.models import RolePass, RunSnapshot, StageTransition
 
 
 CONFIG_PATH = REPO_ROOT / "configs" / "ui.json"
@@ -72,12 +73,6 @@ def _css() -> None:
 .stage.failed { color:#843c36; background:var(--red); border-color:#e5b8b4; }
 .metric-note { color:var(--muted); font-size:.82rem; }
 .empty-panel { border:1px dashed #cbd2cc; border-radius:14px; padding:1.2rem; color:var(--muted); background:rgba(255,255,255,.45); }
-.pass-card { border: 1px solid #dce4de; border-radius: 12px; padding: 0.9rem 1.1rem; background: #ffffff; margin-bottom: 0.8rem; }
-.badge { display: inline-block; padding: 0.2rem 0.55rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
-.badge-success { background: #dff1e8; color: #276247; }
-.badge-info { background: #dcecf7; color: #264d64; }
-.badge-warning { background: #f7e8bf; color: #73510d; }
-.badge-danger { background: #f4d9d7; color: #843c36; }
 </style>
 """,
         unsafe_allow_html=True,
@@ -242,59 +237,94 @@ def _metric_cards(snapshot: RunSnapshot, official: float) -> None:
     )
 
 
-def _render_budget_gauges(snapshot: RunSnapshot) -> None:
+def _resource_metrics(snapshot: RunSnapshot) -> dict[str, Any]:
     resources = snapshot.resources or {}
-    config = snapshot.run_config or {}
-    budgets = config.get("budgets", {})
-    max_iters = budgets.get("max_iterations", 50)
-    max_seconds = budgets.get("max_wall_clock_seconds", 21600)
-    max_tokens = (config.get("llm") or {}).get("max_total_tokens", 150000)
+    tokens = resources.get("token_usage") or {}
+    return {
+        "total_tokens": tokens.get("total_tokens", 0),
+        "input_tokens": tokens.get("input_tokens", 0),
+        "output_tokens": tokens.get("output_tokens", 0),
+        "wall_clock_seconds": resources.get("wall_clock_seconds", 0.0),
+        "training_attempts": resources.get("training_attempts", len(snapshot.iterations)),
+        "iteration_count": resources.get("iteration_count", len(snapshot.iterations)),
+        "gpu_hours": resources.get("gpu_hours", 0.0),
+        "manual_interventions": resources.get("manual_interventions", 0),
+    }
 
-    token_usage = resources.get("token_usage") or {}
-    total_tokens = token_usage.get("total_tokens", 0)
-    wall_seconds = resources.get("wall_clock_seconds", 0.0)
-    training_attempts = resources.get("training_attempts", len(snapshot.iterations))
+
+def _render_budget_gauges(snapshot: RunSnapshot) -> None:
+    config = snapshot.run_config or {}
+    budgets = config.get("budgets") or {}
+    llm = config.get("llm") or {}
+    if not budgets or "max_total_tokens" not in llm:
+        return
+    max_iters = budgets.get("max_iterations")
+    max_training_attempts = budgets.get("max_training_attempts", max_iters)
+    max_seconds = budgets.get("max_wall_clock_seconds")
+    max_tokens = llm.get("max_total_tokens")
+
+    usage = _resource_metrics(snapshot)
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Iterations Budget", f"{len(snapshot.iterations)} / {max_iters}")
-    c2.metric("Training Attempts", f"{training_attempts} / {max_iters}")
-    c3.metric("Wall Clock Time", f"{wall_seconds:.1f}s / {max_seconds}s")
-    c4.metric("LLM Token Budget", f"{total_tokens:,} / {max_tokens:,}")
+    c1.metric("Iterations Budget", f"{usage['iteration_count']} / {max_iters}")
+    c2.metric("Training Attempts", f"{usage['training_attempts']} / {max_training_attempts}")
+    c3.metric("Wall Clock Time", f"{usage['wall_clock_seconds']:.1f}s / {max_seconds}s")
+    c4.metric("LLM Token Budget", f"{usage['total_tokens']:,} / {max_tokens:,}")
 
 
-def _render_experiment_dag(nodes: tuple[dict[str, Any], ...], best_id: str | None) -> None:
-    if not nodes:
-        return
-    mermaid_lines = [
-        "graph TD",
-        "  classDef best fill:#dff1e8,stroke:#27845e,stroke-width:2px,color:#1e4d38;",
-        "  classDef normal fill:#f4f8fb,stroke:#8fbdd6,stroke-width:1px,color:#264d64;",
-        "  classDef failed fill:#f4d9d7,stroke:#843c36,stroke-width:1px,color:#662520;",
+def _dot_escape(value: Any) -> str:
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", " ")
+        .replace("\n", "\\n")
+    )
+
+
+def _experiment_dag_dot(
+    nodes: tuple[dict[str, Any], ...], best_id: str | None
+) -> str:
+    dot_lines = [
+        "digraph experiments {",
+        '  graph [rankdir="TB", bgcolor="transparent"];',
+        '  node [shape="box", style="rounded,filled", fontname="Arial", fontsize="10"];',
+        '  edge [color="#8fbdd6"];',
     ]
-    for node in nodes:
-        eid = str(node.get("experiment_id", "unknown"))
-        safe_id = re.sub(r"[^a-zA-Z0-9_]", "_", eid)
+    id_by_experiment: dict[str, str] = {}
+    for index, node in enumerate(nodes):
+        node_id = f"n{index}"
+        eid = str(node.get("experiment_id") or f"unknown_{index}")
+        id_by_experiment.setdefault(eid, node_id)
         family = node.get("family", "")
         status = node.get("status", "")
         m = node.get("metrics") or {}
         p = m.get("primary")
         score_str = f"P: {p:.4f}" if isinstance(p, (int, float)) else status
-        label = f"<b>{eid}</b><br/>[{family}] · {score_str}"
-        parent = node.get("parent_experiment")
-        if parent:
-            safe_parent = re.sub(r"[^a-zA-Z0-9_]", "_", str(parent))
-            mermaid_lines.append(f'  {safe_parent} --> {safe_id}["{label}"]')
-        else:
-            mermaid_lines.append(f'  {safe_id}["{label}"]')
-
+        label = _dot_escape(f"{eid}\n[{family}] · {score_str}")
         if eid == best_id:
-            mermaid_lines.append(f"  class {safe_id} best;")
+            fill, stroke, penwidth = "#dff1e8", "#27845e", 2
         elif status == "failed":
-            mermaid_lines.append(f"  class {safe_id} failed;")
+            fill, stroke, penwidth = "#f4d9d7", "#843c36", 1
         else:
-            mermaid_lines.append(f"  class {safe_id} normal;")
+            fill, stroke, penwidth = "#f4f8fb", "#8fbdd6", 1
+        dot_lines.append(
+            f'  {node_id} [label="{label}", fillcolor="{fill}", '
+            f'color="{stroke}", penwidth="{penwidth}"];'
+        )
 
-    st.markdown("```mermaid\n" + "\n".join(mermaid_lines) + "\n```")
+    for index, node in enumerate(nodes):
+        parent_id = id_by_experiment.get(str(node.get("parent_experiment")))
+        if parent_id is not None:
+            dot_lines.append(f"  {parent_id} -> n{index};")
+
+    dot_lines.append("}")
+    return "\n".join(dot_lines)
+
+
+def _render_experiment_dag(nodes: tuple[dict[str, Any], ...], best_id: str | None) -> None:
+    if nodes:
+        st.graphviz_chart(_experiment_dag_dot(nodes, best_id), width="stretch")
 
 
 def _pipeline(snapshot: RunSnapshot, stale_after: int, official: float) -> None:
@@ -368,20 +398,27 @@ def _eda(config) -> None:
     if activity:
         st.markdown("#### Temporal Interaction & Label Trends")
         df_act = pd.DataFrame(activity)
-        if "date" in df_act.columns:
+        required = {"date", "split", "rows", "positive_rate"}
+        if required.issubset(df_act.columns):
             df_act["date_str"] = df_act["date"].astype(str)
+            daily_rows = df_act.pivot_table(
+                index="date_str", columns="split", values="rows", aggfunc="sum"
+            )
+            daily_rates = df_act.pivot_table(
+                index="date_str", columns="split", values="positive_rate", aggfunc="mean"
+            )
             left, right = st.columns(2)
             left.markdown("**Daily Interaction Rows**")
-            left.bar_chart(df_act.set_index("date_str")["rows"])
+            left.bar_chart(daily_rows)
             right.markdown("**Daily Long-View Rate**")
-            right.line_chart(df_act.set_index("date_str")["positive_rate"])
+            right.line_chart(daily_rates)
 
     durations = profile.get("duration_histogram", [])
     if durations:
         st.markdown("#### Video Duration Distribution (Quantile Buckets)")
         df_dur = pd.DataFrame(durations)
-        if "bucket" in df_dur.columns and "count" in df_dur.columns:
-            st.bar_chart(df_dur.set_index("bucket")["count"])
+        if "seconds" in df_dur.columns and "rows" in df_dur.columns:
+            st.bar_chart(df_dur.set_index("seconds")["rows"])
 
 
 def _feature_lab() -> None:
@@ -409,35 +446,7 @@ def _feature_lab() -> None:
         hide_index=True,
     )
 
-    st.markdown("#### Search Surface Extensions & Safety Invariants")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown(
-            """<div class="pass-card">
-<b>History & Sequence Features</b><br/>
-<span class="badge badge-info">Planned</span><br/>
-<small>Train-only historical long_view rate, user-author affinity, and recency decay. Fitted strictly prior to prediction timestamp.</small>
-</div>""",
-            unsafe_allow_html=True,
-        )
-    with c2:
-        st.markdown(
-            """<div class="pass-card">
-<b>Multi-Task Auxiliary Heads</b><br/>
-<span class="badge badge-info">Planned</span><br/>
-<small>Shared FM embeddings with joint loss on <code>is_click</code> (44%), <code>is_like</code>, and <code>play_time_ms</code> for dense gradient signals.</small>
-</div>""",
-            unsafe_allow_html=True,
-        )
-    with c3:
-        st.markdown(
-            """<div class="pass-card">
-<b>Tree-Based Ranking (GBDT)</b><br/>
-<span class="badge badge-info">Planned</span><br/>
-<small>LightGBM LambdaRank grouped by user over dense behavioral features and target encodings.</small>
-</div>""",
-            unsafe_allow_html=True,
-        )
+    st.info("Future feature families appear here only after trusted run metadata logs them.")
 
 
 def _render_role_passes(role_passes: tuple[RolePass, ...]) -> None:
@@ -465,10 +474,6 @@ def _render_role_passes(role_passes: tuple[RolePass, ...]) -> None:
                     u = s.get("url")
                     st.markdown(f"- [{t}]({u})" if u else f"- {t}")
 
-            st.caption("Prompt Context:")
-            st.text(rp.prompt[:800] + ("…" if len(rp.prompt) > 800 else ""))
-
-
 def _iterations(snapshot: RunSnapshot) -> None:
     st.subheader("Iteration Inspector")
     if not snapshot.iterations:
@@ -476,6 +481,10 @@ def _iterations(snapshot: RunSnapshot) -> None:
         return
     options = {f"{item.iteration:03d} · {item.experiment_id}": item for item in snapshot.iterations}
     selected = options[st.selectbox("Select Iteration", list(options), index=len(options) - 1)]
+    role_passes = load_role_passes(snapshot.path, selected.iteration)
+    candidate_code, candidate_tests = load_candidate_files(
+        snapshot.path, selected.candidate_dir
+    )
 
     left, right = st.columns([2, 1])
     left.markdown(f"### {selected.experiment_id}")
@@ -496,17 +505,17 @@ def _iterations(snapshot: RunSnapshot) -> None:
             snapshot.baseline_primary,
         )
 
-    if selected.role_passes:
+    if role_passes:
         st.subheader("Autonomous Multi-Role Pass Sequence")
-        _render_role_passes(selected.role_passes)
+        _render_role_passes(role_passes)
 
-    with st.expander("Candidate Source & Test Implementation", expanded=bool(selected.candidate_code)):
-        if selected.candidate_code:
+    with st.expander("Candidate Source & Test Implementation", expanded=bool(candidate_code)):
+        if candidate_code:
             st.markdown("**`candidate.py`:**")
-            st.code(selected.candidate_code, language="python", line_numbers=True)
-            if selected.candidate_tests:
+            st.code(candidate_code, language="python", line_numbers=True)
+            if candidate_tests:
                 st.markdown("**`test_candidate.py`:**")
-                st.code(selected.candidate_tests, language="python", line_numbers=True)
+                st.code(candidate_tests, language="python", line_numbers=True)
         else:
             st.caption("No candidate source files located.")
 
@@ -563,27 +572,45 @@ def _results(snapshot: RunSnapshot, official: float) -> None:
 
     st.divider()
     st.subheader("Telemetry & Resource Breakdown")
-    res = snapshot.resources or {}
-    tokens = res.get("token_usage") or {}
+    usage = _resource_metrics(snapshot)
     t1, t2, t3, t4 = st.columns(4)
-    t1.metric("Total Tokens", f"{tokens.get('total_tokens', 0):,}")
-    t2.metric("Input / Output", f"{tokens.get('input_tokens', 0):,} / {tokens.get('output_tokens', 0):,}")
-    t3.metric("Wall Clock", f"{res.get('wall_clock_seconds', 0.0):.1f}s")
-    t4.metric("GPU Hours / Interventions", f"{res.get('gpu_hours', 0.0)}h / {res.get('manual_interventions', 0)}")
+    t1.metric("Total Tokens", f"{usage['total_tokens']:,}")
+    t2.metric("Input / Output", f"{usage['input_tokens']:,} / {usage['output_tokens']:,}")
+    t3.metric("Wall Clock", f"{usage['wall_clock_seconds']:.1f}s")
+    t4.metric("GPU Hours / Interventions", f"{usage['gpu_hours']}h / {usage['manual_interventions']}")
 
     if snapshot.gate_info:
         st.divider()
         st.subheader("Official Gate & Submission Status")
         gate = snapshot.gate_info
         details = gate.get("details") or {}
-        g1, g2, g3 = st.columns(3)
-        g1.metric("Gate Status", str(gate.get("status", "unknown")).upper())
-        g2.metric("Submission Rows", f"{details.get('rows', 0):,}")
-        g3.metric("Verified With", str(details.get("checked_with", "starter kit")).replace("\\", "/").split("/")[-1])
-        if "sha256" in details:
-            st.caption(f"**SHA256:** `{details['sha256']}`")
-        if "check_stdout" in details:
-            st.success(details["check_stdout"])
+        gate_status = str(gate.get("status", "unknown"))
+        if gate_status == "error":
+            st.metric("Gate Status", gate_status.upper())
+            st.error(f"Gate failed: {details.get('reason', 'unknown_reason')}")
+            diagnostics = {
+                key: details[key]
+                for key in ("error", "got_rows", "expected_rows", "searched")
+                if key in details
+            }
+            if diagnostics:
+                st.json(diagnostics, expanded=False)
+        else:
+            g1, g2, g3 = st.columns(3)
+            g1.metric("Gate Status", gate_status.upper())
+            rows = details.get("rows")
+            g2.metric("Submission Rows", f"{rows:,}" if isinstance(rows, int) else "—")
+            checked_with = details.get("checked_with")
+            verified_with = (
+                str(checked_with).replace("\\", "/").split("/")[-1]
+                if checked_with
+                else "—"
+            )
+            g3.metric("Verified With", verified_with)
+            if "sha256" in details:
+                st.caption(f"**SHA256:** `{details['sha256']}`")
+            if "check_stdout" in details:
+                st.success(details["check_stdout"])
 
     if snapshot.journal_markdown or snapshot.results_markdown:
         st.divider()
@@ -635,8 +662,8 @@ def main() -> None:
     selected_path = labels[selected_label]
     st.sidebar.caption("The dashboard never launches, resumes, cancels, or changes an experiment.")
     tabs = st.tabs(["Pipeline", "EDA", "Feature Lab", "Iterations", "Results"])
+    initial = load_run_snapshot(selected_path, config.official_baseline)
     with tabs[0]:
-        initial = load_run_snapshot(selected_path, config.official_baseline)
         if initial.status == "running":
             @st.fragment(run_every=f"{config.active_refresh_seconds}s")
             def live_pipeline() -> None:
@@ -648,7 +675,7 @@ def main() -> None:
             live_pipeline()
         else:
             _pipeline(initial, config.stale_after_seconds, config.official_baseline)
-    snapshot = load_run_snapshot(selected_path, config.official_baseline)
+    snapshot = initial
     with tabs[1]:
         _eda(config)
     with tabs[2]:

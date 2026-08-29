@@ -48,14 +48,11 @@ class StageTransition:
 class RolePass:
     sequence: int
     role: str
-    prompt: str
     model: str
     latency_seconds: float
     usage: dict[str, int] = field(default_factory=dict)
     data: dict[str, Any] = field(default_factory=dict)
     sources: tuple[dict[str, str], ...] = ()
-    tool_calls: tuple[dict[str, Any], ...] = ()
-    retries: int = 0
 
 
 @dataclass(frozen=True)
@@ -73,9 +70,7 @@ class IterationSnapshot:
     repairs: int = 0
     change_summary: ChangeSummary | None = None
     agent_notes: dict[str, Any] = field(default_factory=dict)
-    candidate_code: str | None = None
-    candidate_tests: str | None = None
-    role_passes: tuple[RolePass, ...] = ()
+    candidate_dir: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 

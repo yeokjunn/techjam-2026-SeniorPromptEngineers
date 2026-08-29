@@ -249,9 +249,11 @@ def _latest_valid_baseline(
             # construction instead of costing that one candidate.
             reason = "unreadable_summary"
         if reason is not None:
-            skipped.append({"path": str(path), "reason": reason})
+            skipped.append({"path": _repo_relative(path), "reason": reason})
             continue
-        accepted.append((path.parent.name, {**summary, "summary_path": str(path)}))
+        accepted.append(
+            (path.parent.name, {**summary, "summary_path": _repo_relative(path)})
+        )
     best = max(accepted, key=lambda item: item[0])[1] if accepted else None
     return best, skipped
 
@@ -285,7 +287,7 @@ def _ensure_baseline(
     # a baseline whose scores file is absent cannot be the run's comparison point.
     if not artifact or not _resolve_repo_path(str(artifact)).is_file():
         raise RuntimeError(f"Official FM baseline produced no artifact at {artifact}")
-    return {**summary, "summary_path": str(run_dir / "summary.json")}, skipped
+    return {**summary, "summary_path": _repo_relative(run_dir / "summary.json")}, skipped
 
 
 class ResearchLoop:
@@ -785,7 +787,14 @@ class ResearchLoop:
             )
             status = "success"
             metrics = outcome.metrics
-            artifact = outcome.artifact_path
+            # T11: B's worker reports the checkpoint by its absolute path. Recorded
+            # repo-relative, because this string is copied onto
+            # ``state.best_artifact_path`` (``policy.py:280``) and from there into
+            # ``state.json``, ``best.json`` and ``summary.json`` — files that are
+            # committed and read back on another machine.
+            artifact = (
+                _repo_relative(Path(outcome.artifact_path)) if outcome.artifact_path else None
+            )
         else:
             postflight = None
             status = "failed"
@@ -822,6 +831,24 @@ class ResearchLoop:
             objective="Finalize the immutable iteration record and resumable state.",
         )
         self._save()  # I3: see ``_record_rejection`` — state before ledger.
+        # T11: the ledger is committed, and B's ``ExperimentOutcome`` already keeps
+        # ``stdout_path``, ``stderr_path`` and ``test_scores_path`` repo-relative —
+        # ``artifact_path`` and ``command`` are the two fields that missed that
+        # convention. Rewritten on ``to_dict``'s own fresh copy, never on the
+        # outcome, and only for paths under the repo: a system interpreter keeps its
+        # absolute spelling, so the command stays runnable from the repo root.
+        outcome_record = None if outcome is None else outcome.to_dict()
+        if outcome_record is not None:
+            if outcome_record.get("artifact_path"):
+                outcome_record["artifact_path"] = _repo_relative(
+                    Path(outcome_record["artifact_path"])
+                )
+            outcome_record["command"] = [
+                _repo_relative(Path(part))
+                if Path(part).is_absolute() and Path(part).is_relative_to(REPO_ROOT)
+                else part
+                for part in outcome_record.get("command") or []
+            ]
         self.audit.record_iteration(
             {
                 "iteration": iteration,
@@ -837,7 +864,7 @@ class ResearchLoop:
                 },
                 "repairs": repairs,
                 "change_summary": change_summary,
-                "outcome": None if outcome is None else outcome.to_dict(),
+                "outcome": outcome_record,
                 "postflight": None if postflight is None else postflight.to_dict(),
                 "agent_notes": {
                     "researcher": {

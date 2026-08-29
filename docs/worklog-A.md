@@ -453,4 +453,13 @@ which stood at **84 passed, 16 subtests** when this branch was cut (B took it 47
 
 ---
 
+## 2026-08-29 · T11 prep — repo-relative paths in the run directory
+
+- **Done** — `research_controller.py:796` records B's absolute checkpoint as `_repo_relative(Path(outcome.artifact_path))` on the `ExperimentNode`, so `state.best_artifact_path` (`policy.py:280`), `best.json`, `summary.json` and `results.json` carry a `runs/…` string. Baseline selection strings likewise: `:252` (skip `path`), `:255` (adopted `summary_path`), `:290` (regenerated `summary_path`). Both readers (`:215`, `:288`) resolve through `_resolve_repo_path`, which handles relative; under a `tmp_path` run root `_repo_relative` falls back to the absolute POSIX spelling, so no test moves.
+- **Verification** — gate `env -u OPENAI_API_KEY PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -W error` → **0 failed, 172 passed, 1 skipped, 80 subtests passed in 56.45s**. Offline run **`runs/20260829T130246062083Z_research`** (`gate.status: ok`, `best.artifact_path: runs/20260829T130246062083Z_research/…/model.npz`): `grep -rln '/Users/\|C:\\' <run_dir> --exclude-dir=artifacts` prints **nothing**. Without the exclude, one file remains — `artifacts/001_offline_bpr_smoke_candidate/result.json`, B's worker output, gitignored by `.gitignore:38`.
+- **`:840-851`, the iteration ledger** — `iterations.jsonl` serialises B's raw `ExperimentOutcome`, whose `artifact_path` and `command` are the two fields that missed the repo-relative convention the same dataclass already applies to `stdout_path`, `stderr_path` and `test_scores_path`. Both are now rewritten on `to_dict()`'s own copy (never on the outcome), and `command` only for members under `REPO_ROOT` — `.venv/bin/python` becomes relative, a system interpreter keeps its absolute spelling, and the argv stays runnable from the repo root. `outcome.to_dict()` has exactly this one call site; `research_memory.jsonl`, `activity.jsonl` and `changes/` never carry it.
+- **Hand-off to Owner B (`@nathanpua`)** — the sanitisation above is a patch at the recorder; the source is `candidate_runner.py`. Please make `artifact_path` (`:237`, from `run_candidate.py:141`'s absolute `as_posix()`) and the `command` argv (`:149-162`) repo-relative there, matching your own `stdout_path` / `stderr_path` / `test_scores_path` convention — ≤10 lines. `artifacts/…/result.json` carries the same absolute `artifact_path`; it is gitignored, so it is your call whether to fix it too. A's `:840-851` becomes a harmless no-op once you do.
+
+---
+
 *Append new entries above this line.*

@@ -1,0 +1,43 @@
+{
+  "mode": "research",
+  "name": "kj-live-smoke",
+  "data_dir": "data/KuaiRand-Pure/data",
+  "run_root": "runs",
+  "generated_root": "generated_experiments",
+  "method_catalog": "research/methods",
+  "official_validation_baseline": 0.6016,
+  "baseline_config": "configs/baseline.json",
+  "data_card_path": null,
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-5.5",
+    "reasoning_effort": "medium",
+    "verbosity": "low",
+    "store": false,
+    "max_output_tokens": 24000,
+    "max_tool_calls": 2,
+    "max_total_tokens": 30000,
+    "request_timeout_seconds": 180,
+    "max_retries": 5
+  },
+  "budgets": {
+    "max_iterations": 2,
+    "max_training_attempts": 4,
+    "max_proposals": 6,
+    "max_wall_clock_seconds": 1800,
+    "experiment_timeout_seconds": 900,
+    "test_timeout_seconds": 60,
+    "max_debug_repairs": 2,
+    "max_consecutive_harness_errors": 3,
+    "max_role_reprompts": 2
+  },
+  "convergence": {
+    "epsilon": 0.002,
+    "patience": 3
+  },
+  "replication_seeds": [
+    1,
+    2
+  ],
+  "run_id_prefix": "kjsmoke_"
+}

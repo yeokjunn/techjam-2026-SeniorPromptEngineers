@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.agent.report import render_reports
+from src.agent.report import _display_path, render_reports
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -433,6 +433,28 @@ class ReportTests(unittest.TestCase):
             )
             self.assertNotIn("OneDrive", journal)
             self.assertNotIn("C:\\", journal)
+
+    def test_display_path_keeps_relative_paths_and_anchors_absolute_ones(self):
+        # What the writers emit today: repo-relative, kept whole so the reader
+        # can still see whether the artefact sits under runs/ or elsewhere.
+        self.assertEqual(
+            _display_path(
+                "generated_experiments/r1/002_bpr/artifacts/test_scores.npy", "r1"
+            ),
+            "generated_experiments/r1/002_bpr/artifacts/test_scores.npy",
+        )
+        # A run recorded before that normalisation: anchored on the run id.
+        self.assertEqual(
+            _display_path(
+                "C:\\Users\\Admin\\OneDrive - NTU\\repo\\runs\\r1\\a\\model.npz", "r1"
+            ),
+            "r1/a/model.npz",
+        )
+        # Absolute with no run id present: keep the tail, drop the home dir.
+        self.assertEqual(
+            _display_path("/home/someone/deep/nested/dir/scores.npy", "r1"),
+            "nested/dir/scores.npy",
+        )
 
     def test_results_reports_gate_deltas_tokens_and_interventions(self):
         with tempfile.TemporaryDirectory() as d:

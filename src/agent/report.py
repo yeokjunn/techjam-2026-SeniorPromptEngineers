@@ -94,12 +94,18 @@ def _make_diff(parent_src: str | None, child_src: str, child_path: str,
 
 
 def _display_path(raw: str, run_dir_name: str) -> str:
-    # Recorded paths are absolute and belong to whoever ran the experiment — the
-    # committed baseline run carries Windows OneDrive paths. Anchor on the run
-    # directory so the journal stays readable and drops the author's home dir.
-    parts = [p for p in re.split(r"[\\/]+", str(raw)) if p]
+    # The writers normalise to repo-relative (run_candidate.py:144 and the
+    # relative_to calls around it), so the ordinary case passes through whole —
+    # shortening it would hide whether an artefact sits under runs/ or
+    # generated_experiments/. Runs recorded before that normalisation carry
+    # absolute paths (the retired baseline run held Windows OneDrive ones), so
+    # anchor only those, rather than printing someone's home directory.
+    text = str(raw)
+    parts = [p for p in re.split(r"[\\/]+", text) if p]
     if not parts:
-        return str(raw)
+        return text
+    if not (text.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", text)):
+        return "/".join(parts)
     if run_dir_name in parts:
         return "/".join(parts[parts.index(run_dir_name):])
     return "/".join(parts[-3:])

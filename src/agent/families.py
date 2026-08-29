@@ -22,3 +22,9 @@ FAMILIES: dict[str, Family] = {
 
 def family_names() -> frozenset[str]:
     return frozenset(FAMILIES)
+
+
+def builder_brief(name: str) -> str:
+    """Render the trusted sampler requirement for a registered family."""
+    sampler = FAMILIES[name].trusted_sampler
+    return f"You must call src.models.sampling.{sampler}()."

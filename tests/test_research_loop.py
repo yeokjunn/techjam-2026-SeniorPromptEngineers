@@ -456,5 +456,61 @@ class TrainingFailureExecutor:
         )
 
 
+class OfficialConvergenceReportingTests(unittest.TestCase):
+    """T4 / I6, I-9: the organizers' verdict is reported beside the harness stop."""
+
+    def test_official_convergence_is_reported_when_the_harness_keeps_going(self):
+        """A genuinely converged run whose `stop_reason` is a budget, not `converged`.
+
+        Three scored iterations sit inside epsilon of the baseline, so the
+        organizers' rule fires on the third; the harness agenda is elsewhere and
+        the run ends on the candidate cap, which the loop checks before
+        `should_stop`. That is exactly the I6 complaint — a converged run
+        reporting a budget as its reason — and it is why the two numbers are
+        reported separately.
+
+        The plan's sketch has only `bpr` ever succeed. The loop forbids it:
+        `required_family` pins every proposal after the first success to the
+        uncovered family, so no bpr-only run can reach three scored iterations.
+        The candidate cap stands in as the harness agenda that outlives the rule.
+        """
+        script = [
+            research("bpr"), critic(), manifest("bpr"), critic(),
+            research("group_softmax"), critic(), manifest("group_softmax"), critic(),
+            research("bpr"), critic(), manifest("bpr"), critic(),
+        ]
+        provider = ScriptedProvider(script)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, config_path = research_config(
+                root, max_iterations=3, max_training_attempts=10
+            )
+            loop = ResearchLoop(
+                config,
+                config_path,
+                provider=provider,
+                baseline_summary=BASELINE_SUMMARY,
+            )
+            loop.executor = FakeExecutor()
+            run_dir = loop.run()
+            summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(summary["iterations"], 3)
+            self.assertTrue(summary["converged_official"])
+            self.assertEqual(summary["converged_official_iteration"], 3)
+            self.assertNotEqual(summary["stop_reason"], "converged")
+            self.assertEqual(summary["stop_reason"], "candidate_budget_reached")
+            memory = [
+                json.loads(line)
+                for line in (run_dir / "research_memory.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(
+                [item for item in memory if item.get("type") == "convergence"],
+                [{"type": "convergence", "iteration": 3, "official": True}],
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

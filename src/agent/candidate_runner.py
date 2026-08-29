@@ -42,6 +42,14 @@ THREAD_CAP_KEYS = (
 )
 
 
+def _repo_relative(path: Path, repo_root: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return resolved.as_posix()
+
+
 class CandidateWorkspace:
     def __init__(self, generated_root: Path, run_id: str, iteration: int, candidate_id: str):
         validate_identifier(run_id, "run ID")
@@ -176,8 +184,8 @@ class CandidateExecutor:
                     duration_seconds=duration,
                     error=f"Candidate exited with code {completed.returncode}: {completed.stderr[-4000:]}",
                     recovery="Eligible for bounded debugger repair.",
-                    stdout_path=str(stdout_path.relative_to(self.repo_root)),
-                    stderr_path=str(stderr_path.relative_to(self.repo_root)),
+                    stdout_path=_repo_relative(stdout_path, self.repo_root),
+                    stderr_path=_repo_relative(stderr_path, self.repo_root),
                     command=command,
                     failure_class="crash",
                 )
@@ -198,8 +206,8 @@ class CandidateExecutor:
                         f"the sanity band [{SANITY_FLOOR}, {SANITY_CEILING}]."
                     ),
                     recovery="Rejected without promotion; previous best retained.",
-                    stdout_path=str(stdout_path.relative_to(self.repo_root)),
-                    stderr_path=str(stderr_path.relative_to(self.repo_root)),
+                    stdout_path=_repo_relative(stdout_path, self.repo_root),
+                    stderr_path=_repo_relative(stderr_path, self.repo_root),
                     command=command,
                     failure_class=sanity_class,
                 )
@@ -217,8 +225,8 @@ class CandidateExecutor:
                         "data.load()['test'] row, same order)."
                     ),
                     recovery="Rejected before promotion; the previous best is intact.",
-                    stdout_path=str(stdout_path.relative_to(self.repo_root)),
-                    stderr_path=str(stderr_path.relative_to(self.repo_root)),
+                    stdout_path=_repo_relative(stdout_path, self.repo_root),
+                    stderr_path=_repo_relative(stderr_path, self.repo_root),
                     command=command,
                     failure_class="missing_test_scores",
                 )
@@ -229,8 +237,8 @@ class CandidateExecutor:
                 artifact_path=payload.get("artifact_path"),
                 epoch_trace=list(payload.get("training_trace", [])),
                 diagnostics=dict(payload.get("diagnostics", {})),
-                stdout_path=str(stdout_path.relative_to(self.repo_root)),
-                stderr_path=str(stderr_path.relative_to(self.repo_root)),
+                stdout_path=_repo_relative(stdout_path, self.repo_root),
+                stderr_path=_repo_relative(stderr_path, self.repo_root),
                 command=command,
                 test_scores_path=payload.get("test_scores_path"),
             )
@@ -241,8 +249,8 @@ class CandidateExecutor:
                 duration_seconds=time.monotonic() - started,
                 error=f"Candidate timed out after {self.experiment_timeout_seconds} seconds.",
                 recovery="Candidate process was terminated; previous best remains intact.",
-                stdout_path=str(stdout_path.relative_to(self.repo_root)),
-                stderr_path=str(stderr_path.relative_to(self.repo_root)),
+                stdout_path=_repo_relative(stdout_path, self.repo_root),
+                stderr_path=_repo_relative(stderr_path, self.repo_root),
                 command=command,
                 failure_class="timeout",
             )

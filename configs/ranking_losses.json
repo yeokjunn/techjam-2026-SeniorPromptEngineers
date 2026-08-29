@@ -18,15 +18,18 @@
     "max_tool_calls": 2,
     "max_total_tokens": 150000,
     "request_timeout_seconds": 180,
-    "max_retries": 2
+    "max_retries": 5
   },
   "budgets": {
     "max_iterations": 50,
     "max_training_attempts": 50,
+    "max_proposals": 100,
     "max_wall_clock_seconds": 21600,
     "experiment_timeout_seconds": 900,
     "test_timeout_seconds": 60,
-    "max_debug_repairs": 2
+    "max_debug_repairs": 2,
+    "max_consecutive_harness_errors": 3,
+    "max_role_reprompts": 2
   },
   "convergence": {
     "epsilon": 0.002,

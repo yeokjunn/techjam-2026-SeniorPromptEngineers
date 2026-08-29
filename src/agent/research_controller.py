@@ -111,6 +111,18 @@ class ResearchLoop:
         self.generated_root = _resolve_repo_path(config.get("generated_root", "generated_experiments"))
         self.run_root = _resolve_repo_path(config.get("run_root", "runs"))
         self.budgets = config["budgets"]
+        # I5: three caps, three keys. ``max_iterations`` is the *candidate* cap
+        # and nothing else; the training-attempt and proposal caps are their own
+        # knobs, resolved once here because ``_execute`` enforces the training
+        # cap too and must read the same number ``run()`` does. The ``.get``
+        # defaults preserve the old single-knob behaviour for configs that
+        # predate the split (every inline test config), so no caller has to
+        # supply the new keys to keep working.
+        max_iterations = int(self.budgets["max_iterations"])
+        self.max_training_attempts = int(
+            self.budgets.get("max_training_attempts", max_iterations)
+        )
+        self.max_proposals = int(self.budgets.get("max_proposals", max_iterations * 2))
         self.convergence = config["convergence"]
         llm_config = config["llm"]
         self.provider = provider or build_provider(config)
@@ -312,7 +324,7 @@ class ResearchLoop:
         )
         outcome = None
         while validation_error is None:
-            if self.state.training_attempts >= int(self.budgets["max_iterations"]):
+            if self.state.training_attempts >= self.max_training_attempts:
                 validation_error = "Training-attempt budget reached before execution."
                 break
             self.state.training_attempts += 1
@@ -439,14 +451,15 @@ class ResearchLoop:
     def run(self) -> Path:
         max_iterations = int(self.budgets["max_iterations"])
         max_wall_clock = float(self.budgets["max_wall_clock_seconds"])
-        max_proposals = max_iterations * 2
+        max_training_attempts = self.max_training_attempts
+        max_proposals = self.max_proposals
 
         while True:
             if self._elapsed() >= max_wall_clock:
                 self.state.stop_reason = "wall_clock_budget_reached"
                 break
-            if self.state.training_attempts >= max_iterations:
-                self.state.stop_reason = "iteration_budget_reached"
+            if self.state.training_attempts >= max_training_attempts:
+                self.state.stop_reason = "training_attempt_budget_reached"
                 break
             if self.state.iteration_count >= max_iterations:
                 self.state.stop_reason = "candidate_budget_reached"

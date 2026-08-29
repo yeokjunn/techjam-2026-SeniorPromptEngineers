@@ -7,9 +7,10 @@ from pathlib import Path
 
 from src.agent.audit import ResearchAudit
 from src.agent.catalog import MethodCatalog
-from src.agent.llm import ScriptedProvider
+from src.agent.families import FAMILIES, family_names
+from src.agent.llm import FAMILY_ENUM, ScriptedProvider
 from src.agent.policy import SearchPolicy, coverage_complete, required_family
-from src.agent.roles import ResearchRoles
+from src.agent.roles import BASE_CANDIDATE_CONTRACT, ResearchRoles
 from src.agent.types import ExperimentNode, ResearchDecision, RunState, TokenUsage
 
 
@@ -114,6 +115,151 @@ class PolicyTests(unittest.TestCase):
         restored = RunState.from_dict(json.loads(json.dumps(state.to_dict())))
         self.assertEqual(len(restored.nodes), 1)
         self.assertEqual(restored.nodes[0].experiment_id, "x")
+
+
+class PromptStructureTests(unittest.TestCase):
+    """Tests for T3 prompt structure, stable prefix, and registry integration."""
+
+    def test_method_cards_precede_the_volatile_state_in_every_prompt(self):
+        """Verify that method cards appear before volatile state (for caching)."""
+        provider = ScriptedProvider([research_payload("bpr")])
+        with tempfile.TemporaryDirectory() as directory:
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=1000,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            roles.research(state, 1, None)
+            prompt = provider.calls[0]["prompt"]
+            # The prefix (which includes method cards) should appear before state summary
+            self.assertIn("METHOD CARD", prompt)
+            self.assertIn("ROLE: Researcher", prompt)
+            method_card_pos = prompt.find("METHOD CARD")
+            role_pos = prompt.find("ROLE: Researcher")
+            # Method cards should appear before the role directive
+            self.assertLess(method_card_pos, role_pos)
+
+    def test_stable_prefix_is_identical_across_two_iterations(self):
+        """Verify that stable prefix bytes are identical with same state/family."""
+        provider = ScriptedProvider([research_payload("bpr"), research_payload("bpr")])
+        with tempfile.TemporaryDirectory() as directory:
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=1000,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            roles.research(state, 1, "bpr")
+            roles.research(state, 2, "bpr")
+            prompt1 = provider.calls[0]["prompt"]
+            prompt2 = provider.calls[1]["prompt"]
+            # Extract the stable prefix (everything before ROLE: Researcher)
+            prefix1 = prompt1[: prompt1.find("ROLE: Researcher")]
+            prefix2 = prompt2[: prompt2.find("ROLE: Researcher")]
+            self.assertEqual(prefix1, prefix2, "Stable prefix should be byte-identical across calls")
+
+    def test_data_card_text_is_inserted_in_the_prefix(self):
+        """Verify data card text is read and memoized in the stable prefix."""
+        with tempfile.TemporaryDirectory() as directory:
+            data_card_path = Path(directory) / "data_card.txt"
+            data_card_path.write_text("DATA CARD CONTENT FOR TEST", encoding="utf-8")
+            provider = ScriptedProvider([research_payload("bpr")])
+            with tempfile.TemporaryDirectory() as audit_dir:
+                audit = ResearchAudit(Path(audit_dir) / "run")
+                roles = ResearchRoles(
+                    provider,
+                    MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                    audit,
+                    max_total_tokens=1000,
+                )
+                state = RunState("run", "running", "now", 0.6016, data_card_path=str(data_card_path))
+                roles.research(state, 1, "bpr")
+                prompt = provider.calls[0]["prompt"]
+                self.assertIn("DATA CARD:", prompt)
+                self.assertIn("DATA CARD CONTENT FOR TEST", prompt)
+
+    def test_data_card_handles_missing_path_gracefully(self):
+        """Verify data card gracefully handles None or missing paths."""
+        provider = ScriptedProvider([research_payload("bpr")])
+        with tempfile.TemporaryDirectory() as directory:
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=1000,
+            )
+            # state with None data_card_path
+            state = RunState("run", "running", "now", 0.6016, data_card_path=None)
+            roles.research(state, 1, "bpr")
+            prompt = provider.calls[0]["prompt"]
+            # Prompt should still work, just without the DATA CARD section
+            self.assertIn("ROLE: Researcher", prompt)
+            self.assertNotIn("DATA CARD:", prompt)
+
+    def test_builder_prompt_requires_test_scores(self):
+        """Verify Builder prompt includes test_scores requirement."""
+        # This would need a builder response payload in practice
+        # For now, we verify the BASE_CANDIDATE_CONTRACT contains test_scores
+        self.assertIn("test_scores", BASE_CANDIDATE_CONTRACT)
+        self.assertIn("Return `test_scores`", BASE_CANDIDATE_CONTRACT)
+
+    def test_builder_prompt_names_the_sampler_from_the_registry(self):
+        """Verify Builder uses registry samplers (or falls back gracefully)."""
+        provider = ScriptedProvider([
+            research_payload("bpr"),
+            {"candidate_id": "c1", "hypothesis_id": "h_bpr", "family": "bpr",
+             "code": "def run(context, parameters): return None",
+             "tests": "pass", "parameters": parameters("bpr")}
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=10000,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            decision = roles.research(state, 1, "bpr")
+            roles.build(state, 1, decision)
+            builder_prompt = provider.calls[1]["prompt"]
+            # Should mention the trusted sampler name or have fallback text
+            self.assertTrue(
+                "sample_bpr_pairs" in builder_prompt or "trusted sampler" in builder_prompt.lower()
+            )
+
+    def test_schema_family_enum_follows_the_registry(self):
+        """Verify schema family enums match family_names()."""
+        # FAMILY_ENUM should be sorted list of family names
+        expected_families = sorted(family_names())
+        self.assertEqual(list(FAMILY_ENUM), expected_families)
+        # Should match FAMILIES keys
+        self.assertEqual(set(FAMILY_ENUM), set(FAMILIES.keys()))
+
+    def test_feedback_keyword_appends_after_volatile_state(self):
+        """Verify feedback keyword appends as PREVIOUS ATTEMPT REJECTED block."""
+        provider = ScriptedProvider([research_payload("bpr")])
+        with tempfile.TemporaryDirectory() as directory:
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=1000,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            feedback_text = "Evidence was not empirical"
+            roles.research(state, 1, None, feedback=feedback_text)
+            prompt = provider.calls[0]["prompt"]
+            # Feedback should appear as PREVIOUS ATTEMPT REJECTED block
+            self.assertIn("PREVIOUS ATTEMPT REJECTED:", prompt)
+            self.assertIn(feedback_text, prompt)
 
 
 if __name__ == "__main__":

@@ -179,6 +179,7 @@ class ResearchLoop:
             test_timeout_seconds=int(self.budgets["test_timeout_seconds"]),
         )
         self.session_started = time.monotonic()
+        self.consecutive_harness_errors = 0
         initialized = self.audit.start_activity(
             0,
             "initializing",

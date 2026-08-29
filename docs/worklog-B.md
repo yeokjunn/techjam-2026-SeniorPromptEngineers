@@ -122,9 +122,33 @@ Scope: `docs/reviews/2026-08-28-harness-review/plans/B-gate-contracts.md` (T1–
 
 ---
 
+## 2026-08-29 · T4 — Minimal candidate environment (C3)
+
+**Done** (TDD: 2 tests written first, RED, then implementation → GREEN)
+- `src/agent/candidate_runner.py`
+  - New module constants `PASSTHROUGH_KEYS` (PATH/LANG/LC_ALL/TZ + Windows system vars when present) and `THREAD_CAP_KEYS` (OMP/OPENBLAS/MKL/NUMEXPR/VECLIB = "1").
+  - `_environment(self, workspace)` rebuilt **from scratch** — never `dict(os.environ)`: sets `PYTHONPATH=repo_root`, `PYTHONDONTWRITEBYTECODE=1`, `HOME`/`TMPDIR`/`TEMP`/`TMP` = workspace directory, `KUAIRAND_DATA_DIR=data_dir` (E's `build_features` entry), thread caps. In-code assert that no key starts with `OPENAI_`/`ANTHROPIC_`.
+  - Both call sites updated (`test()` and `train()`); `train()`'s cwd moved from `self.repo_root` to `workspace.directory` (safe: every command path is absolute by construction via the controller's `_resolve_repo_path`).
+  - E's `restricted_builtins()` wire-in in `_load_candidate` **deliberately skipped** — plan says land it only once E announces their T2. `run_candidate.py:42-52` untouched.
+- `tests/test_isolation.py` — `test_candidate_environment_drops_provider_keys` (real subprocess with sentinel `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` patched into the parent env; asserts the child saw neither, `PYTHONDONTWRITEBYTECODE=1`, all five thread caps, `PYTHONPATH`=repo, `KUAIRAND_DATA_DIR`, `HOME`=workspace) and `test_candidate_subprocess_cwd_is_the_workspace`.
+
+**Justification**
+- Closes **C3**: `.env` is loaded into `os.environ` by the LLM layer before candidates run, and the old `dict(os.environ)` copy handed `OPENAI_API_KEY` to every LLM-written candidate. An allowlist built from scratch is leak-proof by construction; the assert is the belt to that braces.
+- The subprocess-based test (rather than inspecting the dict) proves what the *child* actually inherits, not what we think we built.
+- Single-thread caps keep candidate subprocesses from oversubscribing cores; `HOME` in the workspace keeps any stray dotfile writes contained.
+
+**Verification evidence**
+- `pytest tests/test_isolation.py -q -W error` → **7 passed** (5 from T1 + 2 new).
+- Acceptance grep `grep -n "dict(os.environ)\|cwd=self.repo_root" src/agent/candidate_runner.py` → **no hits**.
+- Full suite: **69 passed, 16 subtests, 8.71s** (67 → 69), `-W error`, no API key.
+- **Real end-to-end smoke** (valid `bpr`-family candidate, real dataset, real `executor.train()`): `status: success`, `metrics.primary 0.4837` for all-zero scores — matching the published random-baseline validation ≈ 0.4834, so the official evaluator path composes with the new env/cwd; `test_scores_path` = repo-relative `runs/.../artifacts/001_cand01/test_scores.npy`; saved array **float64 (170588,)**. Scratch run dir deleted.
+- Two smoke lessons (both smoke-harness errors, not code bugs, but worth recording): (1) a *relative* `data_dir` now fails under the workspace cwd — confirming the plan's "every path absolute by construction" invariant is load-bearing; (2) a `run_dir` outside `repo_root` trips the pre-existing `stdout_path.relative_to(repo_root)` in `train()` (caught as a `bad_output`-style failure, no crash). The controller guarantees both invariants; left unchanged, noted for A.
+
+---
+
 ## Queue (next up)
 
-- **T4** — minimal candidate environment (kill the C3 API-key leak); dependency-free, `candidate_runner.py` only. E's `restricted_builtins()` wire-in stays deferred until E announces their T2.
-- Then T5/T6 (same PR as T4 per plan §5), T7, T8; hand-offs per plan §6 (A needs to know T3 is merged: keyword call-site conversion + `test_scores_path` in iterations.jsonl).
+- **T5 + T6** (one PR with T4 per plan §5): six `failure_class` values on every failure path; sanity floor/ceiling + two-sided baseline predicate (`within_baseline_tolerance`), with the ≤20-line PR to A for the two `_ensure_baseline` call sites.
+- Then T7, T8; hand-offs per plan §6.
 
 *Append new entries above this line.*

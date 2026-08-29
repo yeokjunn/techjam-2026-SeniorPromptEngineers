@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import shutil
@@ -9,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..evaluation.datacard import render_data_card
 from ..evaluation.gate import run_gate
 from ..evaluation.official import BASELINE_TOLERANCE, within_baseline_tolerance
 from .audit import ResearchAudit
@@ -31,6 +33,36 @@ from .types import (
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+@functools.lru_cache(maxsize=None)
+def _cached_data_card(data_dir: str) -> str:
+    """Render the data card at most once per data directory per process (I-4).
+
+    ``render_data_card`` scans every KuaiRand CSV: ~2-4 s on the real dataset
+    against ~0 s on a directory that has none of them. Production renders once
+    either way — one ``ResearchLoop`` per process — but the test suite builds
+    ~25 loops against that same directory, which would cost the suite minutes
+    for a string it already has. The renderer is deterministic for a given
+    directory (Owner D pins that in ``test_card_is_deterministic``), so the
+    cache is observationally identical to calling it every time. Keyed on the
+    directory *string* rather than the ``Path``: both hash, only one prints
+    unambiguously in a cache dump.
+    """
+    return render_data_card(Path(data_dir))
+
+
+def _repo_relative(path: Path) -> str:
+    """A POSIX path relative to the repo root when it lives there, else absolute.
+
+    Same rule, and the same reason, as ``candidate_dir`` below: a path recorded
+    in a run's own files is read back on another machine, and T11 accepts no
+    absolute machine paths in the final run's committed artifacts.
+    """
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 # Classification of every exception source the correctness review names (C4).
@@ -247,6 +279,26 @@ class ResearchLoop:
                 },
             )
             self.audit.write_json_atomic(self.run_dir / "interventions.json", [])
+            # I-4: the data card the Researcher's prompt prefix carries. Owner
+            # D renders it, Owner C reads it back off ``state.data_card_path``
+            # (``roles.py:58-71``, appended at ``:85-86``), and the run start is
+            # where the two meet. An operator who named a card in the config
+            # gets that path verbatim: naming one is not a request to make one,
+            # and C's reader already tolerates a file that is not there
+            # (``roles.py:66-69``), so checking it here would only lose the run
+            # earlier. An empty card — no dataset on disk — leaves no file and
+            # no path, so the prompt gains no heading with nothing under it and
+            # the operator gets no line to misread as an error. New runs only:
+            # a resume already carries the path in ``state.json``.
+            configured_card = config.get("data_card_path")
+            if isinstance(configured_card, str) and configured_card:
+                self.state.data_card_path = configured_card
+            else:
+                card = _cached_data_card(str(self.data_dir))
+                if card.strip():
+                    card_path = self.run_dir / "DATA_CARD.md"
+                    self.audit.write_text_atomic(card_path, card)
+                    self.state.data_card_path = _repo_relative(card_path)
         else:
             self.run_dir = resume_dir.resolve()
             self.audit = ResearchAudit(self.run_dir, resume=True)

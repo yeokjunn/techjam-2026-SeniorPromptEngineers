@@ -691,6 +691,8 @@ class ResearchLoop:
                     self.state.stop_reason = "llm_token_budget_reached"
                     break
                 if kind == "proposal":
+                    # The model's fault and already re-prompted: drop this
+                    # proposal, keep the run.
                     self.consecutive_harness_errors = 0
                     self._record_failed_proposal(iteration, exc, "proposal_failed")
                     continue
@@ -708,6 +710,12 @@ class ResearchLoop:
                             "consecutive_harness_errors": self.consecutive_harness_errors,
                         },
                     )
+                    failed = self.audit.start_activity(
+                        self.state.iteration_count,
+                        "persistence",
+                        objective="Record an unexpected controller failure without corrupting the previous best.",
+                    )
+                    self.audit.finish_activity(failed, status="failed", error=str(exc))
                     self.state.stop_reason = "harness_error_breaker"
                     break
                 self._record_failed_proposal(iteration, exc, "harness_error")
@@ -794,7 +802,21 @@ class ResearchLoop:
                 for node in self.state.nodes
             ],
         )
-        render_reports(self.run_dir)
+        # Reporting is the last thing the run does and the least of what it owes:
+        # every artifact above is already on disk, so a rendering fault must cost
+        # the reports and nothing else. It is recorded rather than swallowed, and
+        # in ``research_memory.jsonl`` because ``summary.json`` is already written.
+        try:
+            render_reports(self.run_dir)
+        except Exception as exc:
+            self.audit.append_jsonl(
+                self.run_dir / "research_memory.jsonl",
+                {
+                    "type": "report_error",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
         completed = self.audit.start_activity(
             self.state.iteration_count,
             "completed",

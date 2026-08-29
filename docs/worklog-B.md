@@ -188,9 +188,26 @@ Scope: `docs/reviews/2026-08-28-harness-review/plans/B-gate-contracts.md` (T1–
 
 ---
 
+## 2026-08-29 · T7 — Isolation + evaluator-convention tests (I1, I2)
+
+**Done**
+- `tests/test_official_evaluation.py` (I2) — extended from 1 to 7 tests, each with a hand-computed expectation pinning the kit evaluator's divergent conventions: zero-positive user counted in nDCG (0.0) and excluded from GAUC (GAUC 1.0 / nDCG 0.5 / primary 0.75 / users 2 / rows 4); all-positive user excluded from GAUC; GAUC weighted by positive count (2/3, not 0.5); ties broken by row order via stable sort (labels [0,1] → 1/log2(3), [1,0] → 1.0, GAUC 0.5 both ways); nDCG truncation at k=5 (rank 5 → 1/log2(6), rank 6 → 0.0); users/rows reporting.
+- `tests/test_isolation.py` (I1) — `TrainValidSplitTests`: exactly the keys `{train, valid}` with **1,141,112** / **124,909** rows; every date within 20220408–20220428 with the actual bounds pinned; first 5,000 rows of each split equal `data.load()`'s with matching lengths (row equality ⇒ encoding equality — the kit's `encode` is a pure function of the rows). All under the `skipUnless(REAL_DATA)` guard.
+
+**Justification**
+- I1: a "helpful" `test` key added to `load_train_valid` (or a date-filter regression) previously broke no test; now it breaks three. These invariants are the isolation contract — the moment they drift, train/valid stop matching the official evaluator's world.
+- I2: these six conventions are exactly where a future fast-path evaluator would silently diverge from the kit (tie handling, zero-positive inclusion, positive-count weighting, k-truncation). Hand-computed expectations, not golden-file snapshots of the kit's own output.
+
+**Verification evidence**
+- `pytest tests/test_official_evaluation.py -q -W error` → **7 passed in 0.04s** (plan requires < 0.2s). All six hand-computed values matched the kit's behavior on the first run.
+- **Deviation from plan found and documented:** the plan's I1 expectation "min date 20220408" is factually off — the dataset's earliest standard-log row is **20220409** (verified against the kit's own loader: train 20220409–20220421, valid 20220422–20220428; "4_08" is the nominal window start, not a row date). Test asserts containment plus the actual bounds, with a comment.
+- Full suite: **84 passed, 16 subtests, 19.96s** (75 → 84), `-W error`, no API key. The +11s is the three real-data loads, as expected.
+
+---
+
 ## Queue (next up)
 
-- **T7** — isolation + evaluator-convention tests (I1: split sizes 1,141,112/124,909, the 20220428 cut-off, row-for-row kit equality; I2: six hand-computed evaluator conventions).
-- Then **T8** (regenerate + commit the baseline run), hand-offs per plan §6, DoD sweep.
+- **T8** — regenerate the baseline run with committed code (`env -u OPENAI_API_KEY python -m src.agent.controller --config configs/baseline.json`), verify 0.6016±0.0008 / stop_reason / scrub greps, replace `runs/20260828T141646Z_baseline`, stage exactly five files.
+- Then hand-offs per plan §6 and the DoD sweep. Commit/PR sequence per plan §5: T1+T2 / T3 / T4+T5+T6 / T7 / T8.
 
 *Append new entries above this line.*

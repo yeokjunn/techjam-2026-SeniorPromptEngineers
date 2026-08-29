@@ -261,7 +261,7 @@ def _render_journal(records: list[dict], run_dir: Path, run_config: dict | None,
         if candidate_id != "unknown":
             cp = _candidate_path(generated_root, run_dir.name, int(iteration), candidate_id)
             child_src = _read_candidate_source(cp)
-            child_path_str = str(cp)
+            child_path_str = str(_display_path(cp, run_dir.name))
             if child_src is not None:
                 source_label = "file"
         if child_src is None:

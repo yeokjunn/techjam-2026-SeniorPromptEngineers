@@ -181,7 +181,6 @@ class ResearchLoop:
         self.session_started = time.monotonic()
         self.consecutive_harness_errors = 0
         initialized = self.audit.start_activity(
-        initialized = self.audit.start_activity(
             0,
             "initializing",
             objective="Load the frozen configuration, baseline, method catalog, and run state.",

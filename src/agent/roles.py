@@ -10,7 +10,7 @@ from .audit import ResearchAudit
 from .catalog import MethodCatalog
 from .errors import RoleOutputInvalid, TokenBudgetExceeded
 from .families import FAMILIES, builder_brief, family_names
-from .llm import LLMCallResult, LLMProvider, normalize_parameters
+from .llm import LLMCallResult, LLMProvider, normalize_parameters, schema_fields_note
 from .policy import sanitize_parameters
 from .types import (
     CandidateManifest,
@@ -26,7 +26,9 @@ BASE_INSTRUCTIONS = """You are one role in an autonomous ML research agent for K
 The immutable task is within-user ranking of long_view using validation GAUC and nDCG@5.
 Use train and validation only. Never request or infer hidden-test information. Do not change
 the official evaluator, split, label, budgets, or reference files. Return only the requested
-structured output. Evidence must be attributable to a supplied method card or primary source."""
+structured output: one raw JSON object — no YAML, no markdown code fences, no prose before
+or after the JSON. Use exactly the field names in the RESPONSE CONTRACT supplied below.
+Evidence must be attributable to a supplied method card or primary source."""
 
 
 BASE_CANDIDATE_CONTRACT = """candidate.py must define `run(context, parameters) -> CandidateOutput`.
@@ -161,6 +163,7 @@ class ResearchRoles:
         )
         volatile_block = f"""ROLE: Researcher
 Propose one controlled ranking-loss experiment. {family_rule}
+Set action to exactly one of "explore", "exploit", or "replicate".
 Use the curated cards first. Set needs_web_search=true only if these cards cannot support the decision.
 All parameter fields in the schema must be present; use null only for parameters irrelevant to the family.
 
@@ -169,6 +172,7 @@ RESEARCH STATE:
 """
         if feedback:
             volatile_block += f"\nPREVIOUS ATTEMPT REJECTED: {feedback}"
+        volatile_block += f"\n\n{schema_fields_note('research_decision')}"
         prompt = f"{self._stable_prefix(state, required_family)}\n\n{volatile_block}"
         result = self._call(state, iteration, "researcher", prompt, "research_decision")
         decision = ResearchDecision.from_dict(result.data)
@@ -213,6 +217,7 @@ PROPOSAL: {json.dumps(decision.to_dict(), indent=2, sort_keys=True)}
 """
         if feedback:
             volatile_block += f"\nPREVIOUS ATTEMPT REJECTED: {feedback}"
+        volatile_block += f"\n\n{schema_fields_note('critic_decision')}"
         prompt = f"{self._stable_prefix(state, decision.family)}\n\n{volatile_block}"
         result = self._call(state, iteration, "critic_preflight", prompt, "critic_decision")
         return CriticDecision.from_dict(result.data)
@@ -230,6 +235,7 @@ PROPOSAL:
 """
         if feedback:
             volatile_block += f"\nPREVIOUS ATTEMPT REJECTED: {feedback}"
+        volatile_block += f"\n\n{schema_fields_note('candidate_manifest')}"
         prompt = f"{self._stable_prefix(state, decision.family)}\n\n{volatile_block}"
         result = self._call(state, iteration, "builder", prompt, "candidate_manifest")
         manifest = CandidateManifest.from_dict(result.data)
@@ -256,6 +262,7 @@ CODE: {manifest.code}
 TESTS: {manifest.tests}
 ERROR: {error}
 """
+        volatile_block += f"\n\n{schema_fields_note('debug_decision')}"
         prompt = f"{self._stable_prefix(state, decision.family)}\n\n{volatile_block}"
         result = self._call(
             state,
@@ -287,6 +294,7 @@ PROPOSAL: {json.dumps(decision.to_dict(), indent=2, sort_keys=True)}
 TRUSTED METRICS: {json.dumps(metrics, indent=2, sort_keys=True)}
 DIAGNOSTICS: {json.dumps(diagnostics, indent=2, sort_keys=True)}
 """
+        volatile_block += f"\n\n{schema_fields_note('critic_decision')}"
         prompt = f"{self._stable_prefix(state, decision.family)}\n\n{volatile_block}"
         result = self._call(state, iteration, "critic_postflight", prompt, "critic_decision")
         return CriticDecision.from_dict(result.data)

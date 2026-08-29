@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -199,6 +200,217 @@ def _extract_sources(output: Any) -> tuple[list[str], list[dict[str, str]]]:
     return tool_calls, list(unique.values())
 
 
+def _parse_structured_output(output_text: str, response_id: str) -> dict[str, Any]:
+    """Parse a structured role output, tolerating provider wrapping drift.
+
+    Observed live on the GLM Responses endpoint despite ``strict`` json_schema
+    formatting: markdown-fenced JSON (````` ```json `````), JSON with prose
+    before or after it, and outright YAML documents. Try the fence-stripped
+    body, the raw text, and the outermost brace slice in order; on failure
+    embed the raw head and tail in the error so the drift stays diagnosable
+    (pass records are only written on success).
+    """
+    text = output_text.strip()
+    candidates: list[str] = []
+    if text.startswith("```"):
+        opener_end = text.find("\n")
+        if opener_end != -1:
+            body = text[opener_end + 1 :]
+            stripped = body.rstrip()
+            if stripped.endswith("```"):
+                stripped = stripped[:-3]
+            candidates.append(stripped.strip())
+    candidates.append(text)
+    brace_start = text.find("{")
+    brace_end = text.rfind("}")
+    if brace_start != -1 and brace_end > brace_start:
+        candidates.append(text[brace_start : brace_end + 1])
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    head = output_text[:300].replace("\n", "\\n")
+    tail = output_text[-200:].replace("\n", "\\n")
+    raise RoleOutputInvalid(
+        f"OpenAI response {response_id} contained invalid JSON. head={head!r} tail={tail!r}"
+    )
+
+
+_ACTION_SYNONYMS = {
+    "propose_experiment": "explore",
+    "propose": "explore",
+    "new_experiment": "explore",
+    "explore_new": "explore",
+    "improve_best": "exploit",
+    "exploit_best": "exploit",
+    "refine": "exploit",
+    "replicate_best": "replicate",
+}
+
+
+def _coerce_bool(value: Any) -> Any:
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes"}:
+            return True
+        if lowered in {"false", "no"}:
+            return False
+    return value
+
+
+_EVIDENCE_KEY_MAP = {
+    "claim": "title",
+    "source": "url",
+    "card": "method_card_id",
+    "method_card": "method_card_id",
+}
+
+_PARAMETER_ALIASES = {
+    "embedding_dim": "k",
+    "num_groups_negatives": "negatives_per_group",
+    "negatives": "negatives_per_positive",
+    "neg_per_positive": "negatives_per_positive",
+    "lr": "learning_rate",
+}
+
+
+def _remap_evidence_item(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    remapped = dict(item)
+    for source_key, target_key in _EVIDENCE_KEY_MAP.items():
+        if source_key in remapped and target_key not in remapped:
+            remapped[target_key] = remapped.pop(source_key)
+    return remapped
+
+
+def _normalize_parameters_dict(parameters: dict[str, Any]) -> dict[str, Any]:
+    remapped: dict[str, Any] = {}
+    for name, value in parameters.items():
+        target = _PARAMETER_ALIASES.get(name, name)
+        if target in PARAMETER_PROPERTIES and target not in remapped:
+            remapped[target] = value
+    return remapped
+
+
+def _normalize_schema_output(schema_name: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort conformance pass for providers with loose json_schema enforcement.
+
+    Some OpenAI-compatible providers (observed live: the GLM Responses endpoint
+    returning ``action: "propose_experiment"`` and undeclared ``decision_basis``
+    keys despite ``strict`` formatting) accept the schema but do not enforce
+    enums, required fields, or ``additionalProperties``. Normalize mechanically
+    derivable drift here so the strict ``from_dict`` validators in ``types.py``
+    see conformant data; anything substantive still missing raises there and
+    takes the normal re-prompt path.
+    """
+    schema = SCHEMAS[schema_name]
+    properties = schema.get("properties", {})
+    normalized: dict[str, Any] = {}
+    for key, value in data.items():
+        if key not in properties:
+            continue  # drop undeclared extras (e.g. "control", "decision_basis")
+        if properties[key].get("type") == "boolean":
+            value = _coerce_bool(value)
+        if key == "action" and isinstance(value, str):
+            value = _ACTION_SYNONYMS.get(value.strip().lower(), value)
+        if key == "family" and isinstance(value, str):
+            candidate = value.strip().lower().replace(" ", "_").replace("-", "_")
+            if candidate in FAMILY_ENUM:
+                value = candidate
+        if key == "evidence" and isinstance(value, list):
+            value = [_remap_evidence_item(item) for item in value]
+        if key == "parameters" and isinstance(value, dict):
+            value = _normalize_parameters_dict(value)
+        normalized[key] = value
+    # A missing action is mechanically derivable from parent linkage: a proposal
+    # without a parent explores; one building on a parent experiment exploits.
+    if schema_name == "research_decision" and "action" not in normalized:
+        parent = normalized.get("parent_experiment")
+        normalized["action"] = "exploit" if parent else "explore"
+    # A missing hypothesis_id is derivable deterministically from the content it
+    # names; it only has to stay unique and stable for builder/ledger pinning.
+    if schema_name in {"research_decision", "candidate_manifest"} and "hypothesis_id" not in normalized:
+        basis = str(normalized.get("hypothesis", "")) or str(normalized.get("code", ""))
+        family = str(normalized.get("family", "exp"))
+        digest = hashlib.sha1(basis.encode("utf-8")).hexdigest()[:8]
+        normalized["hypothesis_id"] = f"{family}-auto-{digest}"
+    return normalized
+
+
+def schema_fields_note(schema_name: str) -> str:
+    """Render the exact response contract from ``SCHEMAS`` for role prompts.
+
+    Providers that do not enforce ``text.format`` (observed live: the GLM
+    Responses endpoint emitting YAML or self-invented structures) never surface
+    the schema to the model, so the prompt itself must carry the field names,
+    types, and enums. Rendering from ``SCHEMAS`` keeps this note true by
+    construction instead of a second hand-maintained copy.
+    """
+    schema = SCHEMAS[schema_name]
+    required = schema.get("required", [])
+    lines = []
+    for name, prop in schema.get("properties", {}).items():
+        if "enum" in prop:
+            rendered = "|".join(str(option) for option in prop["enum"])
+        elif isinstance(prop.get("type"), list):
+            rendered = "|".join(str(option) for option in prop["type"])
+        else:
+            rendered = str(prop.get("type", "value"))
+        marker = "" if name in required else " (optional)"
+        lines.append(f"- {name}: {rendered}{marker}")
+    note = (
+        "RESPONSE CONTRACT — respond with one raw JSON object (no YAML, no "
+        "markdown fences, no prose) containing exactly these top-level fields:\n"
+        + "\n".join(lines)
+    )
+    if schema_name == "research_decision":
+        note += (
+            "\nEach evidence item is an object with exactly the keys: title, url, method_card_id."
+            "\nparameters is an object containing only these keys: "
+            + ", ".join(PARAMETER_PROPERTIES)
+            + " — use null for keys irrelevant to the chosen family."
+        )
+    if schema_name == "candidate_manifest":
+        note += (
+            "\ncode and tests are JSON strings holding complete Python source; escape all"
+            "\nnewlines and quotes correctly. Keep candidate.py under 120 lines and"
+            "\ntest_candidate.py under 60 lines."
+            "\nUse only these exact import spellings (a static allowlist matches them"
+            "\nliterally): import numpy as np; import time; from collections import ...;"
+            "\nfrom src.models.fm_core import FMRanker;"
+            "\nfrom src.models.sampling import sample_bpr_pairs, sample_softmax_groups;"
+            "\nfrom src.models.features import build_features, build_aux_labels;"
+            "\nfrom src.experiments.contracts import CandidateOutput."
+            "\nNever write 'from src.models import ...' or 'import src.models' — import"
+            "\nthe specific module."
+            "\nAccess context attributes directly (context.test_x is None); getattr,"
+            "\nsetattr, eval, and exec are statically rejected."
+            "\nTrusted primitive signatures — call them exactly like this:"
+            "\n- FMRanker(dimension, embedding_dim=16, learning_rate=0.001, l2=1e-6, seed=0)"
+            "\n  where dimension is the total feature-index count (context.field_dimension);"
+            "\n  the embedding-size parameter is named embedding_dim, never k."
+            "\n- model.gradients(features, score_gradients) -> (grad_v, grad_w, grad_b)"
+            "\n- model.apply_gradients(grad_v, grad_w, grad_b=0.0)  # learning rate is"
+            "\n  set at FMRanker construction, never passed per step"
+            "\n- model.predict(features) -> scores"
+            "\n- sample_bpr_pairs(users, labels, rng, negatives_per_positive=1)"
+            "\n  -> (positive_idx, negative_idx)"
+            "\n- sample_softmax_groups(users, labels, rng, negatives_per_group=4)"
+            "\n  -> (positive_idx, negative_groups)"
+            "\n  In both samplers rng is the THIRD argument."
+            "\n- CandidateOutput(validation_scores, checkpoint_state, training_trace,"
+            "\n  diagnostics, test_scores)  # the dict field is named checkpoint_state"
+            "\n- context.train_x / valid_x / test_x are integer index matrices (never"
+            "\n  float), shape (rows, n_fields), values < context.field_dimension; fake"
+            "\n  contexts in tests must build integer arrays (e.g. rng.integers)."
+            "\ntest_candidate.py must define unittest.TestCase classes; the runner is"
+            "\n`python -m unittest`, and pytest-style bare functions collect zero tests."
+        )
+    return note
+
+
 class OpenAIResponsesProvider:
     def __init__(self, config: dict[str, Any]):
         load_project_environment()
@@ -323,17 +535,27 @@ class OpenAIResponsesProvider:
                 )
                 retries += 1
                 continue
+            try:
+                data = _parse_structured_output(output_text, str(getattr(response, "id", "")))
+                data = _normalize_schema_output(schema_name, data)
+            except RoleOutputInvalid:
+                # A malformed payload (observed live: YAML or truncated JSON from
+                # glm-5.3-flash) is worth one more sample, bounded by max_retries,
+                # before paying the full role re-prompt cycle.
+                if attempt + 1 >= max_attempts:
+                    raise
+                time.sleep(
+                    min(
+                        BACKOFF_MAX_SECONDS,
+                        BACKOFF_INITIAL_SECONDS * (2**attempt),
+                    )
+                )
+                retries += 1
+                continue
             break
 
         if response is None:
             raise IncompleteResponse("OpenAI did not return a response.")
-        output_text = getattr(response, "output_text", "") or ""
-        try:
-            data = json.loads(output_text)
-        except json.JSONDecodeError as exc:
-            raise RoleOutputInvalid(
-                f"OpenAI response {getattr(response, 'id', '')} contained invalid JSON."
-            ) from exc
         usage_obj = _to_plain(getattr(response, "usage", None)) or {}
         input_details = usage_obj.get("input_tokens_details", {}) or {}
         tool_calls, sources = _extract_sources(getattr(response, "output", []))

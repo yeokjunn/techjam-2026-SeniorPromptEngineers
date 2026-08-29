@@ -134,6 +134,37 @@ class CandidateOutputTests(unittest.TestCase):
             self.assertIsNone(payload["test_scores_path"])
             self.assertFalse((Path(directory) / "test_scores.npy").exists())
 
+    def test_ceiling_hit_is_marked_as_leak(self):
+        # The canonical perfect-ranking fixture scores primary 1.0 — above the
+        # leak ceiling — so it doubles as the ceiling case: the ledger keeps
+        # the number, the payload flags it, nothing raises.
+        output = CandidateOutput(
+            validation_scores=np.asarray([1.0, 0.0]),
+            checkpoint_state={"weights": np.asarray([1.0])},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            payload = validate_and_persist_output(
+                output,
+                ["user", "user"],
+                np.asarray([1, 0], dtype=np.float32),
+                Path(directory),
+            )
+            self.assertEqual(payload["sanity_class"], "leak")
+
+    def test_floor_miss_is_marked_low_score(self):
+        output = CandidateOutput(
+            validation_scores=np.asarray([0.0, 1.0]),  # perfectly inverted
+            checkpoint_state={},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            payload = validate_and_persist_output(
+                output,
+                ["user", "user"],
+                np.asarray([1, 0], dtype=np.float32),
+                Path(directory),
+            )
+            self.assertEqual(payload["sanity_class"], "low_score")
+
 
 if __name__ == "__main__":
     unittest.main()

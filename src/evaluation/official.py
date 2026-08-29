@@ -18,6 +18,10 @@ TEST_START = 20220429
 TEST_END = 20220508
 TEST_ROWS = 170_588
 LABEL_PLACEHOLDER = -1
+SANITY_FLOOR = 0.47
+SANITY_CEILING = 0.80
+OFFICIAL_VALIDATION_BASELINE = 0.6016
+BASELINE_TOLERANCE = 0.003
 
 
 @lru_cache(maxsize=1)
@@ -133,6 +137,36 @@ def load_test_meta(data_dir: Path, *, expected_rows: int | None = None) -> TestS
         )
     meta = tuple((index, row[1], row[2]) for index, row in enumerate(rows))
     return TestSplit(meta=meta, rows=tuple(rows))
+
+
+def classify_primary(primary: float) -> str | None:
+    """Sanity band for a trusted validation primary (review I11).
+
+    Below the floor the run learned nothing; above the ceiling the number is
+    more plausibly a leak than a result (the oracle primary is 0.8484 on
+    validation, and 27.1% of test users are all-negative). ``None`` means the
+    value is plausible. Purely a classifier — callers decide what to do.
+    """
+    if primary < SANITY_FLOOR:
+        return "low_score"
+    if primary > SANITY_CEILING:
+        return "leak"
+    return None
+
+
+def within_baseline_tolerance(
+    primary: float,
+    official: float = OFFICIAL_VALIDATION_BASELINE,
+    tolerance: float = BASELINE_TOLERANCE,
+) -> bool:
+    """Two-sided baseline predicate: a reproduction must match, not merely clear.
+
+    The old one-sided gate accepted anything >= official - 0.002, so a leaked
+    0.85 counted as a successful baseline reproduction. The cushion keeps the
+    boundary inclusive under binary floats (|0.5986 - 0.6016| computes a hair
+    above 0.003, not exactly it).
+    """
+    return abs(primary - official) <= tolerance + 1e-12
 
 
 def official_evaluate(user_ids, labels, scores) -> dict[str, float]:

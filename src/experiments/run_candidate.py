@@ -11,6 +11,7 @@ import numpy as np
 
 from src.evaluation.official import (
     TEST_ROWS,
+    classify_primary,
     load_test_meta,
     load_train_valid,
     official_evaluate,
@@ -142,7 +143,9 @@ def validate_and_persist_output(
         "test_scores_path": (
             _repo_relative(test_scores_path) if test_scores_path is not None else None
         ),
-        "sanity_class": None,  # T6: classify_primary(metrics["primary"])
+        # Classified, never raised: result.json still gets written so the
+        # ledger keeps the number; the runner decides what it means.
+        "sanity_class": classify_primary(float(metrics["primary"])),
     }
 
 

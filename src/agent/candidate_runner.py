@@ -15,6 +15,8 @@ from .safety import (
     validate_identifier,
     validate_source,
 )
+from src.evaluation.official import SANITY_CEILING, SANITY_FLOOR
+
 from .types import CandidateManifest, ExperimentOutcome
 
 
@@ -177,11 +179,30 @@ class CandidateExecutor:
                     stdout_path=str(stdout_path.relative_to(self.repo_root)),
                     stderr_path=str(stderr_path.relative_to(self.repo_root)),
                     command=command,
+                    failure_class="crash",
                 )
             payload = json.loads(result_path.read_text(encoding="utf-8"))
             metrics = {key: float(value) for key, value in payload["metrics"].items()}
             if any(not math.isfinite(value) for value in metrics.values()):
                 raise ValueError("Worker returned a non-finite trusted metric.")
+            sanity_class = payload.get("sanity_class")
+            if sanity_class is not None:
+                # A leaked 0.99 or a learned-nothing 0.40: keep the number in
+                # the ledger, never promote it, and not worth a repair round.
+                return ExperimentOutcome(
+                    status="failed",
+                    metrics=metrics,
+                    duration_seconds=duration,
+                    error=(
+                        f"Validation primary {metrics['primary']:.6f} is outside "
+                        f"the sanity band [{SANITY_FLOOR}, {SANITY_CEILING}]."
+                    ),
+                    recovery="Rejected without promotion; previous best retained.",
+                    stdout_path=str(stdout_path.relative_to(self.repo_root)),
+                    stderr_path=str(stderr_path.relative_to(self.repo_root)),
+                    command=command,
+                    failure_class=sanity_class,
+                )
             test_scores_status = str(payload.get("test_scores_status", "not_required"))
             if test_scores_status not in ("ok", "not_required"):
                 # Keep metrics so the ledger retains the number, but never
@@ -223,6 +244,7 @@ class CandidateExecutor:
                 stdout_path=str(stdout_path.relative_to(self.repo_root)),
                 stderr_path=str(stderr_path.relative_to(self.repo_root)),
                 command=command,
+                failure_class="timeout",
             )
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
             return ExperimentOutcome(
@@ -232,6 +254,7 @@ class CandidateExecutor:
                 error=f"Invalid candidate result: {exc}",
                 recovery="Result was rejected; previous best remains intact.",
                 command=command,
+                failure_class="bad_output",
             )
 
 

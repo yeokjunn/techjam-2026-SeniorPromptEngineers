@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,11 +13,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.agent.candidate_runner import CandidateExecutor, CandidateWorkspace
+from src.agent.types import CandidateManifest
 from src.evaluation.official import (
     LABEL_PLACEHOLDER,
     TEST_ROWS,
+    classify_primary,
     load_test_meta,
     starter_modules,
+    within_baseline_tolerance,
 )
 
 
@@ -184,6 +189,109 @@ class CandidateEnvironmentTests(unittest.TestCase):
         self.assertEqual(
             Path(completed.stdout.strip()).resolve(), workspace.directory.resolve()
         )
+
+
+FAILURE_CLASSES = {
+    "timeout",
+    "crash",
+    "bad_output",
+    "low_score",
+    "leak",
+    "missing_test_scores",
+}
+
+TRIVIAL_CANDIDATE_CODE = (
+    "import numpy as np\n"
+    "from src.experiments.contracts import CandidateOutput\n"
+    "from src.models.sampling import sample_bpr_pairs\n"
+    "def run(context, parameters):\n"
+    "    sample_bpr_pairs(context.train_users, context.train_y, np.random.default_rng(0), 1)\n"
+    "    return CandidateOutput(np.zeros(len(context.valid_x)), {}, [], {})\n"
+)
+TRIVIAL_CANDIDATE_TESTS = (
+    "import unittest\n"
+    "import candidate\n"
+    "class ContractTests(unittest.TestCase):\n"
+    "    def test_callable(self):\n"
+    "        self.assertTrue(callable(candidate.run))\n"
+)
+
+
+class FailureClassTests(unittest.TestCase):
+    def test_failure_classes_cover_every_return_path(self):
+        source = (
+            REPO_ROOT / "src" / "agent" / "candidate_runner.py"
+        ).read_text(encoding="utf-8")
+        failed_calls = 0
+        for node in ast.walk(ast.parse(source)):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "ExperimentOutcome"
+            ):
+                continue
+            status = None
+            failure_class = None
+            keyword_present = False
+            for keyword in node.keywords:
+                if keyword.arg == "status" and isinstance(keyword.value, ast.Constant):
+                    status = keyword.value.value
+                if keyword.arg == "failure_class":
+                    keyword_present = True
+                    if isinstance(keyword.value, ast.Constant):
+                        failure_class = keyword.value.value
+            if status != "failed":
+                continue
+            failed_calls += 1
+            # Every failed outcome carries the keyword; literal values must be
+            # members of the frozen six-value set (the sanity branch passes a
+            # runtime value whose domain classify_primary's bounds test pins).
+            self.assertTrue(keyword_present, "failed outcome without failure_class")
+            if failure_class is not None:
+                self.assertIn(failure_class, FAILURE_CLASSES)
+        self.assertGreaterEqual(failed_calls, 4)
+
+    def test_timeout_outcome_is_classified(self):
+        # train() reports stdout paths relative to the repo root, so the run
+        # dir must live under it (the controller guarantees this invariant).
+        run_root = Path(tempfile.mkdtemp(dir=REPO_ROOT))
+        self.addCleanup(shutil.rmtree, run_root, ignore_errors=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = CandidateWorkspace(root / "generated", "run0001", 1, "cand01")
+            manifest = CandidateManifest(
+                candidate_id="cand01",
+                hypothesis_id="h1",
+                family="bpr",
+                code=TRIVIAL_CANDIDATE_CODE,
+                tests=TRIVIAL_CANDIDATE_TESTS,
+                parameters={},
+            )
+            workspace.write(manifest)
+            executor = CandidateExecutor(
+                repo_root=REPO_ROOT,
+                data_dir=root / "data_dir",
+                experiment_timeout_seconds=0,
+                test_timeout_seconds=60,
+            )
+            outcome = executor.train(1, manifest, workspace, run_root)
+        self.assertEqual(outcome.status, "failed")
+        self.assertEqual(outcome.failure_class, "timeout")
+
+
+class SanityBoundsTests(unittest.TestCase):
+    def test_classify_primary_bounds(self):
+        self.assertEqual(classify_primary(0.4699), "low_score")
+        self.assertIsNone(classify_primary(0.47))
+        self.assertIsNone(classify_primary(0.80))
+        self.assertEqual(classify_primary(0.8001), "leak")
+        self.assertIsNone(classify_primary(0.6015))
+
+    def test_within_baseline_tolerance_is_two_sided(self):
+        for value in (0.5986, 0.6046):
+            self.assertTrue(within_baseline_tolerance(value), value)
+        for value in (0.5985, 0.6047, 0.85):
+            self.assertFalse(within_baseline_tolerance(value), value)
 
 
 if __name__ == "__main__":

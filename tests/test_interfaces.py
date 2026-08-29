@@ -128,13 +128,13 @@ class ProviderFactoryTests(unittest.TestCase):
 
 
 class StubTests(unittest.TestCase):
-    def test_gate_stub_reports_not_implemented(self):
+    def test_gate_reports_error_when_scores_are_missing(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
             result = run_gate(path, path, path, path)
-        self.assertEqual(result.status, "not_implemented")
+        self.assertEqual(result.status, "error")
         self.assertIsNone(result.submission_path)
-        self.assertEqual(asdict(result)["details"], {})
+        self.assertEqual(asdict(result)["details"]["reason"], "missing_test_scores")
 
     def test_data_card_stub_renders_nothing_yet(self):
         self.assertEqual(render_data_card(Path(".")), "")

@@ -12,6 +12,7 @@ from .models import (
     ChangeSummary,
     DashboardConfig,
     IterationSnapshot,
+    RolePass,
     RunSnapshot,
     StageTransition,
     SubmissionCheck,
@@ -136,20 +137,123 @@ def _transition(value: dict[str, Any]) -> StageTransition:
     )
 
 
-def _iteration(value: dict[str, Any]) -> IterationSnapshot:
+def load_role_passes(run_dir: Path | None, iteration: int) -> tuple[RolePass, ...]:
+    if run_dir is None:
+        return ()
+    passes_dir = run_dir / "passes"
+    if not passes_dir.is_dir():
+        return ()
+    pattern = f"{iteration:03d}_*.json"
+    files = sorted(passes_dir.glob(pattern))
+    results: list[RolePass] = []
+    for index, file_path in enumerate(files):
+        data = _read_json(file_path, {}) or {}
+        prompt = str(data.get("prompt", ""))
+        res = data.get("result") or {}
+        role = str(res.get("role") or data.get("role") or file_path.stem.split("_", 1)[-1])
+        model = str(res.get("model", "unknown"))
+        latency = float(res.get("latency_seconds", 0.0))
+        usage = dict(res.get("usage") or {})
+        res_data = dict(res.get("data") or {})
+        sources = tuple(dict(s) for s in res.get("sources", []))
+        tool_calls = tuple(dict(tc) for tc in res.get("tool_calls", []))
+        retries = int(res.get("retries", 0))
+        results.append(
+            RolePass(
+                sequence=index,
+                role=role,
+                prompt=prompt,
+                model=model,
+                latency_seconds=latency,
+                usage=usage,
+                data=res_data,
+                sources=sources,
+                tool_calls=tool_calls,
+                retries=retries,
+            )
+        )
+    return tuple(results)
+
+
+def load_candidate_files(
+    run_dir: Path, candidate_dir: str | Path | None
+) -> tuple[str | None, str | None]:
+    code: str | None = None
+    tests: str | None = None
+    if candidate_dir:
+        cand_path = Path(candidate_dir)
+        if not cand_path.is_absolute():
+            cand_path = REPO_ROOT / cand_path
+        if cand_path.is_dir():
+            code_file = cand_path / "candidate.py"
+            test_file = cand_path / "test_candidate.py"
+            if code_file.is_file():
+                try:
+                    code = code_file.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+            if test_file.is_file():
+                try:
+                    tests = test_file.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+    return code, tests
+
+
+def load_gate_result(run_dir: Path) -> dict[str, Any] | None:
+    gate_done = _read_json(run_dir / "gate_done.json")
+    if isinstance(gate_done, dict):
+        return gate_done
+    summary = _read_json(run_dir / "summary.json") or {}
+    if isinstance(summary.get("gate"), dict):
+        return summary["gate"]
+    return None
+
+
+def load_journal_reports(run_dir: Path) -> tuple[str | None, str | None]:
+    journal_text: str | None = None
+    results_text: str | None = None
+    journal_path = run_dir / "journal.md"
+    results_path = run_dir / "results.md"
+    if journal_path.is_file():
+        try:
+            journal_text = journal_path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    if results_path.is_file():
+        try:
+            results_text = results_path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    return journal_text, results_text
+
+
+def _iteration(value: dict[str, Any], run_dir: Path | None = None) -> IterationSnapshot:
     proposal = value.get("proposal") if isinstance(value.get("proposal"), dict) else {}
     outcome = value.get("outcome") if isinstance(value.get("outcome"), dict) else {}
+    manifest = value.get("manifest") if isinstance(value.get("manifest"), dict) else {}
     experiment_id = (
-        (value.get("manifest") or {}).get("candidate_id")
-        if isinstance(value.get("manifest"), dict)
-        else None
-    ) or value.get("experiment_id") or f"iteration_{value.get('iteration', 0)}"
+        manifest.get("candidate_id")
+        or value.get("experiment_id")
+        or f"iteration_{value.get('iteration', 0)}"
+    )
     parameters = proposal.get("parameters") or value.get("configuration") or {}
     hypothesis = proposal.get("hypothesis") or value.get("hypothesis") or ""
     family = proposal.get("family") or value.get("kind") or ""
     parent = proposal.get("parent_experiment") or value.get("parent_experiment")
+    it_num = int(value.get("iteration", 0))
+
+    role_passes = load_role_passes(run_dir, it_num)
+    code = manifest.get("code")
+    tests = manifest.get("tests")
+    if (not code or not tests) and run_dir:
+        cand_dir = value.get("candidate_dir")
+        loaded_code, loaded_tests = load_candidate_files(run_dir, cand_dir)
+        code = code or loaded_code
+        tests = tests or loaded_tests
+
     return IterationSnapshot(
-        iteration=int(value.get("iteration", 0)),
+        iteration=it_num,
         experiment_id=str(experiment_id),
         status=str(value.get("status") or outcome.get("status") or "unknown"),
         hypothesis=str(hypothesis),
@@ -162,6 +266,9 @@ def _iteration(value: dict[str, Any]) -> IterationSnapshot:
         repairs=int(value.get("repairs", 0)),
         change_summary=_change(value.get("change_summary")),
         agent_notes=dict(value.get("agent_notes") or {}),
+        candidate_code=code,
+        candidate_tests=tests,
+        role_passes=role_passes,
         raw=value,
     )
 
@@ -198,6 +305,7 @@ def load_run_snapshot(run_dir: Path, official_baseline: float = 0.6016) -> RunSn
     summary = _read_json(run_dir / "summary.json", {}) or {}
     state = _read_json(run_dir / "state.json", {}) or {}
     resources = _read_json(run_dir / "resources.json", {}) or {}
+    run_config = _read_json(run_dir / "run_config.json", {}) or {}
     records, iteration_warnings = _read_jsonl(run_dir / "iterations.jsonl")
     timeline, activity_warnings = load_activity_timeline(run_dir)
     current = load_current_activity(run_dir)
@@ -216,6 +324,8 @@ def load_run_snapshot(run_dir: Path, official_baseline: float = 0.6016) -> RunSn
     else:
         status = "incomplete"
     nodes = state.get("nodes") or _read_json(run_dir / "experiment_tree.json", []) or []
+    gate_info = load_gate_result(run_dir)
+    journal_md, results_md = load_journal_reports(run_dir)
     return RunSnapshot(
         run_id=str(summary.get("run_id") or state.get("run_id") or run_dir.name),
         path=run_dir,
@@ -225,12 +335,16 @@ def load_run_snapshot(run_dir: Path, official_baseline: float = 0.6016) -> RunSn
         best_experiment_id=best.get("experiment_id"),
         best_metrics=_metrics(best.get("metrics")),
         baseline_primary=float(state.get("baseline_primary", official_baseline)),
-        iterations=tuple(_iteration(item) for item in records),
+        iterations=tuple(_iteration(item, run_dir=run_dir) for item in records),
         activity=current,
         transitions=timeline,
         resources=dict(resources),
         nodes=tuple(nodes),
         warnings=tuple(iteration_warnings) + tuple(activity_warnings),
+        gate_info=gate_info,
+        journal_markdown=journal_md,
+        results_markdown=results_md,
+        run_config=dict(run_config),
     )
 
 

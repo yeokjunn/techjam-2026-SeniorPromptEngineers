@@ -10,12 +10,19 @@ errors trips the circuit breaker. ``stop_reason`` is never ``controller_error``.
 from __future__ import annotations
 
 import contextlib
+import io
 import json
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
+from src.agent import controller
+from src.agent.audit import ResearchAudit
+from src.agent.controller import _source_manifest
 from src.agent.errors import (
     IncompleteResponse,
     LLMError,
@@ -23,8 +30,20 @@ from src.agent.errors import (
     TokenBudgetExceeded,
 )
 from src.agent.llm import LLMCallResult
-from src.agent.research_controller import ResearchLoop, _error_kind, _is_budget_error
-from src.agent.types import ExperimentNode, ExperimentOutcome, TokenUsage
+from src.agent.research_controller import (
+    ResearchLoop,
+    _ensure_baseline,
+    _error_kind,
+    _is_budget_error,
+    _latest_valid_baseline,
+)
+from src.agent.types import (
+    CriticDecision,
+    ExperimentNode,
+    ExperimentOutcome,
+    ResearchDecision,
+    TokenUsage,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -567,6 +586,542 @@ class OperatorInterruptTests(unittest.TestCase):
             self.assertEqual(memory(loop.run_dir, "role_retry"), [])
             self.assertFalse((loop.run_dir / "error.json").is_file())
             self.assertFalse((loop.run_dir / "summary.json").is_file())
+
+
+# --------------------------------------------------------------------------- #
+# Baseline adoption: recorded revision, real artifact, every skip logged
+# (T2 -> C5 + I12, carrying B's I11 two-sided tolerance gate)
+# --------------------------------------------------------------------------- #
+
+
+# The artifact path the stale committed baseline actually carries (review C5):
+# a Windows absolute path from another machine. It is not absolute on this OS,
+# so ``_resolve_repo_path`` folds it under the repo root and it does not exist.
+WINDOWS_ARTIFACT = (
+    r"C:\Users\Admin\OneDrive - Nanyang Technological University"
+    r"\runs\20260828T141646Z_baseline\test_scores.npy"
+)
+STALE_REVISION = "0" * 64
+
+
+def write_baseline_run(
+    run_root: Path,
+    run_id: str,
+    *,
+    primary: float = 0.6015,
+    experiment_id: str = "official_fm_seed0",
+    revision: str | None = None,
+    with_manifest: bool = True,
+    artifact_path: str | None = None,
+) -> Path:
+    """Build one ``<run_root>/<run_id>/`` baseline fixture; return its summary path.
+
+    Defaults describe an *adoptable* baseline: the official experiment id, a
+    primary inside the two-sided tolerance of 0.6016, a ``source_manifest.json``
+    recording the current source revision, and an artifact that exists. Each
+    keyword turns exactly one of those admission checks off.
+    """
+    run_dir = run_root / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    if artifact_path is None:
+        artifact = run_dir / "test_scores.npy"
+        artifact.write_bytes(b"\x00")
+        artifact_path = str(artifact)
+    if with_manifest:
+        (run_dir / "source_manifest.json").write_text(
+            json.dumps({"revision": revision or _source_manifest()["revision"]}),
+            encoding="utf-8",
+        )
+    (run_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "completed",
+                "best": {
+                    "experiment_id": experiment_id,
+                    "metrics": {"GAUC": 0.6671, "nDCG@5": 0.5358, "primary": primary},
+                    "artifact_path": artifact_path,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return run_dir / "summary.json"
+
+
+def write_raw_summary(run_root: Path, run_id: str, text: str) -> Path:
+    """A ``runs/<id>/summary.json`` holding exactly ``text``, well-formed or not."""
+    run_dir = run_root / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / "summary.json"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def baseline_config(root: Path) -> dict[str, Any]:
+    """A research config whose ``run_root`` is the fixture tree, nothing else."""
+    return {
+        "mode": "research",
+        "name": "baseline-selection",
+        "data_dir": str(REPO_ROOT / "data" / "KuaiRand-Pure" / "data"),
+        "run_root": str(root / "runs"),
+        "generated_root": str(root / "generated"),
+        "method_catalog": str(REPO_ROOT / "research" / "methods"),
+        "official_validation_baseline": 0.6016,
+        "llm": {"max_total_tokens": 1000},
+        "budgets": {
+            "max_iterations": 1,
+            "max_wall_clock_seconds": 60,
+            "experiment_timeout_seconds": 10,
+            "test_timeout_seconds": 10,
+            "max_debug_repairs": 2,
+        },
+        "convergence": {"epsilon": 0.002, "patience": 3},
+        "replication_seeds": [1, 2],
+    }
+
+
+def adopting_loop(root: Path, baseline_summary: dict[str, Any] | None = None) -> ResearchLoop:
+    """Construct a real ``ResearchLoop``, by default with **no** injected baseline.
+
+    Every other test in the repo passes ``baseline_summary=``; these must not, or
+    ``_ensure_baseline`` never runs and the selection is not exercised. Passing
+    one takes the other branch of the same call site, which is how the injected
+    path's empty skip list is pinned.
+    """
+    config = baseline_config(root)
+    config_path = root / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    return ResearchLoop(
+        config,
+        config_path,
+        provider=ProgrammedProvider([]),
+        baseline_summary=baseline_summary,
+    )
+
+
+def selection_of(run_dir: Path) -> dict[str, Any]:
+    return json.loads((run_dir / "baseline_selection.json").read_text(encoding="utf-8"))
+
+
+def skip_reasons(skipped: list[dict[str, str]]) -> dict[str, str]:
+    return {record["path"]: record["reason"] for record in skipped}
+
+
+class BaselineSelectionTests(unittest.TestCase):
+    def test_baseline_is_rejected_when_the_source_revision_differs(self):
+        """A summary produced by code that is no longer on disk is not adoptable.
+
+        This is C5's core: ``runs/20260828T141646Z_baseline/`` was written by code
+        in no commit in this range, yet its metrics were adopted wholesale as the
+        number every later experiment is compared against.
+        """
+        revision = _source_manifest()["revision"]
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = Path(directory) / "runs"
+            stale = write_baseline_run(
+                run_root, "20260828T141646Z_baseline", revision=STALE_REVISION
+            )
+
+            selected, skipped = _latest_valid_baseline(run_root, 0.6016, revision)
+            self.assertIsNone(selected)
+            self.assertEqual(skipped, [{"path": str(stale), "reason": "revision_mismatch"}])
+
+            # A run that recorded no manifest at all is its own named reason, not
+            # the same one: "built by other code" and "we cannot tell" differ.
+            unrecorded = write_baseline_run(
+                run_root, "20260828T141647Z_baseline", with_manifest=False
+            )
+            selected, skipped = _latest_valid_baseline(run_root, 0.6016, revision)
+            self.assertIsNone(selected)
+            self.assertEqual(
+                skip_reasons(skipped),
+                {str(stale): "revision_mismatch", str(unrecorded): "no_source_manifest"},
+            )
+
+            # Non-vacuity: the recorded revision is the only discriminator here.
+            # Rewrite it to the current one and the same directory is adopted.
+            (stale.parent / "source_manifest.json").write_text(
+                json.dumps({"revision": revision}), encoding="utf-8"
+            )
+            selected, skipped = _latest_valid_baseline(run_root, 0.6016, revision)
+            self.assertIsNotNone(selected)
+            self.assertEqual(selected["summary_path"], str(stale))
+            self.assertEqual(
+                skip_reasons(skipped), {str(unrecorded): "no_source_manifest"}
+            )
+
+    def test_baseline_is_rejected_when_the_artifact_is_missing(self):
+        """``best.artifact_path`` must resolve to a file that exists on this box.
+
+        The committed baseline points at ``C:\\Users\\Admin\\OneDrive - …``; the
+        loop copied it straight onto ``state.best_artifact_path``, so the gate's
+        submission would have been built from a path that cannot be opened.
+        """
+        revision = _source_manifest()["revision"]
+        with self.subTest("artifact_path must resolve to a file that exists"), \
+                tempfile.TemporaryDirectory() as directory:
+            run_root = Path(directory) / "runs"
+            windows = write_baseline_run(
+                run_root, "20260828T141646Z_baseline", artifact_path=WINDOWS_ARTIFACT
+            )
+            selected, skipped = _latest_valid_baseline(run_root, 0.6016, revision)
+            self.assertIsNone(selected)
+            self.assertEqual(skipped, [{"path": str(windows), "reason": "artifact_missing"}])
+            # The Windows string is neither absolute here nor a real relative
+            # path, so it resolves under the repo root to something absent.
+            self.assertFalse((REPO_ROOT / WINDOWS_ARTIFACT).is_file())
+
+            # A summary carrying no artifact_path key at all is the same reason.
+            absent = write_baseline_run(run_root, "20260828T141647Z_baseline")
+            payload = json.loads(absent.read_text(encoding="utf-8"))
+            payload["best"].pop("artifact_path")
+            absent.write_text(json.dumps(payload), encoding="utf-8")
+            selected, skipped = _latest_valid_baseline(run_root, 0.6016, revision)
+            self.assertIsNone(selected)
+            self.assertEqual(
+                skip_reasons(skipped),
+                {str(windows): "artifact_missing", str(absent): "artifact_missing"},
+            )
+
+        # T2's acceptance clause, on a tree holding *only* the stale run:
+        # constructing a ResearchLoop re-runs the baseline instead of adopting
+        # it, and baseline_selection.json names the reason. ``run_agent`` is
+        # patched (the real ladder needs the dataset) but the decision to call
+        # it, and the record of why, are the loop's own.
+        with self.subTest("T2 acceptance: an unadoptable tree regenerates the baseline"), \
+                tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_root = root / "runs"
+            stale = write_baseline_run(
+                run_root, "20260828T141646Z_baseline", artifact_path=WINDOWS_ARTIFACT
+            )
+            regenerated = run_root / "20260829T120000000000Z_baseline"
+            calls: list[Path] = []
+
+            def fake_run_agent(config_path: Path) -> Path:
+                calls.append(config_path)
+                write_baseline_run(run_root, regenerated.name)
+                return regenerated
+
+            with patch("src.agent.research_controller.run_agent", fake_run_agent):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    loop = adopting_loop(root)
+
+            self.assertEqual(calls, [REPO_ROOT / "configs" / "baseline.json"])
+            self.assertEqual(
+                loop.baseline_summary["summary_path"], str(regenerated / "summary.json")
+            )
+            selection = selection_of(loop.run_dir)
+            self.assertEqual(selection["selected"], str(regenerated / "summary.json"))
+            self.assertEqual(
+                selection["skipped"], [{"path": str(stale), "reason": "artifact_missing"}]
+            )
+
+        # I11's *second* site, on the same regeneration path: the re-run is gated
+        # two-sided as well, so a fresh run scoring 0.85 is a leak rather than a
+        # reproduction. The old one-sided lower-bound gate accepted it.
+        with self.subTest("I11: a regenerated baseline is gated two-sided too"), \
+                tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_root = root / "runs"
+            regenerated = run_root / "20260829T120000000000Z_baseline"
+
+            def leaking_run_agent(config_path: Path) -> Path:
+                write_baseline_run(run_root, regenerated.name, primary=0.85)
+                return regenerated
+
+            with patch("src.agent.research_controller.run_agent", leaking_run_agent):
+                with self.assertRaises(RuntimeError) as raised:
+                    _ensure_baseline(baseline_config(root))
+            message = str(raised.exception)
+            self.assertIn("0.8500", message)
+            self.assertIn("outside", message)
+            self.assertIn("0.5986", message)
+            self.assertIn("0.6046", message)
+
+            # M5, same gate: a regenerated run is artifact-checked too, or the
+            # loop adopts a baseline whose submission file cannot be opened.
+            def artifactless_run_agent(config_path: Path) -> Path:
+                write_baseline_run(
+                    run_root, regenerated.name, artifact_path=WINDOWS_ARTIFACT
+                )
+                return regenerated
+
+            with patch("src.agent.research_controller.run_agent", artifactless_run_agent):
+                with self.assertRaisesRegex(RuntimeError, "produced no artifact"):
+                    _ensure_baseline(baseline_config(root))
+
+    def test_baseline_selection_logs_every_skipped_summary(self):
+        """I12: no summary is skipped silently — every rejection is named on disk.
+
+        The old ``except … continue`` made a corrupt summary indistinguishable
+        from "no baseline exists". One fully adoptable run is present so the
+        selection succeeds without regenerating anything, and every other
+        directory covers a reason the selector can record — including each shape
+        of malformed ``summary.json`` that used to raise out of ``__init__``.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_root = root / "runs"
+            adoptable = write_baseline_run(run_root, "20260829T000000000001Z_baseline")
+            stale = write_baseline_run(
+                run_root, "20260829T000000000002Z_baseline", revision=STALE_REVISION
+            )
+            windows = write_baseline_run(
+                run_root, "20260829T000000000003Z_baseline", artifact_path=WINDOWS_ARTIFACT
+            )
+            # A leaked 0.85 is *further* from the official 0.6016 than the
+            # tolerance allows. The one-sided ``primary >= official - 0.002``
+            # accepted it; B's two-sided predicate (I11) does not.
+            leaked = write_baseline_run(
+                run_root, "20260829T000000000004Z_baseline", primary=0.85
+            )
+            other_experiment = write_baseline_run(
+                run_root, "20260829T000000000005Z_baseline", experiment_id="candidate_bpr"
+            )
+            # Every shape a summary.json can take that the readers' ``.get``
+            # calls cannot survive. Only the first is a JSONDecodeError; the
+            # other four parse and then raise ``AttributeError`` from
+            # ``summary.get``, ``best.get`` or ``metrics.get`` — none of which
+            # the original handler caught, so any one of them ended *every*
+            # research run at construction instead of costing one candidate.
+            malformed = {
+                str(write_raw_summary(run_root, run_id, text)): "unreadable_summary"
+                for run_id, text in (
+                    ("20260829T000000000006Z_baseline", '{"best": {'),
+                    ("20260829T000000000007Z_baseline", "[]"),
+                    ("20260829T000000000008Z_baseline", '{"best": ["official_fm_seed0"]}'),
+                    ("20260829T000000000009Z_baseline", '{"best": "official_fm_seed0"}'),
+                    (
+                        "20260829T000000000010Z_baseline",
+                        '{"best": {"experiment_id": "official_fm_seed0",'
+                        ' "metrics": "0.6015"}}',
+                    ),
+                )
+            }
+            # A source_manifest.json that parses but is not a mapping has no
+            # revision to compare, so it is `no_source_manifest` — the narrow
+            # handler's reason, not the outer one's.
+            unusable_manifest = write_baseline_run(run_root, "20260829T000000000011Z_baseline")
+            (unusable_manifest.parent / "source_manifest.json").write_text(
+                "[]", encoding="utf-8"
+            )
+
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                loop = adopting_loop(root)
+
+            selection = selection_of(loop.run_dir)
+            self.assertEqual(selection["selected"], str(adoptable))
+            self.assertEqual(loop.baseline_summary["summary_path"], str(adoptable))
+            self.assertEqual(
+                skip_reasons(selection["skipped"]),
+                {
+                    str(stale): "revision_mismatch",
+                    str(windows): "artifact_missing",
+                    str(leaked): "outside_tolerance",
+                    str(other_experiment): "experiment_id_mismatch",
+                    str(unusable_manifest): "no_source_manifest",
+                    **malformed,
+                },
+            )
+            # One printed line per skip, so a live operator sees them too.
+            lines = printed.getvalue().splitlines()
+            self.assertEqual(len(lines), len(selection["skipped"]))
+            self.assertEqual(len(lines), 10)
+            for record in selection["skipped"]:
+                self.assertIn(
+                    f"{record['path']} ({record['reason']})",
+                    printed.getvalue(),
+                )
+
+            # Amendment 3, first half: an injected baseline was never selected
+            # from ``runs/``, so nothing was examined and nothing is reported as
+            # rejected — on this very tree, where ten runs *would* have been.
+            with self.subTest("an injected baseline records no skips"):
+                injected = adopting_loop(root, baseline_summary=BASELINE_SUMMARY)
+                self.assertEqual(
+                    selection_of(injected.run_dir), {"selected": None, "skipped": []}
+                )
+
+            # Amendment 3, second half: a resume adopts nothing and re-selects
+            # nothing, so it must not write the file at all — the record the
+            # original run made is the truthful one and stays untouched.
+            with self.subTest("a resume writes no selection record"):
+                loop._save()
+                (loop.run_dir / "baseline_selection.json").unlink()
+                resumed = ResearchLoop(
+                    baseline_config(root),
+                    root / "config.json",
+                    provider=ProgrammedProvider([]),
+                    resume_dir=loop.run_dir,
+                    baseline_summary=BASELINE_SUMMARY,
+                )
+                self.assertFalse(
+                    (resumed.run_dir / "baseline_selection.json").is_file()
+                )
+
+    def test_baseline_prefers_the_newest_matching_run_id(self):
+        """Ordering is by run id, not by mtime: ids are UTC stamps, mtimes are not.
+
+        A ``git clone`` or a ``cp -r`` rewrites every mtime, so the old
+        ``max(st_mtime)`` picked whichever file the filesystem touched last.
+        """
+        revision = _source_manifest()["revision"]
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = Path(directory) / "runs"
+            older_id = "20260101T000000000000Z_baseline"
+            newer_id = "20260102T000000000000Z_baseline"
+            older = write_baseline_run(run_root, older_id, primary=0.6010)
+            newer = write_baseline_run(run_root, newer_id, primary=0.6015)
+            # Invert the filesystem's opinion: the newer *id* is the older file.
+            os.utime(newer, (1_000_000, 1_000_000))
+            os.utime(older, (2_000_000, 2_000_000))
+            self.assertLess(newer.stat().st_mtime, older.stat().st_mtime)
+
+            selected, skipped = _latest_valid_baseline(run_root, 0.6016, revision)
+            self.assertEqual(skipped, [])
+            self.assertEqual(selected["run_id"], newer_id)
+            self.assertEqual(selected["summary_path"], str(newer))
+            self.assertEqual(selected["best"]["metrics"]["primary"], 0.6015)
+
+
+class SaveOrderTests(unittest.TestCase):
+    def test_state_is_saved_before_the_iteration_is_recorded(self):
+        """I3: the resumable state is on disk before the ledger line is appended.
+
+        ``record_iteration`` appends to ``iterations.jsonl``; a crash between the
+        two writes used to replay the iteration on resume and duplicate the line.
+        With ``_save()`` first, the same crash loses at most one ledger line and
+        the node is already durable.
+        """
+        with research_loop([]) as (loop, _provider):
+            decision = ResearchDecision.from_dict(research())
+            preflight = CriticDecision.from_dict({**critic(), "approved": False})
+            with patch.object(
+                ResearchAudit, "record_iteration", side_effect=RuntimeError("disk full")
+            ):
+                with self.assertRaises(RuntimeError):
+                    loop._record_rejection(1, decision, preflight)
+            state = json.loads((loop.run_dir / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [node["experiment_id"] for node in state["nodes"]],
+                [f"rejected_{decision.hypothesis_id}"],
+            )
+
+
+class WallClockTests(unittest.TestCase):
+    def test_wall_clock_includes_the_baseline_gate(self):
+        """I9: the clock starts before the baseline gate, not after it.
+
+        ``_ensure_baseline`` can spend minutes reproducing the official run, and
+        ``resources.json`` is the file Feasibility is scored on.
+        """
+        def slow_baseline(config):
+            time.sleep(0.05)
+            return BASELINE_SUMMARY, []
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("src.agent.research_controller._ensure_baseline", slow_baseline):
+                loop = adopting_loop(root)
+            loop._save()
+            self.assertGreaterEqual(loop.state.wall_clock_seconds, 0.05)
+
+
+class InterventionTests(unittest.TestCase):
+    def test_intervene_appends_and_increments(self):
+        """I10 / I-8: one command, one line, and the count follows it."""
+        with research_loop([]) as (loop, _provider):
+            loop._save()
+            argv = [
+                "controller",
+                "intervene",
+                "--run",
+                str(loop.run_dir),
+                "--reason",
+                "restarted after API outage",
+            ]
+            with patch("sys.argv", argv):
+                controller.main()
+
+            lines = (loop.run_dir / "interventions.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+            self.assertEqual(len(lines), 1)
+            record = json.loads(lines[0])
+            self.assertEqual(record["run_id"], loop.run_dir.name)
+            self.assertEqual(record["reason"], "restarted after API outage")
+            self.assertIn("+00:00", record["ts"])
+            state = json.loads((loop.run_dir / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["manual_interventions"], 1)
+            resources = json.loads(
+                (loop.run_dir / "resources.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(resources["manual_interventions"], 1)
+
+    def test_intervention_count_is_derived_from_the_file(self):
+        """The count is read off the file on every save, never incremented.
+
+        A live loop holds ``self.state`` in memory and rewrites ``state.json`` on
+        every save, so an incremented counter would be clobbered by a concurrent
+        ``intervene``; a derived one cannot be.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = baseline_config(root)
+            config["run_id_prefix"] = "kj_"
+            config_path = root / "config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            loop = ResearchLoop(
+                config,
+                config_path,
+                provider=ProgrammedProvider([]),
+                baseline_summary=BASELINE_SUMMARY,
+            )
+            # T11 step 1: the optional prefix personalises the directory while the
+            # id still ends in ``_research``, which is what D's .gitignore matches.
+            self.assertTrue(loop.run_dir.name.startswith("kj_"))
+            self.assertTrue(loop.run_dir.name.endswith("_research"))
+
+            (loop.run_dir / "interventions.jsonl").write_text(
+                "".join(
+                    json.dumps({"ts": "t", "run_id": loop.run_dir.name, "reason": str(n)})
+                    + "\n"
+                    for n in range(3)
+                ),
+                encoding="utf-8",
+            )
+            loop._save()
+            self.assertEqual(loop.state.manual_interventions, 3)
+            resources = json.loads(
+                (loop.run_dir / "resources.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(resources["manual_interventions"], 3)
+
+    def test_intervene_on_a_missing_run_dir_exits_nonzero(self):
+        """A typo in ``--run`` must fail loudly rather than create a stray file."""
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "runs" / "not_a_run"
+            argv = ["controller", "intervene", "--run", str(missing), "--reason", "x"]
+            errors = io.StringIO()
+            with patch("sys.argv", argv), contextlib.redirect_stderr(errors):
+                with self.assertRaises(SystemExit) as raised:
+                    controller.main()
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(str(missing), errors.getvalue())
+
+    def test_baseline_cli_still_accepts_the_documented_flags(self):
+        """The README's and B's invocation keeps parsing and keeps dispatching."""
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "baseline.json"
+            config_path.write_text(json.dumps({"name": "baseline"}), encoding="utf-8")
+            calls: list[Path] = []
+            with patch("sys.argv", ["controller", "--config", str(config_path)]), \
+                    patch("src.agent.controller.run_agent", calls.append):
+                controller.main()
+            self.assertEqual(calls, [config_path])
 
 
 if __name__ == "__main__":

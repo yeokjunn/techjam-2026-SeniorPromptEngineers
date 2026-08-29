@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import shutil
@@ -9,14 +10,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..evaluation.datacard import render_data_card
 from ..evaluation.gate import run_gate
+from ..evaluation.official import BASELINE_TOLERANCE, within_baseline_tolerance
 from .audit import ResearchAudit
 from .candidate_runner import CandidateExecutor, CandidateWorkspace, repaired_manifest
 from .catalog import MethodCatalog
-from .controller import REPO_ROOT, _resolve_repo_path, _source_manifest, run_agent
+from .convergence import official_converged
+from .controller import (
+    REPO_ROOT,
+    _count_interventions,
+    _resolve_repo_path,
+    _source_manifest,
+    run_agent,
+)
 from .errors import LLMError, TokenBudgetExceeded
 from .llm import LLMProvider, build_provider
-from .policy import SearchPolicy, coverage_complete, required_family, sanitize_parameters
+from .policy import (
+    SearchPolicy,
+    coverage_complete,
+    required_family,
+    sanitize_parameters,
+    scored_primaries,
+)
 from .report import render_reports
 from .roles import ResearchRoles
 from .types import (
@@ -28,8 +44,98 @@ from .types import (
 )
 
 
+# I-3: one Debugger brief per failure class Owner B's trusted worker can tag an
+# outcome with (``types.py:52``, set at ``candidate_runner.py:190``, ``:212``,
+# ``:231``, ``:255``, ``:265``). The chosen brief is prepended to the worker's own
+# error and reaches the Debugger verbatim on the ``ERROR:`` line of its prompt
+# (``roles.py:257``), so telling the model *what kind* of failure this is costs
+# Owner C's file nothing. Every one of the six keys is defined, ``"leak"``
+# included even though a leak is skipped rather than repaired below: the
+# dictionary is the documented contract for the classes, so a class B adds shows
+# up here as a missing key rather than as a silently generic prompt. One line
+# each, because the text shares a line with the error.
+DEBUG_BRIEFS: dict[str, str] = {
+    "timeout": (
+        "The run exceeded its time budget. Reduce epochs or batch work; do not "
+        "change the hypothesis."
+    ),
+    "crash": (
+        "The candidate process raised before it produced a result. Fix the "
+        "exception where it is thrown - shapes, dtypes, indexing, imports - and "
+        "leave the approved hypothesis, family and parameters exactly as they are."
+    ),
+    "bad_output": (
+        "The candidate finished but its result could not be read as a "
+        "CandidateOutput. Return one finite validation score per row of "
+        "context.valid_x, in that order, and do not change the hypothesis."
+    ),
+    "low_score": (
+        "Validation ranking quality landed far below the official baseline, which "
+        "usually means the loss or the negative sampler is not training the model. "
+        "Repair the implementation, not the hypothesis."
+    ),
+    "leak": (
+        "Validation ranking quality is implausibly high, so the label or a feature "
+        "derived from it reached the model. Remove the leaking signal and keep the "
+        "hypothesis unchanged."
+    ),
+    "missing_test_scores": (
+        "CandidateOutput.test_scores was absent. Return test scores for "
+        "context.test_x in the same row order."
+    ),
+}
+
+
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+@functools.lru_cache(maxsize=None)
+def _cached_data_card(data_dir: str) -> str:
+    """Render the data card at most once per data directory per process (I-4).
+
+    ``render_data_card`` scans every KuaiRand CSV: ~2-4 s on the real dataset
+    against ~0 s on a directory that has none of them. Production renders once
+    either way — one ``ResearchLoop`` per process — but the test suite builds
+    ~25 loops against that same directory, which would cost the suite minutes
+    for a string it already has. The renderer is deterministic for a given
+    directory (Owner D pins that in ``test_card_is_deterministic``), so the
+    cache is observationally identical to calling it every time. Keyed on the
+    directory *string* rather than the ``Path``: both hash, only one prints
+    unambiguously in a cache dump.
+    """
+    return render_data_card(Path(data_dir))
+
+
+def _repo_relative(path: Path) -> str:
+    """A POSIX path relative to the repo root when it lives there, else absolute.
+
+    Same rule, and the same reason, as ``candidate_dir`` below: a path recorded
+    in a run's own files is read back on another machine, and T11 accepts no
+    absolute machine paths in the final run's committed artifacts.
+    """
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _official_convergence_iteration(
+    state: RunState, epsilon: float, patience: int
+) -> int | None:
+    """The iteration of the scored node whose prefix first meets the official rule.
+
+    ``seq[0]`` is the baseline seed rather than an iteration, so the number
+    reported is the node's own ``iteration`` and not the prefix length. ``None``
+    when the rule never fires.
+    """
+    # Same filter as policy.scored_primaries; the index below depends on it.
+    scored = [node for node in state.nodes if node.status == "success" and node.metrics]
+    sequence = [state.baseline_primary] + scored_primaries(state)
+    for length in range(patience + 1, len(sequence) + 1):
+        if official_converged(sequence[:length], epsilon, patience):
+            return scored[length - 2].iteration
+    return None
 
 
 # Classification of every exception source the correctness review names (C4).
@@ -65,35 +171,123 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _latest_valid_baseline(run_root: Path, threshold: float) -> dict[str, Any] | None:
-    candidates: list[tuple[float, dict[str, Any]]] = []
-    for path in run_root.glob("*/summary.json"):
+def _baseline_skip_reason(
+    summary: dict[str, Any], run_dir: Path, threshold: float, revision: str
+) -> str | None:
+    """The first admission check a candidate baseline fails, or ``None`` if it passes.
+
+    The checks run in the review's order — identity, then score, then provenance,
+    then the artifact — and only the *first* failure is reported, so the reason an
+    operator reads is the one they should act on rather than a pile of
+    consequences. ``revision`` is ``controller._source_manifest()["revision"]``,
+    the digest over every ``src/**/*.py``: a summary produced by code that is no
+    longer on disk describes an experiment nobody can re-run, and adopting its
+    number silently rebases every later comparison on a phantom (C5).
+    """
+    best = summary.get("best") or {}
+    if best.get("experiment_id") != "official_fm_seed0":
+        return "experiment_id_mismatch"
+    primary = float((best.get("metrics") or {}).get("primary", float("-inf")))
+    # I11, B's predicate: two-sided. ``threshold`` keeps its name but now carries
+    # the official *centre*, so a leaked 0.85 is as unacceptable as a 0.40 — under
+    # the old one-sided lower-bound gate it was adopted as a baseline.
+    if not within_baseline_tolerance(primary, threshold):
+        return "outside_tolerance"
+    manifest_path = run_dir / "source_manifest.json"
+    if not manifest_path.is_file():
+        return "no_source_manifest"
+    try:
+        recorded = _load_json(manifest_path).get("revision")
+    except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
+        # A manifest that cannot be read yields no revision to compare, which is
+        # the same operational fact as having none — and is reported as such
+        # rather than as an unreadable *summary*, which this is not.
+        # ``AttributeError`` is the shape ``[]`` or ``"x"`` takes: the file parses
+        # but is not a mapping, so ``.get`` is not a method it has.
+        return "no_source_manifest"
+    if recorded != revision:
+        return "revision_mismatch"
+    artifact = best.get("artifact_path")
+    # The committed baseline's ``artifact_path`` is a Windows path from another
+    # machine. It is not absolute here and not a real relative path either, so
+    # ``_resolve_repo_path`` folds it under the repo root and it does not exist —
+    # which is exactly the answer wanted: the file the gate would submit is absent.
+    if not artifact or not _resolve_repo_path(str(artifact)).is_file():
+        return "artifact_missing"
+    return None
+
+
+def _latest_valid_baseline(
+    run_root: Path, threshold: float, revision: str
+) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
+    """Pick an adoptable baseline summary and report every one that was not.
+
+    Returns ``(summary | None, skips)`` where each skip is
+    ``{"path": str, "reason": str}``. Nothing is discarded silently: the old bare
+    ``except … continue`` made a corrupt summary indistinguishable from "no
+    baseline exists" (I12), so an unreadable file is now a recorded outcome.
+
+    Ordering is by **run id** (``path.parent.name``), not by the filesystem's
+    modification timestamps. Run ids are UTC timestamps, so lexicographic order
+    is chronological and survives a clone, a copy or a checkout — each of which
+    rewrites those timestamps and so used to reorder the candidates arbitrarily.
+    """
+    accepted: list[tuple[str, dict[str, Any]]] = []
+    skipped: list[dict[str, str]] = []
+    for path in sorted(run_root.glob("*/summary.json")):
         try:
             summary = _load_json(path)
-            best = summary.get("best") or {}
-            primary = float((best.get("metrics") or {}).get("primary", float("-inf")))
-            if best.get("experiment_id") == "official_fm_seed0" and primary >= threshold:
-                candidates.append((path.stat().st_mtime, {**summary, "summary_path": str(path)}))
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            reason = _baseline_skip_reason(summary, path.parent, threshold, revision)
+        except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
+            # ``AttributeError`` covers every shape a summary can take that
+            # *parses* but is not the mapping the readers assume — the whole file
+            # being ``[]``, or ``best``, ``best.metrics`` being a list or a
+            # string. Each of those makes a ``.get`` call raise, and every one of
+            # those calls is inside ``_baseline_skip_reason``'s narrow parse of a
+            # single candidate, so nothing else can be swallowed here. Without it
+            # one malformed file under ``runs/`` ends every research run at
+            # construction instead of costing that one candidate.
+            reason = "unreadable_summary"
+        if reason is not None:
+            skipped.append({"path": _repo_relative(path), "reason": reason})
             continue
-    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+        accepted.append(
+            (path.parent.name, {**summary, "summary_path": _repo_relative(path)})
+        )
+    best = max(accepted, key=lambda item: item[0])[1] if accepted else None
+    return best, skipped
 
 
-def _ensure_baseline(config: dict[str, Any]) -> dict[str, Any]:
+def _ensure_baseline(
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
     run_root = _resolve_repo_path(config.get("run_root", "runs"))
     official = float(config["official_validation_baseline"])
-    baseline = _latest_valid_baseline(run_root, official - 0.002)
+    revision = str(_source_manifest()["revision"])
+    baseline, skipped = _latest_valid_baseline(run_root, official, revision)
+    # One line per skip, to stdout, for the operator watching the run start: the
+    # JSON record is for the audit, this is for the human deciding whether a
+    # six-hour run is about to be spent re-training a baseline they thought was
+    # already on disk.
+    for record in skipped:
+        print(f"Baseline summary skipped: {record['path']} ({record['reason']})")
     if baseline is not None:
-        return baseline
+        return baseline, skipped
     baseline_config = _resolve_repo_path(config.get("baseline_config", "configs/baseline.json"))
     run_dir = run_agent(baseline_config)
     summary = _load_json(run_dir / "summary.json")
     primary = float(summary["best"]["metrics"]["primary"])
-    if primary < official - 0.002:
+    if not within_baseline_tolerance(primary, official):
         raise RuntimeError(
-            f"Official FM baseline gate failed: {primary:.4f} < {official - 0.002:.4f}"
+            f"Official FM baseline gate failed: {primary:.4f} outside "
+            f"[{official - BASELINE_TOLERANCE:.4f}, {official + BASELINE_TOLERANCE:.4f}]"
         )
-    return {**summary, "summary_path": str(run_dir / "summary.json")}
+    artifact = summary["best"].get("artifact_path")
+    # The same admission check the adopted path applies (``_baseline_skip_reason``):
+    # a baseline whose scores file is absent cannot be the run's comparison point.
+    if not artifact or not _resolve_repo_path(str(artifact)).is_file():
+        raise RuntimeError(f"Official FM baseline produced no artifact at {artifact}")
+    return {**summary, "summary_path": _repo_relative(run_dir / "summary.json")}, skipped
 
 
 class ResearchLoop:
@@ -105,6 +299,9 @@ class ResearchLoop:
         resume_dir: Path | None = None,
         baseline_summary: dict[str, Any] | None = None,
     ):
+        # I9: before the baseline gate, which can spend minutes reproducing the
+        # official run. ``resources.json`` is the file Feasibility is scored on.
+        self.session_started = time.monotonic()
         self.config = config
         self.config_path = config_path
         self.data_dir = _resolve_repo_path(config["data_dir"])
@@ -126,11 +323,19 @@ class ResearchLoop:
         self.convergence = config["convergence"]
         llm_config = config["llm"]
         self.provider = provider or build_provider(config)
-        self.baseline_summary = baseline_summary or _ensure_baseline(config)
+        # An injected baseline is the caller's own and was never selected from
+        # ``runs/``, so it has no skip list — `[]` says "nothing was rejected",
+        # which is true, rather than "nothing was examined", which is not
+        # something ``baseline_selection.json`` is written for on that path.
+        if baseline_summary is None:
+            self.baseline_summary, baseline_skips = _ensure_baseline(config)
+        else:
+            self.baseline_summary, baseline_skips = baseline_summary, []
         baseline_primary = float(self.baseline_summary["best"]["metrics"]["primary"])
 
         if resume_dir is None:
-            run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ_research")
+            prefix = str(config.get("run_id_prefix", ""))
+            run_id = prefix + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ_research")
             self.run_dir = self.run_root / run_id
             self.audit = ResearchAudit(self.run_dir)
             self.state = RunState(
@@ -146,7 +351,38 @@ class ResearchLoop:
             shutil.copy2(config_path, self.run_dir / "run_config.json")
             self.audit.write_json_atomic(self.run_dir / "source_manifest.json", _source_manifest())
             self.audit.write_json_atomic(self.run_dir / "baseline_gate.json", self.baseline_summary)
-            self.audit.write_json_atomic(self.run_dir / "interventions.json", [])
+            # Which summary this run is measured against, and every summary that
+            # was considered and rejected, with the reason (C5 / I12). Written on
+            # a new run only: a resume adopts nothing and re-selects nothing, so
+            # the record the original run wrote stays the truthful one.
+            self.audit.write_json_atomic(
+                self.run_dir / "baseline_selection.json",
+                {
+                    "selected": self.baseline_summary.get("summary_path"),
+                    "skipped": baseline_skips,
+                },
+            )
+            self.audit.write_text_atomic(self.run_dir / "interventions.jsonl", "")
+            # I-4: the data card the Researcher's prompt prefix carries. Owner
+            # D renders it, Owner C reads it back off ``state.data_card_path``
+            # (``roles.py:58-71``, appended at ``:85-86``), and the run start is
+            # where the two meet. An operator who named a card in the config
+            # gets that path verbatim: naming one is not a request to make one,
+            # and C's reader already tolerates a file that is not there
+            # (``roles.py:66-69``), so checking it here would only lose the run
+            # earlier. An empty card — no dataset on disk — leaves no file and
+            # no path, so the prompt gains no heading with nothing under it and
+            # the operator gets no line to misread as an error. New runs only:
+            # a resume already carries the path in ``state.json``.
+            configured_card = config.get("data_card_path")
+            if isinstance(configured_card, str) and configured_card:
+                self.state.data_card_path = configured_card
+            else:
+                card = _cached_data_card(str(self.data_dir))
+                if card.strip():
+                    card_path = self.run_dir / "DATA_CARD.md"
+                    self.audit.write_text_atomic(card_path, card)
+                    self.state.data_card_path = _repo_relative(card_path)
         else:
             self.run_dir = resume_dir.resolve()
             self.audit = ResearchAudit(self.run_dir, resume=True)
@@ -178,8 +414,14 @@ class ResearchLoop:
             experiment_timeout_seconds=int(self.budgets["experiment_timeout_seconds"]),
             test_timeout_seconds=int(self.budgets["test_timeout_seconds"]),
         )
-        self.session_started = time.monotonic()
         self.consecutive_harness_errors = 0
+        # I10: how many interventions were on file when this pass began, so the
+        # per-iteration flag can say whether one was recorded during it.
+        self._interventions_at_iteration_start = 0
+        # Logged-once flag for the mid-run convergence line, not run state: a
+        # resume re-logs it, which costs a duplicate journal line and no
+        # correctness (`summary.json` is recomputed from the nodes).
+        self._official_converged_iteration: int | None = None
         initialized = self.audit.start_activity(
             0,
             "initializing",
@@ -197,9 +439,36 @@ class ResearchLoop:
         return self.state.wall_clock_seconds + (time.monotonic() - self.session_started)
 
     def _save(self) -> None:
+        # Derived, never incremented: a live loop rewrites ``state.json`` on every
+        # save, so an incremented counter would clobber a concurrent ``intervene``.
+        self.state.manual_interventions = _count_interventions(self.run_dir)
         self.state.wall_clock_seconds = self._elapsed()
         self.session_started = time.monotonic()
         self.audit.save_state(self.state.to_dict())
+
+    def _note_official_convergence(self) -> None:
+        """Journal the first iteration at which the organizers' rule fires (I6).
+
+        `should_stop` is the harness agenda and is not weakened by this: the
+        line exists so the journal can say "the official rule fired at iteration
+        k; the harness continued for coverage".
+        """
+        if self._official_converged_iteration is not None:
+            return
+        self._official_converged_iteration = _official_convergence_iteration(
+            self.state,
+            float(self.convergence["epsilon"]),
+            int(self.convergence["patience"]),
+        )
+        if self._official_converged_iteration is not None:
+            self.audit.append_jsonl(
+                self.run_dir / "research_memory.jsonl",
+                {
+                    "type": "convergence",
+                    "iteration": self._official_converged_iteration,
+                    "official": True,
+                },
+            )
 
     def _role_call(self, label: str, iteration: int, call) -> Any:
         """Run one role pass, re-prompting the model while its own output is at fault.
@@ -252,7 +521,8 @@ class ResearchLoop:
                 "status": status,
                 "error": str(exc),
                 "error_type": type(exc).__name__,
-                "manual_intervention": False,
+                "manual_intervention": self.state.manual_interventions
+                > self._interventions_at_iteration_start,
             }
         )
 
@@ -276,6 +546,11 @@ class ResearchLoop:
             parent_experiment=decision.parent_experiment,
         )
         self.state.nodes.append(node)
+        # I3: state first, ledger second. ``record_iteration`` appends to
+        # ``iterations.jsonl``; a crash between the two used to replay the
+        # iteration on resume and duplicate the line. This order loses at most
+        # one ledger line instead — D de-duplicates by ``iteration`` anyway.
+        self._save()
         self.audit.record_iteration(
             {
                 "iteration": iteration,
@@ -290,10 +565,10 @@ class ResearchLoop:
                     "critic_preflight": critic.to_dict(),
                 },
                 "status": "critic_rejected",
-                "manual_intervention": False,
+                "manual_intervention": self.state.manual_interventions
+                > self._interventions_at_iteration_start,
             }
         )
-        self._save()
         self.audit.finish_activity(
             persistence,
             agent_note={
@@ -334,10 +609,22 @@ class ResearchLoop:
         workspace: CandidateWorkspace,
         starting_error: str | None = None,
         repairs_used: int = 0,
+        max_repairs: int | None = None,
     ) -> tuple[CandidateManifest, int, str | None]:
+        """Debug the candidate until its own tests pass, or the repairs run out.
+
+        ``max_repairs`` narrows the ``max_debug_repairs`` budget for one call, so
+        a caller that knows this failure is not worth the usual number of model
+        passes can say so without a second loop (I-3: a timeout gets one). It is
+        a *cap*, never an extension — the caller computes it against the budget —
+        and a value ``repairs_used`` has already reached returns the error
+        immediately, exactly as an exhausted budget does.
+        """
         current = manifest
         error = starting_error
-        maximum = int(self.budgets["max_debug_repairs"])
+        maximum = (
+            int(self.budgets["max_debug_repairs"]) if max_repairs is None else max_repairs
+        )
         while True:
             if error is None:
                 safety = self.audit.start_activity(
@@ -402,6 +689,14 @@ class ResearchLoop:
         parent_sources = self._parent_sources(decision.parent_experiment)
         execution_attempt = 0
         outcome = None
+        # I-3: a timeout buys this candidate one Debugger pass and no more. Every
+        # retry is a full training run charged to the six-hour wall clock, and a
+        # candidate that did not fit its time budget usually does not fit it the
+        # second time either, so the cap is measured once here rather than per
+        # failure: the repairs already spent on the safety tests do not consume
+        # the timeout's one pass, and a second timeout finds ``repairs_used``
+        # equal to the cap and returns without calling the Debugger again.
+        timeout_repair_cap = min(int(self.budgets["max_debug_repairs"]), repairs + 1)
         while validation_error is None:
             # Refresh the authoritative patch before every training attempt because
             # a bounded Debugger pass may have changed the candidate after a failure.
@@ -451,13 +746,33 @@ class ResearchLoop:
             )
             if outcome.status == "success":
                 break
+            if outcome.failure_class == "leak":
+                # A leaked validation score is not a defect the Debugger can
+                # repair: the code ran, the number is real, and a feature or the
+                # label carried the answer. The node is never promotable
+                # (``observe_success`` runs for successes only), so repairing it
+                # would spend model passes and training attempts on a result the
+                # run has already refused. Recorded as a failed node by the path
+                # below, with B's error and class intact for the ledger.
+                validation_error = outcome.error
+                break
+            # I-3: the failure class Owner B tagged the outcome with chooses the
+            # Debugger's brief, prepended to B's own error on the prompt's
+            # ``ERROR:`` line (``roles.py:257``). An untagged outcome — or a class
+            # this file has no brief for — leaves the error exactly as it was.
             manifest, repairs, validation_error = self._repair_until_tests_pass(
                 iteration,
                 decision,
                 manifest,
                 workspace,
-                starting_error=outcome.error,
+                starting_error=(
+                    f"{DEBUG_BRIEFS.get(outcome.failure_class, '')}\n{outcome.error or ''}".strip()
+                    or None
+                ),
                 repairs_used=repairs,
+                max_repairs=(
+                    timeout_repair_cap if outcome.failure_class == "timeout" else None
+                ),
             )
             if validation_error is not None:
                 break
@@ -472,7 +787,14 @@ class ResearchLoop:
             )
             status = "success"
             metrics = outcome.metrics
-            artifact = outcome.artifact_path
+            # T11: B's worker reports the checkpoint by its absolute path. Recorded
+            # repo-relative, because this string is copied onto
+            # ``state.best_artifact_path`` (``policy.py:280``) and from there into
+            # ``state.json``, ``best.json`` and ``summary.json`` — files that are
+            # committed and read back on another machine.
+            artifact = (
+                _repo_relative(Path(outcome.artifact_path)) if outcome.artifact_path else None
+            )
         else:
             postflight = None
             status = "failed"
@@ -500,6 +822,7 @@ class ResearchLoop:
         self.state.nodes.append(node)
         if status == "success":
             self.policy.observe_success(self.state, node)
+            self._note_official_convergence()
 
         persistence = self.audit.start_activity(
             iteration,
@@ -507,6 +830,25 @@ class ResearchLoop:
             experiment_id=manifest.candidate_id,
             objective="Finalize the immutable iteration record and resumable state.",
         )
+        self._save()  # I3: see ``_record_rejection`` — state before ledger.
+        # T11: the ledger is committed, and B's ``ExperimentOutcome`` already keeps
+        # ``stdout_path``, ``stderr_path`` and ``test_scores_path`` repo-relative —
+        # ``artifact_path`` and ``command`` are the two fields that missed that
+        # convention. Rewritten on ``to_dict``'s own fresh copy, never on the
+        # outcome, and only for paths under the repo: a system interpreter keeps its
+        # absolute spelling, so the command stays runnable from the repo root.
+        outcome_record = None if outcome is None else outcome.to_dict()
+        if outcome_record is not None:
+            if outcome_record.get("artifact_path"):
+                outcome_record["artifact_path"] = _repo_relative(
+                    Path(outcome_record["artifact_path"])
+                )
+            outcome_record["command"] = [
+                _repo_relative(Path(part))
+                if Path(part).is_absolute() and Path(part).is_relative_to(REPO_ROOT)
+                else part
+                for part in outcome_record.get("command") or []
+            ]
         self.audit.record_iteration(
             {
                 "iteration": iteration,
@@ -522,7 +864,7 @@ class ResearchLoop:
                 },
                 "repairs": repairs,
                 "change_summary": change_summary,
-                "outcome": None if outcome is None else outcome.to_dict(),
+                "outcome": outcome_record,
                 "postflight": None if postflight is None else postflight.to_dict(),
                 "agent_notes": {
                     "researcher": {
@@ -536,10 +878,10 @@ class ResearchLoop:
                     else postflight.to_dict(),
                 },
                 "status": status,
-                "manual_intervention": False,
+                "manual_intervention": self.state.manual_interventions
+                > self._interventions_at_iteration_start,
             }
         )
-        self._save()
         self.audit.finish_activity(
             persistence,
             agent_note={
@@ -625,6 +967,7 @@ class ResearchLoop:
             # no-progress guard in the handler).
             iteration = self.state.iteration_count + 1
             proposals_before = self.state.proposal_attempts
+            self._interventions_at_iteration_start = self.state.manual_interventions
             try:
                 if self.state.pending_replications and coverage_complete(self.state):
                     task = self.state.pending_replications[0]
@@ -642,14 +985,14 @@ class ResearchLoop:
                     "researcher",
                     iteration,
                     lambda fb: self.roles.research(
-                        self.state, iteration, required_family(self.state)
+                        self.state, iteration, required_family(self.state), feedback=fb
                     ),
                 )
                 preflight = self._role_call(
                     "critic_preflight",
                     iteration,
                     lambda fb: self.roles.critic_preflight(
-                        self.state, iteration, decision
+                        self.state, iteration, decision, feedback=fb
                     ),
                 )
                 self.state.iteration_count += 1
@@ -660,7 +1003,9 @@ class ResearchLoop:
                 manifest = self._role_call(
                     "builder",
                     iteration,
-                    lambda fb: self.roles.build(self.state, iteration, decision),
+                    lambda fb: self.roles.build(
+                        self.state, iteration, decision, feedback=fb
+                    ),
                 )
                 self._execute(iteration, decision, preflight, manifest)
                 self.consecutive_harness_errors = 0
@@ -721,6 +1066,13 @@ class ResearchLoop:
 
         self.state.status = "completed"
         self._save()
+        # I6 / I-9: the organizers' verdict, reported beside the harness's stop
+        # and never in place of it. `should_stop` is coverage-gated and the caps
+        # bound it, so a run can satisfy the epsilon/N rule and still stop for
+        # some other reason — Owner D prints both numbers.
+        epsilon = float(self.convergence["epsilon"])
+        patience = int(self.convergence["patience"])
+        official_sequence = [self.state.baseline_primary] + scored_primaries(self.state)
         summary = {
             "run_id": self.state.run_id,
             "status": self.state.status,
@@ -730,6 +1082,10 @@ class ResearchLoop:
             "manual_interventions": self.state.manual_interventions,
             "token_usage": self.state.token_usage.to_dict(),
             "wall_clock_seconds": self.state.wall_clock_seconds,
+            "converged_official": official_converged(official_sequence, epsilon, patience),
+            "converged_official_iteration": _official_convergence_iteration(
+                self.state, epsilon, patience
+            ),
             "best": {
                 "experiment_id": self.state.best_experiment_id,
                 "metrics": self.state.best_metrics,

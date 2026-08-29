@@ -3,9 +3,9 @@
 Autonomous ML research agent for the KuaiRand-Pure within-user ranking task.
 The working target is `long_view`, evaluated with GAUC and nDCG@5.
 
-## Current vertical slice
+## What is implemented
 
-The first implementation provides:
+The repository provides an end-to-end autonomous research harness:
 
 - a deterministic experiment proposer with an interface that can later be backed
   by an LLM
@@ -26,9 +26,20 @@ The first implementation provides:
 
 ## Setup
 
-Python 3.9+, NumPy, and the OpenAI Python SDK are required:
+Python 3.9+, NumPy, and the OpenAI Python SDK are required. POSIX:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+bash scripts/download_data.sh
+```
+
+PowerShell (download the dataset with Git Bash or WSL first):
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 ```
 
@@ -38,12 +49,17 @@ Place the extracted KuaiRand-Pure files under:
 data/KuaiRand-Pure/data/
 ```
 
-The runner never reads `data/judge/` and never loads rows after the validation
-cutoff while developing models.
+Development uses only the official train/validation dates. The final gate loads
+label-free test metadata, scores the validation-selected checkpoint once, and
+never exposes test labels to model selection.
 
 ## Run the baseline agent
 
 From the repository root:
+
+```bash
+python -m src.agent.controller --config configs/baseline.json
+```
 
 ```powershell
 python -m src.agent.controller --config configs/baseline.json
@@ -71,7 +87,13 @@ Each run creates `runs/<run-id>/` containing:
 
 ## Tests
 
+```bash
+python -m pytest -q -W error
+python -m unittest discover -s tests -v
+```
+
 ```powershell
+python -m pytest -q -W error
 python -m unittest discover -s tests -v
 ```
 
@@ -81,6 +103,12 @@ The test suite uses a scripted provider and does not make paid API calls.
 
 Create your local environment file from the committed template, then add your
 API key to `.env`:
+
+```bash
+cp .env.example .env
+# Edit .env and set OPENAI_API_KEY, then run:
+python -m src.agent.controller --config configs/ranking_losses.json
+```
 
 ```powershell
 Copy-Item .env.example .env
@@ -103,14 +131,21 @@ than `0.002` queues exact seed-1 and seed-2 replications.
 
 Resume an interrupted research run with:
 
+```bash
+python -m src.agent.controller \
+  --config configs/ranking_losses.json \
+  --resume runs/<research-run-id>
+```
+
 ```powershell
 python -m src.agent.controller `
   --config configs/ranking_losses.json `
   --resume runs/<research-run-id>
 ```
 
-The agent never reads `data/judge/`. Final judge prediction generation remains a
-separate, explicit user-authorized step.
+There is not yet an `intervene` CLI. Operator actions must be recorded manually;
+adding an append-only intervention command and derived counter is listed below as
+a limitation.
 
 ## Run the read-only research dashboard
 
@@ -119,25 +154,25 @@ For the complete two-terminal UI and live-agent walkthrough, see
 
 Install the optional UI dependencies:
 
-```powershell
+```bash
 python -m pip install -r requirements-ui.txt
 ```
 
 Optionally generate the aggregate-only train/validation EDA profile:
 
-```powershell
+```bash
 python -m src.ui.profile_data --config configs/ui.json
 ```
 
 Then launch the dashboard from the repository root:
 
-```powershell
+```bash
 python -m streamlit run streamlit_app.py
 ```
 
 Launching the nested file directly is also supported:
 
-```powershell
+```bash
 python -m streamlit run src/ui/app.py
 ```
 
@@ -155,6 +190,10 @@ is truthfully reported as unchecked.
 
 For a complete end-to-end test of the real training subprocess without an API
 key or network access, run:
+
+```bash
+python -m src.agent.controller --config configs/offline_smoke.json
+```
 
 ```powershell
 python -m src.agent.controller --config configs/offline_smoke.json
@@ -176,8 +215,8 @@ def run(context, parameters) -> CandidateOutput:
     ...
 ```
 
-Candidates receive encoded train features/labels, validation features without
-labels, and a trusted validation callback for early stopping. They return scores,
+Candidates receive encoded train features/labels, label-free validation/test
+features, and a trusted validation callback. They return validation and test scores,
 checkpoint arrays, a training trace, and diagnostics. The trusted worker checks
 shape and finiteness and computes final GAUC/nDCG@5 itself; candidate-reported
 metric values are ignored.
@@ -209,12 +248,18 @@ The research loop tracks three distinct counts:
 : One scored candidate experiment. The loop increments the iteration count once a candidate has run to completion and been evaluated on validation data. Stop reason `candidate_budget_reached` fires when iteration count reaches `max_iterations`.
 
 **Training attempt** (`max_training_attempts`)
-: One executor subprocess call to train a candidate model. Multiple attempts may occur during recovery after training failure (e.g., OOM, process timeout). Stop reason `iteration_budget_reached` fires when training-attempt count reaches `max_iterations` (the knobs are unified during initial development).
+: One executor subprocess call to train a candidate model. Repairs may create
+multiple attempts for one candidate. `training_attempt_budget_reached` fires at
+`max_training_attempts`.
 
 **Proposal** (`max_proposals`, default `max_iterations × 2`)
 : One research→build cycle, including rejected candidates. The Critic may reject a candidate's preflight check; rejected proposals increment the proposal counter but do not run training. Stop reason `proposal_budget_reached` fires when proposal count reaches `max_proposals`.
 
-**Convergence** occurs when no improvement greater than ε = **0.002** is observed over N = **3** consecutive scored iterations. Formally, the run stops when `k > N` and `max(scores[:k]) − max(scores[:k−N]) ≤ 0.002`, where scores are validation-primary metrics of successfully completed training attempts. This is reported as `converged_official: true` in `summary.json`, separate from `stop_reason: "converged"`. The convergence check is enabled only after both approved method families (BPR and group-softmax) have been tested at least once.
+**Convergence** uses ε = **0.002** and patience **3**: after the meaningful best
+is established, three successful scored candidates without an improvement greater
+than ε stop the harness with `stop_reason: "converged"`. Both required families
+must be covered first. The current summary does not yet publish a separate
+`converged_official` verdict; this is a reporting limitation.
 
 ## First research agenda
 
@@ -226,7 +271,7 @@ replication, or convergence.
 
 ## Latest verified baseline
 
-Run `20260828T141646Z_baseline` completed all three experiments with zero manual
+Run `20260829T041834051989Z_baseline` completed all three experiments with zero manual
 interventions:
 
 | Experiment | GAUC | nDCG@5 | Primary |
@@ -236,8 +281,59 @@ interventions:
 | Official FM, seed 0 | 0.6671 | 0.5358 | **0.6015** |
 
 The FM result reproduces the published validation baseline of `0.6016` within
-rounding/noise. The run used 3 iterations, 0 LLM tokens, and approximately 212
-seconds wall-clock on the current Windows/OneDrive workspace.
+rounding/noise. The run used 3 iterations, 0 LLM tokens, 0 manual interventions,
+and 32.02 seconds wall-clock. Source:
+[`summary.json`](runs/20260829T041834051989Z_baseline/summary.json).
+
+## Latest verified autonomous integration run
+
+Committed run `20260829T060130480764Z_research` executed the real BPR trainer and
+the label-free submission gate:
+
+| GAUC | nDCG@5 | Primary | Delta vs official 0.6016 |
+|---:|---:|---:|---:|
+| 0.6679 | 0.5360 | **0.6019** | **+0.0003** |
+
+It used 1 scored iteration/training attempt, 2,440 scripted tokens, 141.31 seconds,
+0 GPU-hours, and 0 manual interventions. This is an offline integration result,
+not a converged live-LLM claim. Sources: [`summary.json`](runs/20260829T060130480764Z_research/summary.json),
+[`resources.json`](runs/20260829T060130480764Z_research/resources.json), and
+[`results.json`](runs/20260829T060130480764Z_research/results.json).
+
+Reproduce its rendered report with:
+
+```bash
+python -m src.agent.report runs/20260829T060130480764Z_research
+```
+
+## Architecture
+
+```text
+Conductor: research_controller.ResearchLoop
+  ├─ Steward: official.load_train_valid + datacard.render_data_card
+  ├─ Scientist/Critics: roles.research + critic_preflight/postflight
+  ├─ Engineer/Medic: roles.build + roles.debug
+  ├─ Sandbox: safety.validate_source → CandidateExecutor → run_candidate
+  ├─ Scorekeeper/Gate: official_evaluate → gate.run_gate
+  └─ Ledger/UI: ResearchAudit → report.render_reports → read-only Streamlit UI
+```
+
+## Limitations and next work
+
+- No committed converged live-LLM run exists yet; the reported autonomous run is
+  the deterministic one-iteration smoke test.
+- The harness lacks the append-only `intervene` command and separate persisted
+  official-convergence verdict.
+- Only BPR and group-softmax are currently registered; sequence features,
+  multi-task feedback, and repeated-seed variance estimates remain next steps.
+
+## Team contributions
+
+- A: research controller, budgets, recovery, convergence, and integration wiring.
+- B: official loaders/evaluator, trusted candidate runner, and submission gate.
+- C: LLM provider/retries, scripted offline path, prompt structure, and docs.
+- D: data card, audit/report rendering, repository hygiene, and run journal.
+- E: safety validation, family registry, sampling primitives, and method cards.
 
 See `AGENTS.md` for data-leakage, judge-data, repository-safety, and experiment
 logging rules.

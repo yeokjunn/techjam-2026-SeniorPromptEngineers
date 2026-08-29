@@ -9,7 +9,7 @@ from .activity import ROLE_OBJECTIVES, summarize_role_output
 from .audit import ResearchAudit
 from .catalog import MethodCatalog
 from .errors import RoleOutputInvalid, TokenBudgetExceeded
-from .families import FAMILIES, family_names
+from .families import FAMILIES, builder_brief, family_names
 from .llm import LLMCallResult, LLMProvider, normalize_parameters
 from .policy import sanitize_parameters
 from .types import (
@@ -148,6 +148,7 @@ class ResearchRoles:
                 "experiments": nodes,
             },
             indent=2,
+            sort_keys=True,
         )
 
     def research(
@@ -156,7 +157,7 @@ class ResearchRoles:
         family_rule = (
             f"You must choose family={required_family!r} because the other required family was already attempted."
             if required_family
-            else "Choose BPR or group-softmax based on evidence and the experiment history."
+            else f"Choose one registered family ({', '.join(sorted(family_names()))}) based on evidence and the experiment history."
         )
         volatile_block = f"""ROLE: Researcher
 Propose one controlled ranking-loss experiment. {family_rule}
@@ -219,12 +220,7 @@ PROPOSAL: {json.dumps(decision.to_dict(), indent=2, sort_keys=True)}
     def build(
         self, state: RunState, iteration: int, decision: ResearchDecision, feedback: str | None = None
     ) -> CandidateManifest:
-        # Use registry-driven sampler; fall back to trusted_sampler name until E's families.builder_brief lands
-        try:
-            from .families import builder_brief
-            sampler_brief = builder_brief(decision.family)
-        except (ImportError, AttributeError):
-            sampler_brief = f"You must call src.models.sampling.{FAMILIES[decision.family].trusted_sampler}."
+        sampler_brief = builder_brief(decision.family)
         volatile_block = f"""ROLE: Builder
 Generate a self-contained candidate.py and test_candidate.py for the approved proposal.
 {sampler_brief}
@@ -251,15 +247,16 @@ PROPOSAL:
         error: str,
         repair_number: int,
     ) -> DebugDecision:
-        prompt = f"""ROLE: Debugger
+        volatile_block = f"""ROLE: Debugger
 Repair the candidate code/tests for the supplied validation or execution error. Preserve the
 approved hypothesis, family, parameters, and candidate contract. Do not broaden permissions.
 
-HYPOTHESIS: {json.dumps(decision.to_dict(), indent=2)}
+HYPOTHESIS: {json.dumps(decision.to_dict(), indent=2, sort_keys=True)}
 CODE: {manifest.code}
 TESTS: {manifest.tests}
 ERROR: {error}
 """
+        prompt = f"{self._stable_prefix(state, decision.family)}\n\n{volatile_block}"
         result = self._call(
             state,
             iteration,

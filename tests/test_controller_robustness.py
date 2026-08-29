@@ -319,7 +319,10 @@ class ProposalErrorTests(unittest.TestCase):
             run_dir = loop.run()
             summary = summary_of(run_dir)
             self.assertNotEqual(summary["stop_reason"], "controller_error", error_report(run_dir))
-            self.assertEqual(summary["stop_reason"], "iteration_budget_reached")
+            # T3/I5 renamed this stop: `max_training_attempts` defaults to
+            # `max_iterations` (1 here), so the training cap is still the first
+            # of the three to fire and the run stops in exactly the same place.
+            self.assertEqual(summary["stop_reason"], "training_attempt_budget_reached")
             self.assertEqual(len(provider.calls), 5)
             retries = memory(run_dir, "role_retry")
             self.assertEqual(len(retries), 1)
@@ -397,7 +400,7 @@ class ProposalErrorTests(unittest.TestCase):
             run_dir = loop.run()
             summary = summary_of(run_dir)
             self.assertNotEqual(summary["stop_reason"], "harness_error_breaker", error_report(run_dir))
-            self.assertEqual(summary["stop_reason"], "iteration_budget_reached")
+            self.assertEqual(summary["stop_reason"], "training_attempt_budget_reached")
             self.assertEqual(len(provider.calls), 5)
             retries = memory(run_dir, "role_retry")
             self.assertEqual([record["label"] for record in retries], ["builder"])
@@ -410,7 +413,7 @@ class ProposalErrorTests(unittest.TestCase):
         empty = failure(IncompleteResponse, "Reasoning consumed max_output_tokens.")
         with research_loop([empty, *good_iteration("bpr")]) as (loop, provider):
             run_dir = loop.run()
-            self.assertEqual(summary_of(run_dir)["stop_reason"], "iteration_budget_reached")
+            self.assertEqual(summary_of(run_dir)["stop_reason"], "training_attempt_budget_reached")
             self.assertEqual(len(provider.calls), 5)
             self.assertEqual(len(memory(run_dir, "role_retry")), 1)
             self.assertEqual(loop.consecutive_harness_errors, 0)

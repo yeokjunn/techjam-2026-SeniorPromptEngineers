@@ -111,6 +111,18 @@ class ResearchLoop:
         self.generated_root = _resolve_repo_path(config.get("generated_root", "generated_experiments"))
         self.run_root = _resolve_repo_path(config.get("run_root", "runs"))
         self.budgets = config["budgets"]
+        # I5: three caps, three keys. ``max_iterations`` is the *candidate* cap
+        # and nothing else; the training-attempt and proposal caps are their own
+        # knobs, resolved once here because ``_execute`` enforces the training
+        # cap too and must read the same number ``run()`` does. The ``.get``
+        # defaults preserve the old single-knob behaviour for configs that
+        # predate the split (every inline test config), so no caller has to
+        # supply the new keys to keep working.
+        max_iterations = int(self.budgets["max_iterations"])
+        self.max_training_attempts = int(
+            self.budgets.get("max_training_attempts", max_iterations)
+        )
+        self.max_proposals = int(self.budgets.get("max_proposals", max_iterations * 2))
         self.convergence = config["convergence"]
         llm_config = config["llm"]
         self.provider = provider or build_provider(config)
@@ -167,10 +179,20 @@ class ResearchLoop:
             test_timeout_seconds=int(self.budgets["test_timeout_seconds"]),
         )
         self.session_started = time.monotonic()
-        # Circuit breaker for infrastructure failures. It lives on the loop and
-        # not on RunState (frozen types.py), so a resume starts from a clean
-        # slate — which is the behaviour we want after an operator intervenes.
         self.consecutive_harness_errors = 0
+        initialized = self.audit.start_activity(
+        initialized = self.audit.start_activity(
+            0,
+            "initializing",
+            objective="Load the frozen configuration, baseline, method catalog, and run state.",
+        )
+        self.audit.finish_activity(
+            initialized,
+            agent_note={
+                "objective": "Prepare the autonomous research loop.",
+                "decision": "Run state is ready; begin the next research iteration.",
+            },
+        )
 
     def _elapsed(self) -> float:
         return self.state.wall_clock_seconds + (time.monotonic() - self.session_started)
@@ -238,6 +260,12 @@ class ResearchLoop:
     def _record_rejection(
         self, iteration: int, decision: ResearchDecision, critic: CriticDecision
     ) -> None:
+        persistence = self.audit.start_activity(
+            iteration,
+            "persistence",
+            experiment_id=f"rejected_{decision.hypothesis_id}",
+            objective="Persist the rejected proposal and resumable run state.",
+        )
         node = ExperimentNode(
             iteration=iteration,
             experiment_id=f"rejected_{decision.hypothesis_id}",
@@ -254,11 +282,50 @@ class ResearchLoop:
                 "iteration": iteration,
                 "proposal": decision.to_dict(),
                 "preflight": critic.to_dict(),
+                "agent_notes": {
+                    "researcher": {
+                        "hypothesis": decision.hypothesis,
+                        "rationale": decision.rationale,
+                        "evidence": [asdict(item) for item in decision.evidence],
+                    },
+                    "critic_preflight": critic.to_dict(),
+                },
                 "status": "critic_rejected",
                 "manual_intervention": False,
             }
         )
         self._save()
+        self.audit.finish_activity(
+            persistence,
+            agent_note={
+                "decision": "Proposal rejected before code generation or training.",
+                "rationale": critic.rationale,
+                "next_focus": critic.next_focus,
+            },
+        )
+
+    def _parent_sources(self, parent_experiment: str | None) -> dict[str, str]:
+        if not parent_experiment:
+            return {}
+        node = next(
+            (item for item in self.state.nodes if item.experiment_id == parent_experiment),
+            None,
+        )
+        if node is None or not node.candidate_dir:
+            return {}
+        directory = Path(node.candidate_dir)
+        if not directory.is_absolute():
+            directory = REPO_ROOT / directory
+        try:
+            directory.resolve().relative_to(self.generated_root.resolve())
+        except ValueError:
+            return {}
+        sources: dict[str, str] = {}
+        for name in ("candidate.py", "test_candidate.py"):
+            path = directory / name
+            if path.is_file():
+                sources[name] = path.read_text(encoding="utf-8")
+        return sources
 
     def _repair_until_tests_pass(
         self,
@@ -274,14 +341,36 @@ class ResearchLoop:
         maximum = int(self.budgets["max_debug_repairs"])
         while True:
             if error is None:
+                safety = self.audit.start_activity(
+                    iteration,
+                    "safety_tests",
+                    experiment_id=current.candidate_id,
+                    attempt=repairs_used + 1,
+                    objective="Validate generated source and run the candidate unit tests.",
+                )
                 try:
                     workspace.write(current)
                     passed, output = self.executor.test(workspace)
                     if passed:
+                        self.audit.finish_activity(
+                            safety,
+                            agent_note={
+                                "decision": "Candidate passed source safety and focused unit tests.",
+                                "next_focus": "Run training and trusted validation evaluation.",
+                            },
+                        )
                         return current, repairs_used, None
                     error = output
                 except Exception as exc:
                     error = str(exc)
+                self.audit.finish_activity(
+                    safety,
+                    status="failed",
+                    error=error,
+                    repair="Eligible for a bounded Debugger pass."
+                    if repairs_used < maximum
+                    else None,
+                )
             if repairs_used >= maximum:
                 return current, repairs_used, error
             repairs_used += 1
@@ -310,13 +399,57 @@ class ResearchLoop:
         manifest, repairs, validation_error = self._repair_until_tests_pass(
             iteration, decision, manifest, workspace
         )
+        change_summary = None
+        parent_sources = self._parent_sources(decision.parent_experiment)
+        execution_attempt = 0
         outcome = None
         while validation_error is None:
-            if self.state.training_attempts >= int(self.budgets["max_iterations"]):
+            # Refresh the authoritative patch before every training attempt because
+            # a bounded Debugger pass may have changed the candidate after a failure.
+            change_summary = self.audit.record_candidate_changes(
+                iteration,
+                manifest.candidate_id,
+                {
+                    "candidate.py": manifest.code,
+                    "test_candidate.py": manifest.tests,
+                },
+                parent_sources,
+            )
+            if self.state.training_attempts >= self.max_training_attempts:
                 validation_error = "Training-attempt budget reached before execution."
                 break
             self.state.training_attempts += 1
-            outcome = self.executor.train(iteration, manifest, workspace, self.run_dir)
+            execution_attempt += 1
+            training = self.audit.start_activity(
+                iteration,
+                "training_evaluation",
+                experiment_id=manifest.candidate_id,
+                attempt=execution_attempt,
+                objective="Train the candidate and compute trusted validation GAUC and nDCG@5.",
+                agent_note={
+                    "hypothesis": decision.hypothesis,
+                    "parameters": manifest.parameters,
+                },
+            )
+            try:
+                outcome = self.executor.train(iteration, manifest, workspace, self.run_dir)
+            except Exception as exc:
+                self.audit.finish_activity(training, status="failed", error=str(exc))
+                raise
+            self.audit.finish_activity(
+                training,
+                status="completed" if outcome.status == "success" else "failed",
+                metrics=outcome.metrics,
+                error=outcome.error,
+                repair=outcome.recovery,
+                change_summary=change_summary,
+                agent_note={
+                    "hypothesis": decision.hypothesis,
+                    "decision": "Trusted result accepted."
+                    if outcome.status == "success"
+                    else "Trusted result rejected; consider bounded repair.",
+                },
+            )
             if outcome.status == "success":
                 break
             manifest, repairs, validation_error = self._repair_until_tests_pass(
@@ -369,6 +502,12 @@ class ResearchLoop:
         if status == "success":
             self.policy.observe_success(self.state, node)
 
+        persistence = self.audit.start_activity(
+            iteration,
+            "persistence",
+            experiment_id=manifest.candidate_id,
+            objective="Finalize the immutable iteration record and resumable state.",
+        )
         self.audit.record_iteration(
             {
                 "iteration": iteration,
@@ -383,13 +522,36 @@ class ResearchLoop:
                     "tests_sha256": _sha256_text(manifest.tests),
                 },
                 "repairs": repairs,
+                "change_summary": change_summary,
                 "outcome": None if outcome is None else outcome.to_dict(),
                 "postflight": None if postflight is None else postflight.to_dict(),
+                "agent_notes": {
+                    "researcher": {
+                        "hypothesis": decision.hypothesis,
+                        "rationale": decision.rationale,
+                        "evidence": [asdict(item) for item in decision.evidence],
+                    },
+                    "critic_preflight": preflight.to_dict(),
+                    "critic_postflight": None
+                    if postflight is None
+                    else postflight.to_dict(),
+                },
                 "status": status,
                 "manual_intervention": False,
             }
         )
         self._save()
+        self.audit.finish_activity(
+            persistence,
+            agent_note={
+                "decision": "Iteration finalized.",
+                "result": status,
+                "next_focus": None if postflight is None else postflight.next_focus,
+            },
+            change_summary=change_summary,
+            metrics=metrics,
+            error=validation_error,
+        )
         return node
 
     def _replication(self, task: dict[str, Any]) -> None:
@@ -439,14 +601,15 @@ class ResearchLoop:
     def run(self) -> Path:
         max_iterations = int(self.budgets["max_iterations"])
         max_wall_clock = float(self.budgets["max_wall_clock_seconds"])
-        max_proposals = max_iterations * 2
+        max_training_attempts = self.max_training_attempts
+        max_proposals = self.max_proposals
 
         while True:
             if self._elapsed() >= max_wall_clock:
                 self.state.stop_reason = "wall_clock_budget_reached"
                 break
-            if self.state.training_attempts >= max_iterations:
-                self.state.stop_reason = "iteration_budget_reached"
+            if self.state.training_attempts >= max_training_attempts:
+                self.state.stop_reason = "training_attempt_budget_reached"
                 break
             if self.state.iteration_count >= max_iterations:
                 self.state.stop_reason = "candidate_budget_reached"
@@ -526,30 +689,17 @@ class ResearchLoop:
                 if kind == "budget":
                     self.state.stop_reason = "llm_token_budget_reached"
                     break
-                if kind == "proposal":
-                    # The model's fault and already re-prompted: drop this
-                    # proposal, keep the run.
-                    self.consecutive_harness_errors = 0
-                    self._record_failed_proposal(iteration, exc, "proposal_failed")
-                    continue
-                self.consecutive_harness_errors += 1
-                if self.consecutive_harness_errors >= int(
-                    self.budgets.get("max_consecutive_harness_errors", 3)
-                ):
-                    self.audit.write_json_atomic(
-                        self.run_dir / "error.json",
-                        {
-                            "error": str(exc),
-                            "error_type": type(exc).__name__,
-                            "kind": kind,
-                            "iteration": iteration,
-                            "consecutive_harness_errors": self.consecutive_harness_errors,
-                        },
-                    )
-                    self.state.stop_reason = "harness_error_breaker"
-                    break
-                self._record_failed_proposal(iteration, exc, "harness_error")
-                continue
+                self.state.stop_reason = "controller_error"
+                self.audit.write_json_atomic(
+                    self.run_dir / "error.json", {"error": str(exc)}
+                )
+                failed = self.audit.start_activity(
+                    self.state.iteration_count,
+                    "persistence",
+                    objective="Record an unexpected controller failure without corrupting the previous best.",
+                )
+                self.audit.finish_activity(failed, status="failed", error=str(exc))
+                break
 
         self.state.status = "completed"
         self._save()
@@ -569,15 +719,48 @@ class ResearchLoop:
                 "candidate_dir": self.state.best_candidate_dir,
             },
         }
-        gate_result = run_gate(
-            self.run_dir,
-            Path(self.state.best_candidate_dir)
+        # I-1. Two separate concerns, both the loop's and neither the gate's.
+        #
+        # ``best_candidate_dir`` is stored **repo-relative** (``_execute`` at
+        # :363, copied onto the state by ``policy.py:87``), so the old
+        # ``Path(...)`` resolved it against the *process* working directory and
+        # the gate looked for ``test_scores.npy`` under wherever the run was
+        # launched from. ``_resolve_repo_path`` is this module's own resolver —
+        # the one ``__init__`` uses for every configured path — and it is also
+        # correct for the absolute spelling ``_execute``'s ``except ValueError``
+        # fallback produces for a workspace outside the repo.
+        #
+        # The ``try`` is containment in depth, not a fix for a fault in B's
+        # module: ``gate.py:218`` is deliberately written so it cannot raise, but
+        # ``summary.json`` is the one file the organizers read, and its survival
+        # must not depend on another module keeping that promise. Keyword
+        # arguments so a signature change cannot silently reorder the four paths.
+        node_dir = (
+            _resolve_repo_path(self.state.best_candidate_dir)
             if self.state.best_candidate_dir
-            else self.run_dir,
-            self.data_dir,
-            REPO_ROOT / "kuairand-starter-kit",
+            else self.run_dir
         )
-        summary["gate"] = asdict(gate_result)
+        try:
+            gate_result = run_gate(
+                run_dir=self.run_dir,
+                node_dir=node_dir,
+                data_dir=self.data_dir,
+                kit_dir=REPO_ROOT / "kuairand-starter-kit",
+            )
+            summary["gate"] = asdict(gate_result)
+        except Exception as exc:
+            # ``reason`` is not in the brief's literal dict, but B's gate sets one
+            # on *every* error it returns (``gate.py:107-108``, and ``"unexpected"``
+            # for a fault in its own wrapper at ``:231``), so consumers may treat
+            # ``details["reason"]`` as always present. This is the one error shape
+            # B cannot produce from their side; containment is more useful when it
+            # is indistinguishable from the producer's real errors. ``error`` stays
+            # the brief's ``str(exc)``.
+            summary["gate"] = {
+                "status": "error",
+                "submission_path": None,
+                "details": {"reason": "unexpected", "error": str(exc)},
+            }
         self.audit.write_json_atomic(self.run_dir / "summary.json", summary)
         self.audit.write_json_atomic(
             self.run_dir / "best.json", summary["best"]
@@ -600,6 +783,21 @@ class ResearchLoop:
             ],
         )
         render_reports(self.run_dir)
+        completed = self.audit.start_activity(
+            self.state.iteration_count,
+            "completed",
+            experiment_id=self.state.best_experiment_id,
+            objective="Mark the research run complete and expose its stop reason.",
+        )
+        self.audit.finish_activity(
+            completed,
+            agent_note={
+                "decision": "Research run completed.",
+                "stop_reason": self.state.stop_reason,
+                "best_experiment": self.state.best_experiment_id,
+            },
+            metrics=self.state.best_metrics,
+        )
         print(json.dumps(summary, indent=2))
         return self.run_dir
 

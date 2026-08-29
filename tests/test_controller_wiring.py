@@ -11,13 +11,15 @@ responsibility rather than the gate's:
   lives next to the code that writes it, instead of being borrowed from another
   owner's implementation detail.
 * **The four arguments go by keyword, and ``node_dir`` is absolute.**
-  ``policy.py:87`` stores ``best_candidate_dir`` **repo-relative**, so building
+  ``policy.py:220`` stores ``best_candidate_dir`` **repo-relative**, so building
   the path with ``Path(...)`` resolved it against the *process* working
   directory — wrong for every process not launched from the repo root. The
   recorder below therefore accepts keyword arguments only, and the loop runs
   from a scratch directory so that only repo-root resolution can pass.
 
-T10 ships as four sibling PRs; this file carries step 1's two tests only.
+T10 ships as four sibling PRs; this file carries step 1's two tests and step 4's
+one test (`RegistryDrivenPolicyTests`, review I-7 — `policy.py` reading Owner E's
+family registry instead of its own literals). Steps 2 and 3 append theirs here.
 """
 
 from __future__ import annotations
@@ -26,18 +28,20 @@ import contextlib
 import json
 import tempfile
 import unittest
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from src.agent import research_controller
+from src.agent import families, policy, research_controller
 from src.agent.research_controller import ResearchLoop
+from src.agent.types import ExperimentNode, RunState
 from src.evaluation.gate import GateResult
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# The shape ``_execute`` stores (``research_controller.py:363``) and ``policy.py:87``
+# The shape ``_execute`` stores (``research_controller.py:363``) and ``policy.py:220``
 # copies onto the state: relative to the repo root, no leading slash. Nothing has
 # to exist on disk — the gate is a double in both tests.
 CANDIDATE_DIR = "generated_experiments/20260829T000000Z_research/1/candidate_bpr"
@@ -218,6 +222,292 @@ class GateWiringTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1]["node_dir"], fallback_loop.run_dir)
         self.assertTrue(calls[1]["node_dir"].is_absolute())
+
+
+# --------------------------------------------------------------------------- #
+# T10 step 4 · I-7 — the family registry, not `policy.py`, owns the search space
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class GriddedFamily:
+    """A registry entry that already carries ``grid`` and ``defaults``.
+
+    ``families.Family`` is a **frozen** dataclass whose only fields today are
+    ``name``, ``method_card`` and ``trusted_sampler`` (``families.py:8-12``), so
+    a ``Family`` carrying a grid can be neither constructed nor mutated:
+    ``Family(..., grid=...)`` raises ``TypeError`` and ``entry.grid = ...``
+    raises ``FrozenInstanceError``. Those two fields are Owner E's T3 step 1 and
+    ``families.py`` is not A's file, so the test brings its own entry, shaped
+    exactly as E has committed to (``plans/E-search-surface-safety.md:113-120``,
+    ``compare=False`` on both dicts so the frozen entry stays hashable).
+
+    ``policy.py`` reads both fields through ``getattr``, so it accepts this
+    stand-in and E's real ``Family`` identically — which is the point: the day
+    E's fields land, this class becomes redundant rather than wrong, and the
+    assertions below keep holding against the real registry.
+    """
+
+    name: str
+    method_card: str
+    trusted_sampler: str
+    grid: dict[str, Any] = field(default_factory=dict, compare=False)
+    defaults: dict[str, Any] = field(default_factory=dict, compare=False)
+    required_calls: tuple[tuple[str, ...], ...] = ()
+
+
+# A proposal that is valid against the *shipped* registry, so every rejection
+# below is attributable to the one key under test.
+BPR_RAW: dict[str, Any] = {
+    "seed": 0,
+    "k": 16,
+    "learning_rate": 0.001,
+    "epochs": 3,
+    "batch_size": 2048,
+    "patience": 2,
+    "negatives_per_positive": 1,
+}
+
+
+def successful_state(*done: str) -> RunState:
+    """A ``RunState`` whose only history is one successful node per family."""
+    state = RunState("run", "running", "now", 0.6016)
+    for index, name in enumerate(done, start=1):
+        state.nodes.append(
+            ExperimentNode(
+                index, f"e{index}", f"h{index}", name, "explore", {}, "success", {"primary": 0.601}
+            )
+        )
+    return state
+
+
+class RegistryDrivenPolicyTests(unittest.TestCase):
+    """`policy.py` must gain nothing to edit when Owner E registers a family."""
+
+    def test_sanitize_parameters_uses_the_registry_grid(self):
+        # --- the family set is derived from the registry, not restated here ---
+        self.assertEqual(policy.FAMILIES, families.family_names())
+        # Equality alone is vacuous: `family_names()` returns a `frozenset` and
+        # `{"bpr", "group_softmax"} == frozenset({...})` is True, so the old
+        # literal would satisfy the line above. The type is the discriminator —
+        # the literal was a mutable `set`, a value read off `family_names()` is
+        # not.
+        self.assertIsInstance(policy.FAMILIES, frozenset)
+
+        # --- an unregistered family is the brief's ValueError, verbatim -------
+        with self.assertRaises(ValueError) as unknown:
+            policy.sanitize_parameters("history_features", BPR_RAW)
+        self.assertEqual(str(unknown.exception), "Unsupported family: history_features")
+        # The lookup comes first, so the family — not an incidental bound — is
+        # what the re-prompt is told about. The old `if/elif/else` chain reached
+        # its `else` only after the shared checks, so this said "epochs must be
+        # between 1 and 40." for a family that does not exist.
+        with self.assertRaises(ValueError) as unknown_first:
+            policy.sanitize_parameters("history_features", {**BPR_RAW, "epochs": 99})
+        self.assertEqual(str(unknown_first.exception), "Unsupported family: history_features")
+
+        # --- with no grid on the entry, today's bounds are the live path ------
+        # `Family` has no `grid` field yet, so this is what actually runs until
+        # E ships: the hard-coded checks, unchanged, messages included.
+        shipped = policy.sanitize_parameters("bpr", BPR_RAW)
+        self.assertEqual(shipped["batch_size"], 2048)
+        self.assertEqual(shipped["negatives_per_positive"], 1)
+        for override, message in (
+            ({"batch_size": 256}, "BPR batch_size must be 2048 or 4096."),
+            ({"k": 8}, "Ranking-loss attribution requires k=16 in the first research run."),
+            (
+                {"learning_rate": 0.002},
+                "learning_rate is outside the approved method-card search space.",
+            ),
+            ({"epochs": 99}, "epochs must be between 1 and 40."),
+        ):
+            with self.subTest(shipped_bound=sorted(override)[0]):
+                with self.assertRaises(ValueError) as rejected:
+                    policy.sanitize_parameters("bpr", {**BPR_RAW, **override})
+                self.assertEqual(str(rejected.exception), message)
+
+        # --- and with a grid on the entry, the grid is the authority ----------
+        # `batch_size` is a `tuple`, `epochs` a `range`; both are membership-
+        # tested with `in`, which is exact and O(1) for either. `history_window`
+        # is a key `policy.py` has never heard of, which is the whole finding:
+        # E adds a parameter, A's file does not change.
+        gridded = GriddedFamily(
+            "bpr",
+            "research/methods/bpr.md",
+            "sample_bpr_pairs",
+            grid={
+                "batch_size": (256,),
+                "epochs": range(1, 4),
+                "history_window": (7, 14),
+            },
+            defaults={"negatives_per_positive": 2, "history_window": 7},
+        )
+        with patch.dict(families.FAMILIES, {"bpr": gridded}, clear=False):
+            accepted = policy.sanitize_parameters("bpr", {**BPR_RAW, "batch_size": 256})
+            # 256 is off today's hard-coded {2048, 4096} and on the grid ...
+            self.assertEqual(accepted["batch_size"], 256)
+            # ... `epochs: 3` sits inside the `range` ...
+            self.assertEqual(accepted["epochs"], 3)
+            # ... a key absent from the proposal is filled from `defaults`, not
+            # from the `raw.get(...) or 1` fallback baked into `policy.py` ...
+            without_negatives = {
+                name: value
+                for name, value in BPR_RAW.items()
+                if name != "negatives_per_positive"
+            }
+            filled = policy.sanitize_parameters(
+                "bpr", {**without_negatives, "batch_size": 256}
+            )
+            self.assertEqual(filled["negatives_per_positive"], 2)
+            # ... and a grid key `policy.py` does not know reaches the output.
+            self.assertEqual(accepted["history_window"], 7)
+            self.assertEqual(
+                policy.sanitize_parameters(
+                    "bpr", {**BPR_RAW, "batch_size": 256, "history_window": 14}
+                )["history_window"],
+                14,
+            )
+
+            # Off-grid values are rejected on every one of those three keys.
+            for override in (
+                {"batch_size": 512},  # off the tuple (and off today's set too)
+                {"epochs": 4},  # inside today's 1..40, outside the range
+                {"history_window": 30},  # a key only the registry knows
+            ):
+                with self.subTest(off_grid=sorted(override)[0]):
+                    with self.assertRaises(ValueError) as off_grid:
+                        policy.sanitize_parameters(
+                            "bpr", {**BPR_RAW, "batch_size": 256, **override}
+                        )
+                    self.assertIn(sorted(override)[0], str(off_grid.exception))
+
+            # A key the grid does *not* name keeps today's bound and today's
+            # message — `k` in particular stays pinned at 16, because the kit
+            # already measured the k-sweep as a dead end
+            # (`kuairand-starter-kit/README.en.md:133-139`).
+            with self.assertRaises(ValueError) as pinned:
+                policy.sanitize_parameters("bpr", {**BPR_RAW, "batch_size": 256, "k": 32})
+            self.assertEqual(
+                str(pinned.exception),
+                "Ranking-loss attribution requires k=16 in the first research run.",
+            )
+
+            # A raw key that is neither shared nor in the grid is dropped, not
+            # fatal: a hallucinated parameter must not cost an iteration.
+            surplus = policy.sanitize_parameters(
+                "bpr", {**BPR_RAW, "batch_size": 256, "hallucinated_knob": 12345}
+            )
+            self.assertNotIn("hallucinated_knob", surplus)
+            self.assertEqual(surplus["batch_size"], 256)
+
+        third = GriddedFamily(
+            "history_features", "research/methods/history_features.md", "build_history"
+        )
+
+        # --- a new family inherits the shared bounds, including the one no
+        # --- family-specific entry covers ------------------------------------
+        # `_FAMILY_BOUNDS` has no entry for a family E registers, so every
+        # `batch_size` bound in the file was keyed to a family that is not this
+        # one: 9_999_999 was accepted (an OOM or a timeout charged to the 6-hour
+        # wall clock) and so were 0 and -1 (an immediate crash). Unreachable
+        # under the old code, which raised `Unsupported family` first; opened by
+        # making the family set registry-driven, so it is closed here.
+        shared_only = {"seed": 0, "k": 16, "learning_rate": 0.001, "epochs": 3, "patience": 2}
+        with patch.dict(families.FAMILIES, {"history_features": third}, clear=False):
+            for batch_size in (9_999_999, 0, -1):
+                with self.subTest(unbounded_batch_size=batch_size):
+                    with self.assertRaises(ValueError) as absurd:
+                        policy.sanitize_parameters(
+                            "history_features", {**shared_only, "batch_size": batch_size}
+                        )
+                    self.assertEqual(
+                        str(absurd.exception), "batch_size must be between 1 and 65536."
+                    )
+            # A plausible value still passes — the limit is a sanity floor and
+            # ceiling, not a search space; E's grid supersedes it entirely.
+            self.assertEqual(
+                policy.sanitize_parameters(
+                    "history_features", {**shared_only, "batch_size": 4096}
+                )["batch_size"],
+                4096,
+            )
+            # And the rest of the shared bounds reach the new family unchanged.
+            with self.assertRaises(ValueError) as still_pinned:
+                policy.sanitize_parameters(
+                    "history_features", {**shared_only, "batch_size": 4096, "k": 32}
+                )
+            self.assertEqual(
+                str(still_pinned.exception),
+                "Ranking-loss attribution requires k=16 in the first research run.",
+            )
+
+        # Both shipped families pin their own `batch_size`, so the shared limit
+        # is never consulted for them and their messages are untouched.
+        for family, off_bound, message in (
+            ("bpr", 100, "BPR batch_size must be 2048 or 4096."),
+            ("group_softmax", 100, "Group-softmax batch_size must be 512, 1024, or 2048."),
+        ):
+            with self.subTest(shared_limit_not_consulted=family):
+                raw = {**BPR_RAW, "batch_size": off_bound}
+                if family == "group_softmax":
+                    raw = {**shared_only, "batch_size": off_bound,
+                           "negatives_per_group": 4, "temperature": 1.0}
+                with self.assertRaises(ValueError) as own_bound:
+                    policy.sanitize_parameters(family, raw)
+                self.assertEqual(str(own_bound.exception), message)
+
+        # --- coverage: the stop rule reads the coverage set, not the registry -
+
+        def third_family_does_not_break_the_stop_rule(source: str) -> None:
+            """A family E registers must leave `should_stop` satisfiable."""
+            with self.subTest(coverage_source=source):
+                with patch.dict(families.FAMILIES, {"history_features": third}, clear=False):
+                    self.assertEqual(
+                        sorted(families.family_names()),
+                        ["bpr", "group_softmax", "history_features"],
+                    )
+                    covered = successful_state("bpr", "group_softmax")
+                    self.assertTrue(policy.coverage_complete(covered))
+                    self.assertIsNone(policy.required_family(covered))
+                    self.assertEqual(
+                        policy.required_family(successful_state("bpr")), "group_softmax"
+                    )
+                    # The stop rule itself, which is what the run hangs on: with
+                    # coverage read off `family_names()` this is False forever and
+                    # the run can only end on a budget, never `converged`.
+                    covered.stagnant_iterations = 3
+                    self.assertTrue(policy.SearchPolicy(0.002, 3, [1, 2]).should_stop(covered))
+
+        # E's `coverage_families()` does not exist yet, so `policy.py` falls back
+        # to the pair the stop rule was written against. Guarded on `hasattr`
+        # rather than asserted absent, so E shipping the function does not turn
+        # A's test red on E's own PR — the block below covers that side.
+        if not hasattr(families, "coverage_families"):
+            third_family_does_not_break_the_stop_rule("A's fallback")
+
+        # The same holds through E's function, which is preferred the moment it
+        # appears — so this half of the property is asserted either way.
+        with patch.object(
+            families,
+            "coverage_families",
+            lambda: frozenset({"bpr", "group_softmax"}),
+            create=True,
+        ):
+            third_family_does_not_break_the_stop_rule("families.coverage_families()")
+
+        # Preferred, not merely consulted: a *narrower* coverage set really is
+        # narrower. This is the assertion that fails while `policy.py` keeps its
+        # own family literal.
+        with patch.object(
+            families, "coverage_families", lambda: frozenset({"bpr"}), create=True
+        ):
+            only_bpr = successful_state("bpr")
+            self.assertTrue(policy.coverage_complete(only_bpr))
+            self.assertIsNone(policy.required_family(only_bpr))
+
+        # No history, no steer — unchanged, and the reason `required_family`
+        # cannot simply return `sorted(missing)[0]` unconditionally.
+        self.assertIsNone(policy.required_family(successful_state()))
 
 
 if __name__ == "__main__":

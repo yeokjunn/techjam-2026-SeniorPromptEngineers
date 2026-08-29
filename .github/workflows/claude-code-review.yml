@@ -4,6 +4,12 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
+# One review per PR at a time: a new push cancels the superseded run
+# instead of stacking concurrent sessions (PR #9 ran 4 at once).
+concurrency:
+  group: code-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   review:
     runs-on: ubuntu-latest

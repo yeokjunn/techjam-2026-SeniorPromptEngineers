@@ -7,10 +7,16 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from .errors import IncompleteResponse, LLMError, RoleOutputInvalid, TokenBudgetExceeded
+from .families import family_names
 from .types import TokenUsage
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RETRY_ATTEMPTS = 5
+BACKOFF_INITIAL_SECONDS = 2.0
+BACKOFF_MAX_SECONDS = 60.0
+RETRYABLE_STATUS_CODES = frozenset({408, 409, 429})
 
 
 def load_project_environment(env_path: str | Path | None = None) -> bool:
@@ -43,13 +49,16 @@ PARAMETER_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Build family enums dynamically from the registry
+FAMILY_ENUM = sorted(family_names())
+
 
 SCHEMAS: dict[str, dict[str, Any]] = {
     "research_decision": {
         "type": "object",
         "properties": {
             "hypothesis_id": {"type": "string"},
-            "family": {"type": "string", "enum": ["bpr", "group_softmax"]},
+            "family": {"type": "string", "enum": FAMILY_ENUM},
             "action": {"type": "string", "enum": ["explore", "exploit", "replicate"]},
             "hypothesis": {"type": "string"},
             "rationale": {"type": "string"},
@@ -100,7 +109,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "candidate_id": {"type": "string"},
             "hypothesis_id": {"type": "string"},
-            "family": {"type": "string", "enum": ["bpr", "group_softmax"]},
+            "family": {"type": "string", "enum": FAMILY_ENUM},
             "code": {"type": "string"},
             "tests": {"type": "string"},
             "parameters": PARAMETER_SCHEMA,
@@ -197,7 +206,13 @@ class OpenAIResponsesProvider:
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is required for an autonomous research run.")
         try:
-            from openai import OpenAI
+            from openai import (
+                APIConnectionError,
+                APIStatusError,
+                APITimeoutError,
+                OpenAI,
+                RateLimitError,
+            )
         except ImportError as exc:
             raise RuntimeError("Install dependencies with: python -m pip install -r requirements.txt") from exc
         self.model = str(config.get("model", "gpt-5.5"))
@@ -206,19 +221,35 @@ class OpenAIResponsesProvider:
         self.store = bool(config.get("store", False))
         self.max_output_tokens = int(config.get("max_output_tokens", 24000))
         self.max_tool_calls = int(config.get("max_tool_calls", 2))
-        self.max_retries = int(config.get("max_retries", 2))
+        self.max_retries = int(config.get("max_retries", RETRY_ATTEMPTS))
+        self._retryable = (APIConnectionError, APITimeoutError, RateLimitError)
+        self._status_error = APIStatusError
         timeout = float(config.get("request_timeout_seconds", 180))
         self.client = OpenAI(api_key=api_key, timeout=timeout, max_retries=0)
 
-    @staticmethod
-    def _retryable(error: Exception) -> bool:
-        status = getattr(error, "status_code", None)
-        return status in {408, 409, 429} or (isinstance(status, int) and status >= 500) or error.__class__.__name__ in {
-            "APITimeoutError",
-            "APIConnectionError",
-            "RateLimitError",
-            "InternalServerError",
-        }
+    def _retry_delay(self, error: Exception, attempt: int) -> float | None:
+        retryable = isinstance(error, self._retryable)
+        if isinstance(error, self._status_error):
+            status = getattr(error, "status_code", None)
+            retryable = status in RETRYABLE_STATUS_CODES or (
+                isinstance(status, int) and status >= 500
+            )
+        if not retryable:
+            return None
+
+        delay = min(
+            BACKOFF_MAX_SECONDS,
+            BACKOFF_INITIAL_SECONDS * (2**attempt),
+        )
+        response = getattr(error, "response", None)
+        headers = getattr(response, "headers", None)
+        retry_after = headers.get("retry-after") if headers is not None else None
+        if retry_after is not None:
+            try:
+                delay = max(0.0, min(BACKOFF_MAX_SECONDS, float(retry_after)))
+            except (TypeError, ValueError):
+                pass
+        return delay
 
     def complete(
         self,
@@ -260,21 +291,49 @@ class OpenAIResponsesProvider:
             )
 
         started = time.monotonic()
+        max_attempts = max(1, self.max_retries)
+        response = None
         retries = 0
-        while True:
+        for attempt in range(max_attempts):
             try:
                 response = self.client.responses.create(**request)
-                break
             except Exception as exc:
-                if retries >= self.max_retries or not self._retryable(exc):
+                delay = self._retry_delay(exc, attempt)
+                if delay is None or attempt + 1 >= max_attempts:
                     raise
-                time.sleep(min(4.0, 0.5 * (2**retries)))
+                time.sleep(delay)
                 retries += 1
+                continue
 
-        output_text = getattr(response, "output_text", "")
-        if not output_text:
-            raise ValueError(f"OpenAI response {getattr(response, 'id', '')} contained no output text.")
-        data = json.loads(output_text)
+            status = str(getattr(response, "status", "") or "")
+            output_text = getattr(response, "output_text", "") or ""
+            if status == "incomplete" or not output_text:
+                details = getattr(response, "incomplete_details", None)
+                error = IncompleteResponse(
+                    f"OpenAI response {getattr(response, 'id', '')} was incomplete "
+                    f"or contained no output text; details={details!r}."
+                )
+                if attempt + 1 >= max_attempts:
+                    raise error
+                time.sleep(
+                    min(
+                        BACKOFF_MAX_SECONDS,
+                        BACKOFF_INITIAL_SECONDS * (2**attempt),
+                    )
+                )
+                retries += 1
+                continue
+            break
+
+        if response is None:
+            raise IncompleteResponse("OpenAI did not return a response.")
+        output_text = getattr(response, "output_text", "") or ""
+        try:
+            data = json.loads(output_text)
+        except json.JSONDecodeError as exc:
+            raise RoleOutputInvalid(
+                f"OpenAI response {getattr(response, 'id', '')} contained invalid JSON."
+            ) from exc
         usage_obj = _to_plain(getattr(response, "usage", None)) or {}
         input_details = usage_obj.get("input_tokens_details", {}) or {}
         tool_calls, sources = _extract_sources(getattr(response, "output", []))
@@ -310,9 +369,9 @@ class ScriptedProvider:
             raise RuntimeError("ScriptedProvider has no response left.")
         self.calls.append(dict(kwargs))
         payload = self.responses.pop(0)
-        usage = TokenUsage.from_dict(payload.pop("_usage", {"total_tokens": 10}))
+        usage = TokenUsage.from_dict(payload.get("_usage", {"total_tokens": 10}))
         return LLMCallResult(
-            data=payload,
+            data={key: value for key, value in payload.items() if key != "_usage"},
             response_id=f"scripted-{len(self.calls)}",
             model="scripted",
             role=str(kwargs["role"]),

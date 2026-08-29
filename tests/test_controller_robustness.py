@@ -14,11 +14,14 @@ import io
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from src.agent import controller
+from src.agent.audit import ResearchAudit
 from src.agent.controller import _source_manifest
 from src.agent.errors import (
     IncompleteResponse,
@@ -34,7 +37,13 @@ from src.agent.research_controller import (
     _is_budget_error,
     _latest_valid_baseline,
 )
-from src.agent.types import ExperimentNode, ExperimentOutcome, TokenUsage
+from src.agent.types import (
+    CriticDecision,
+    ExperimentNode,
+    ExperimentOutcome,
+    ResearchDecision,
+    TokenUsage,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -831,6 +840,18 @@ class BaselineSelectionTests(unittest.TestCase):
             self.assertIn("0.5986", message)
             self.assertIn("0.6046", message)
 
+            # M5, same gate: a regenerated run is artifact-checked too, or the
+            # loop adopts a baseline whose submission file cannot be opened.
+            def artifactless_run_agent(config_path: Path) -> Path:
+                write_baseline_run(
+                    run_root, regenerated.name, artifact_path=WINDOWS_ARTIFACT
+                )
+                return regenerated
+
+            with patch("src.agent.research_controller.run_agent", artifactless_run_agent):
+                with self.assertRaisesRegex(RuntimeError, "produced no artifact"):
+                    _ensure_baseline(baseline_config(root))
+
     def test_baseline_selection_logs_every_skipped_summary(self):
         """I12: no summary is skipped silently — every rejection is named on disk.
 
@@ -964,6 +985,143 @@ class BaselineSelectionTests(unittest.TestCase):
             self.assertEqual(selected["run_id"], newer_id)
             self.assertEqual(selected["summary_path"], str(newer))
             self.assertEqual(selected["best"]["metrics"]["primary"], 0.6015)
+
+
+class SaveOrderTests(unittest.TestCase):
+    def test_state_is_saved_before_the_iteration_is_recorded(self):
+        """I3: the resumable state is on disk before the ledger line is appended.
+
+        ``record_iteration`` appends to ``iterations.jsonl``; a crash between the
+        two writes used to replay the iteration on resume and duplicate the line.
+        With ``_save()`` first, the same crash loses at most one ledger line and
+        the node is already durable.
+        """
+        with research_loop([]) as (loop, _provider):
+            decision = ResearchDecision.from_dict(research())
+            preflight = CriticDecision.from_dict({**critic(), "approved": False})
+            with patch.object(
+                ResearchAudit, "record_iteration", side_effect=RuntimeError("disk full")
+            ):
+                with self.assertRaises(RuntimeError):
+                    loop._record_rejection(1, decision, preflight)
+            state = json.loads((loop.run_dir / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [node["experiment_id"] for node in state["nodes"]],
+                [f"rejected_{decision.hypothesis_id}"],
+            )
+
+
+class WallClockTests(unittest.TestCase):
+    def test_wall_clock_includes_the_baseline_gate(self):
+        """I9: the clock starts before the baseline gate, not after it.
+
+        ``_ensure_baseline`` can spend minutes reproducing the official run, and
+        ``resources.json`` is the file Feasibility is scored on.
+        """
+        def slow_baseline(config):
+            time.sleep(0.05)
+            return BASELINE_SUMMARY, []
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("src.agent.research_controller._ensure_baseline", slow_baseline):
+                loop = adopting_loop(root)
+            loop._save()
+            self.assertGreaterEqual(loop.state.wall_clock_seconds, 0.05)
+
+
+class InterventionTests(unittest.TestCase):
+    def test_intervene_appends_and_increments(self):
+        """I10 / I-8: one command, one line, and the count follows it."""
+        with research_loop([]) as (loop, _provider):
+            loop._save()
+            argv = [
+                "controller",
+                "intervene",
+                "--run",
+                str(loop.run_dir),
+                "--reason",
+                "restarted after API outage",
+            ]
+            with patch("sys.argv", argv):
+                controller.main()
+
+            lines = (loop.run_dir / "interventions.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+            self.assertEqual(len(lines), 1)
+            record = json.loads(lines[0])
+            self.assertEqual(record["run_id"], loop.run_dir.name)
+            self.assertEqual(record["reason"], "restarted after API outage")
+            self.assertIn("+00:00", record["ts"])
+            state = json.loads((loop.run_dir / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["manual_interventions"], 1)
+            resources = json.loads(
+                (loop.run_dir / "resources.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(resources["manual_interventions"], 1)
+
+    def test_intervention_count_is_derived_from_the_file(self):
+        """The count is read off the file on every save, never incremented.
+
+        A live loop holds ``self.state`` in memory and rewrites ``state.json`` on
+        every save, so an incremented counter would be clobbered by a concurrent
+        ``intervene``; a derived one cannot be.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = baseline_config(root)
+            config["run_id_prefix"] = "kj_"
+            config_path = root / "config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            loop = ResearchLoop(
+                config,
+                config_path,
+                provider=ProgrammedProvider([]),
+                baseline_summary=BASELINE_SUMMARY,
+            )
+            # T11 step 1: the optional prefix personalises the directory while the
+            # id still ends in ``_research``, which is what D's .gitignore matches.
+            self.assertTrue(loop.run_dir.name.startswith("kj_"))
+            self.assertTrue(loop.run_dir.name.endswith("_research"))
+
+            (loop.run_dir / "interventions.jsonl").write_text(
+                "".join(
+                    json.dumps({"ts": "t", "run_id": loop.run_dir.name, "reason": str(n)})
+                    + "\n"
+                    for n in range(3)
+                ),
+                encoding="utf-8",
+            )
+            loop._save()
+            self.assertEqual(loop.state.manual_interventions, 3)
+            resources = json.loads(
+                (loop.run_dir / "resources.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(resources["manual_interventions"], 3)
+
+    def test_intervene_on_a_missing_run_dir_exits_nonzero(self):
+        """A typo in ``--run`` must fail loudly rather than create a stray file."""
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "runs" / "not_a_run"
+            argv = ["controller", "intervene", "--run", str(missing), "--reason", "x"]
+            errors = io.StringIO()
+            with patch("sys.argv", argv), contextlib.redirect_stderr(errors):
+                with self.assertRaises(SystemExit) as raised:
+                    controller.main()
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(str(missing), errors.getvalue())
+
+    def test_baseline_cli_still_accepts_the_documented_flags(self):
+        """The README's and B's invocation keeps parsing and keeps dispatching."""
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "baseline.json"
+            config_path.write_text(json.dumps({"name": "baseline"}), encoding="utf-8")
+            calls: list[Path] = []
+            with patch("sys.argv", ["controller", "--config", str(config_path)]), \
+                    patch("src.agent.controller.run_agent", calls.append):
+                controller.main()
+            self.assertEqual(calls, [config_path])
 
 
 if __name__ == "__main__":

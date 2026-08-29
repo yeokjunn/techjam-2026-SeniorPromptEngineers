@@ -17,7 +17,13 @@ from .audit import ResearchAudit
 from .candidate_runner import CandidateExecutor, CandidateWorkspace, repaired_manifest
 from .catalog import MethodCatalog
 from .convergence import official_converged
-from .controller import REPO_ROOT, _resolve_repo_path, _source_manifest, run_agent
+from .controller import (
+    REPO_ROOT,
+    _count_interventions,
+    _resolve_repo_path,
+    _source_manifest,
+    run_agent,
+)
 from .errors import LLMError, TokenBudgetExceeded
 from .llm import LLMProvider, build_provider
 from .policy import (
@@ -274,6 +280,11 @@ def _ensure_baseline(
             f"Official FM baseline gate failed: {primary:.4f} outside "
             f"[{official - BASELINE_TOLERANCE:.4f}, {official + BASELINE_TOLERANCE:.4f}]"
         )
+    artifact = summary["best"].get("artifact_path")
+    # The same admission check the adopted path applies (``_baseline_skip_reason``):
+    # a baseline whose scores file is absent cannot be the run's comparison point.
+    if not artifact or not _resolve_repo_path(str(artifact)).is_file():
+        raise RuntimeError(f"Official FM baseline produced no artifact at {artifact}")
     return {**summary, "summary_path": str(run_dir / "summary.json")}, skipped
 
 
@@ -286,6 +297,9 @@ class ResearchLoop:
         resume_dir: Path | None = None,
         baseline_summary: dict[str, Any] | None = None,
     ):
+        # I9: before the baseline gate, which can spend minutes reproducing the
+        # official run. ``resources.json`` is the file Feasibility is scored on.
+        self.session_started = time.monotonic()
         self.config = config
         self.config_path = config_path
         self.data_dir = _resolve_repo_path(config["data_dir"])
@@ -318,7 +332,8 @@ class ResearchLoop:
         baseline_primary = float(self.baseline_summary["best"]["metrics"]["primary"])
 
         if resume_dir is None:
-            run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ_research")
+            prefix = str(config.get("run_id_prefix", ""))
+            run_id = prefix + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ_research")
             self.run_dir = self.run_root / run_id
             self.audit = ResearchAudit(self.run_dir)
             self.state = RunState(
@@ -345,7 +360,7 @@ class ResearchLoop:
                     "skipped": baseline_skips,
                 },
             )
-            self.audit.write_json_atomic(self.run_dir / "interventions.json", [])
+            self.audit.write_text_atomic(self.run_dir / "interventions.jsonl", "")
             # I-4: the data card the Researcher's prompt prefix carries. Owner
             # D renders it, Owner C reads it back off ``state.data_card_path``
             # (``roles.py:58-71``, appended at ``:85-86``), and the run start is
@@ -397,8 +412,10 @@ class ResearchLoop:
             experiment_timeout_seconds=int(self.budgets["experiment_timeout_seconds"]),
             test_timeout_seconds=int(self.budgets["test_timeout_seconds"]),
         )
-        self.session_started = time.monotonic()
         self.consecutive_harness_errors = 0
+        # I10: how many interventions were on file when this pass began, so the
+        # per-iteration flag can say whether one was recorded during it.
+        self._interventions_at_iteration_start = 0
         # Logged-once flag for the mid-run convergence line, not run state: a
         # resume re-logs it, which costs a duplicate journal line and no
         # correctness (`summary.json` is recomputed from the nodes).
@@ -420,6 +437,9 @@ class ResearchLoop:
         return self.state.wall_clock_seconds + (time.monotonic() - self.session_started)
 
     def _save(self) -> None:
+        # Derived, never incremented: a live loop rewrites ``state.json`` on every
+        # save, so an incremented counter would clobber a concurrent ``intervene``.
+        self.state.manual_interventions = _count_interventions(self.run_dir)
         self.state.wall_clock_seconds = self._elapsed()
         self.session_started = time.monotonic()
         self.audit.save_state(self.state.to_dict())
@@ -499,7 +519,8 @@ class ResearchLoop:
                 "status": status,
                 "error": str(exc),
                 "error_type": type(exc).__name__,
-                "manual_intervention": False,
+                "manual_intervention": self.state.manual_interventions
+                > self._interventions_at_iteration_start,
             }
         )
 
@@ -523,6 +544,11 @@ class ResearchLoop:
             parent_experiment=decision.parent_experiment,
         )
         self.state.nodes.append(node)
+        # I3: state first, ledger second. ``record_iteration`` appends to
+        # ``iterations.jsonl``; a crash between the two used to replay the
+        # iteration on resume and duplicate the line. This order loses at most
+        # one ledger line instead — D de-duplicates by ``iteration`` anyway.
+        self._save()
         self.audit.record_iteration(
             {
                 "iteration": iteration,
@@ -537,10 +563,10 @@ class ResearchLoop:
                     "critic_preflight": critic.to_dict(),
                 },
                 "status": "critic_rejected",
-                "manual_intervention": False,
+                "manual_intervention": self.state.manual_interventions
+                > self._interventions_at_iteration_start,
             }
         )
-        self._save()
         self.audit.finish_activity(
             persistence,
             agent_note={
@@ -795,6 +821,7 @@ class ResearchLoop:
             experiment_id=manifest.candidate_id,
             objective="Finalize the immutable iteration record and resumable state.",
         )
+        self._save()  # I3: see ``_record_rejection`` — state before ledger.
         self.audit.record_iteration(
             {
                 "iteration": iteration,
@@ -824,10 +851,10 @@ class ResearchLoop:
                     else postflight.to_dict(),
                 },
                 "status": status,
-                "manual_intervention": False,
+                "manual_intervention": self.state.manual_interventions
+                > self._interventions_at_iteration_start,
             }
         )
-        self._save()
         self.audit.finish_activity(
             persistence,
             agent_note={
@@ -913,6 +940,7 @@ class ResearchLoop:
             # no-progress guard in the handler).
             iteration = self.state.iteration_count + 1
             proposals_before = self.state.proposal_attempts
+            self._interventions_at_iteration_start = self.state.manual_interventions
             try:
                 if self.state.pending_replications and coverage_complete(self.state):
                     task = self.state.pending_replications[0]

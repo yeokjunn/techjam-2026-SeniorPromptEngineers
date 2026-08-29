@@ -4,15 +4,18 @@ import argparse
 import hashlib
 import json
 import shutil
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .audit import ResearchAudit
 from .convergence import ConvergenceTracker
 from .logger import RunLogger
 from .proposer import ConfigProposer
 from .reflector import reflect
 from .runner import ExperimentRunner
+from .types import RunState
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +24,19 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def _resolve_repo_path(value: str) -> Path:
     path = Path(value)
     return path if path.is_absolute() else REPO_ROOT / path
+
+
+def _count_interventions(run_dir: Path) -> int:
+    """How many manual interventions ``<run_dir>/interventions.jsonl`` records.
+
+    The count every writer derives rather than increments (I10): the file is the
+    falsifiable evidence a judge can read, and a live loop rewriting ``state.json``
+    can never clobber a count it recomputes from disk.
+    """
+    path = run_dir / "interventions.jsonl"
+    if not path.is_file():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
 
 
 def _source_manifest() -> dict:
@@ -50,7 +66,8 @@ def run_agent(config_path: Path) -> Path:
             f"KuaiRand-Pure data directory is incomplete: {data_dir}; missing {missing}"
         )
 
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "_baseline"
+    prefix = str(config.get("run_id_prefix", ""))
+    run_id = prefix + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "_baseline"
     run_root = _resolve_repo_path(config.get("run_root", "runs"))
     logger = RunLogger(run_root / run_id)
     shutil.copy2(config_path, logger.run_dir / "run_config.json")
@@ -83,6 +100,7 @@ def run_agent(config_path: Path) -> Path:
         spec = proposer.propose(history)
         if spec is None:
             break
+        interventions_before = _count_interventions(logger.run_dir)
 
         previous_best = None if best_record is None else best_record["metrics"]["primary"]
         outcome = runner.run(iteration, spec, logger.run_dir)
@@ -104,7 +122,8 @@ def run_agent(config_path: Path) -> Path:
             "command_owner": "deterministic_config_proposer",
             "outcome": outcome.to_dict(),
             "reflection": reflection,
-            "manual_intervention": False,
+            "manual_intervention": _count_interventions(logger.run_dir)
+            > interventions_before,
             "llm_tokens": 0,
         }
         history.append(record)
@@ -138,7 +157,7 @@ def run_agent(config_path: Path) -> Path:
         "successful_iterations": sum(
             item["outcome"]["status"] == "success" for item in history
         ),
-        "manual_interventions": 0,
+        "manual_interventions": _count_interventions(logger.run_dir),
         "llm_tokens": 0,
         "wall_clock_seconds": time.monotonic() - started,
         "best": best_record,
@@ -151,6 +170,13 @@ def run_agent(config_path: Path) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the KuaiRand experiment agent.")
     parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["run", "intervene"],
+        default="run",
+        help="Start a run (default) or record a manual intervention against one.",
+    )
+    parser.add_argument(
         "--config",
         type=Path,
         default=Path("configs/baseline.json"),
@@ -162,7 +188,42 @@ def main() -> None:
         default=None,
         help="Resume an existing autonomous research run directory.",
     )
+    parser.add_argument(
+        "--run",
+        type=Path,
+        default=None,
+        help="Run directory the intervention applies to.",
+    )
+    parser.add_argument(
+        "--reason",
+        default="",
+        help="Why the run was touched by hand.",
+    )
     args = parser.parse_args()
+    if args.command == "intervene":
+        if args.run is None:
+            parser.error("intervene requires --run <run_dir>")
+        if not args.reason:
+            parser.error('intervene requires --reason "..."')
+        run_dir = args.run if args.run.is_absolute() else REPO_ROOT / args.run
+        if not run_dir.is_dir():
+            print(f"No such run directory: {run_dir}", file=sys.stderr)
+            sys.exit(2)
+        ResearchAudit.append_jsonl(
+            run_dir / "interventions.jsonl",
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "run_id": run_dir.name,
+                "reason": args.reason,
+            },
+        )
+        state_path = run_dir / "state.json"
+        if state_path.is_file():
+            # One call refreshes state.json, experiment_tree.json and resources.json.
+            state = RunState.from_dict(json.loads(state_path.read_text(encoding="utf-8")))
+            state.manual_interventions = _count_interventions(run_dir)
+            ResearchAudit(run_dir, resume=True).save_state(state.to_dict())
+        return
     config_path = args.config if args.config.is_absolute() else REPO_ROOT / args.config
     config = json.loads(config_path.read_text(encoding="utf-8"))
     if config.get("mode") == "research":

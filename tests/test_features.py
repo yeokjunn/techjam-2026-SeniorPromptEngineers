@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import datetime as dt
 import unittest
+from pathlib import Path
 
 import numpy as np
 
+from src.agent.families import AUX_HEADS as fam_aux_heads
+from src.agent.families import FAMILIES, coverage_families
+from src.agent.families import HISTORY_GROUPS as fam_history_groups
+from src.agent.policy import sanitize_parameters
 from src.models.features import (
     AUX_HEADS,
     GROUPS,
@@ -258,6 +263,75 @@ class AuxiliaryLabelTests(unittest.TestCase):
     def test_row_count_mismatch_is_rejected(self):
         with self.assertRaises(ValueError):
             build_aux_labels(np.zeros((len(self.AUX) + 1, 5)), self.spec())
+
+
+class RegistryContractTests(unittest.TestCase):
+    """The registry entries must match what the trusted builders actually provide."""
+
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+    FEATURE_FAMILIES = ("history_features", "multi_task")
+
+    def test_registry_entry_matches_the_builder_contract(self):
+        self.assertEqual(FAMILIES["history_features"].required_calls[1], ("build_features",))
+        self.assertEqual(FAMILIES["multi_task"].required_calls[1], ("build_aux_labels",))
+        for name in self.FEATURE_FAMILIES:
+            with self.subTest(family=name):
+                entry = FAMILIES[name]
+                # Either sampler is acceptable: the loss is not what these families vary.
+                self.assertEqual(
+                    set(entry.required_calls[0]),
+                    {"sample_bpr_pairs", "sample_softmax_groups"},
+                )
+                self.assertTrue((self.REPO_ROOT / entry.method_card).is_file())
+
+    def test_method_cards_carry_every_heading_of_the_reference_card(self):
+        def headings(card: str) -> list[str]:
+            text = (self.REPO_ROOT / "research" / "methods" / f"{card}.md").read_text(
+                encoding="utf-8"
+            )
+            return [line for line in text.splitlines() if line.startswith("## ")]
+
+        reference = headings("bpr")
+        for name in self.FEATURE_FAMILIES:
+            with self.subTest(family=name):
+                self.assertEqual(headings(name), reference)
+
+    def test_every_grid_value_is_a_tuple_or_a_range(self):
+        for name, entry in FAMILIES.items():
+            for key, allowed in entry.grid.items():
+                with self.subTest(family=name, parameter=key):
+                    self.assertIsInstance(allowed, (tuple, range))
+                    self.assertTrue(len(allowed) > 0)
+
+    def test_every_grid_key_has_a_default_inside_its_grid(self):
+        """A default outside its own grid would reject the family's own fallback."""
+        for name, entry in FAMILIES.items():
+            for key, allowed in entry.grid.items():
+                with self.subTest(family=name, parameter=key):
+                    self.assertIn(key, entry.defaults)
+                    self.assertIn(entry.defaults[key], allowed)
+
+    def test_registry_toggles_match_the_feature_modules_own_names(self):
+        """families.py keeps literals so types.py's import stays light; pin them here."""
+        self.assertEqual(fam_history_groups, GROUPS)
+        self.assertEqual(fam_aux_heads, AUX_HEADS)
+        for group in GROUPS:
+            self.assertIn(f"use_{group}", FAMILIES["history_features"].grid)
+        for head in AUX_HEADS:
+            self.assertIn(f"use_{head}", FAMILIES["multi_task"].grid)
+
+    def test_new_families_are_sanitised_without_touching_policy(self):
+        """A's I-7 reads grid/defaults from the registry; nothing in policy.py names these."""
+        for name in self.FEATURE_FAMILIES:
+            with self.subTest(family=name):
+                parameters = sanitize_parameters(name, {})
+                for key, value in FAMILIES[name].defaults.items():
+                    self.assertEqual(parameters[key], value)
+                with self.assertRaises(ValueError):
+                    sanitize_parameters(name, {"learning_rate": 0.5})
+
+    def test_feature_families_do_not_widen_required_coverage(self):
+        self.assertEqual(coverage_families(), frozenset({"bpr", "group_softmax"}))
 
 
 if __name__ == "__main__":

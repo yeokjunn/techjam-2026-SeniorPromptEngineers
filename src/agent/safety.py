@@ -32,6 +32,7 @@ ALLOWED_IMPORTS = {
     "time",
     "typing",
     "dataclasses",
+    "src.models.features",
     "src.models.fm_core",
     "src.models.sampling",
     "src.experiments.contracts",

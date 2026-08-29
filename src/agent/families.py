@@ -51,7 +51,19 @@ SHARED_DEFAULTS: dict[str, Any] = {
 TRUSTED_CALL_MODULES = {
     "sample_bpr_pairs": "src.models.sampling",
     "sample_softmax_groups": "src.models.sampling",
+    "build_features": "src.models.features",
+    "build_aux_labels": "src.models.features",
 }
+
+# Literals, deliberately not imported from ``src.models.features``: ``types.py`` imports this
+# module, so this import must stay light (no numpy). ``tests/test_features.py`` pins them equal
+# to the feature module's own tuples, so the duplication cannot drift silently.
+HISTORY_GROUPS = ("user_rate", "user_author", "user_tab", "recency", "video_age", "tab_cross")
+AUX_HEADS = ("is_click", "is_like", "play_time")
+
+#: Either trusted sampler satisfies the loss requirement for the feature-side families -- the
+#: loss is not what they vary, so both are legitimate.
+_EITHER_SAMPLER = ("sample_bpr_pairs", "sample_softmax_groups")
 
 FAMILIES: dict[str, Family] = {
     "bpr": Family(
@@ -77,6 +89,54 @@ FAMILIES: dict[str, Family] = {
             "negatives_per_group": 4,
             "temperature": 1.0,
         },
+    ),
+    # The loss is unchanged; the *field set* is the axis under test. epochs caps at 20 because
+    # six extra fields roughly double the gather/scatter cost (one FM epoch ~12s) against
+    # experiment_timeout_seconds: 900. k stays 16 -- capacity is a measured dead end.
+    "history_features": Family(
+        name="history_features",
+        method_card="research/methods/history_features.md",
+        trusted_sampler="sample_bpr_pairs",
+        grid={
+            **SHARED_GRID,
+            "epochs": range(1, 21),
+            "batch_size": (2048, 4096),
+            "negatives_per_positive": (1, 2),
+            "smoothing": (5.0, 20.0, 100.0),
+            "scheme": ("prior_days", "leave_one_out"),
+            **{f"use_{group}": (True, False) for group in HISTORY_GROUPS},
+        },
+        defaults={
+            **SHARED_DEFAULTS,
+            "epochs": 20,
+            "batch_size": 2048,
+            "negatives_per_positive": 1,
+            "smoothing": 20.0,
+            "scheme": "prior_days",
+            **{f"use_{group}": True for group in HISTORY_GROUPS},
+        },
+        required_calls=(_EITHER_SAMPLER, ("build_features",)),
+    ),
+    # Auxiliary targets add a loss term, not FM fields, so the epoch budget is bpr's.
+    "multi_task": Family(
+        name="multi_task",
+        method_card="research/methods/multi_task.md",
+        trusted_sampler="sample_bpr_pairs",
+        grid={
+            **SHARED_GRID,
+            "batch_size": (2048, 4096),
+            "negatives_per_positive": (1, 2),
+            "aux_weight": (0.1, 0.3, 1.0),
+            **{f"use_{head}": (True, False) for head in AUX_HEADS},
+        },
+        defaults={
+            **SHARED_DEFAULTS,
+            "batch_size": 2048,
+            "negatives_per_positive": 1,
+            "aux_weight": 0.3,
+            **{f"use_{head}": True for head in AUX_HEADS},
+        },
+        required_calls=(_EITHER_SAMPLER, ("build_aux_labels",)),
     ),
 }
 

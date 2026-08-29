@@ -4,6 +4,16 @@ import unittest
 import tempfile
 
 from src.agent.candidate_runner import CandidateExecutor, CandidateWorkspace
+from unittest.mock import patch
+
+from src.agent.families import (
+    FAMILIES,
+    Family,
+    builder_brief,
+    coverage_families,
+    family_names,
+)
+from src.agent.policy import sanitize_parameters
 from src.agent.safety import (
     ALLOWED_IMPORTS,
     FORBIDDEN_CALLS,
@@ -12,6 +22,7 @@ from src.agent.safety import (
     contained_path,
     is_allowed_import,
     restricted_builtins,
+    validate_family_contract,
     validate_source,
 )
 from src.agent.types import CandidateManifest
@@ -188,6 +199,68 @@ result = Trainer(4).total()
         for name in ("numpy", "numpy.random", "src.models.sampling", "__future__"):
             with self.subTest(module=name):
                 self.assertTrue(is_allowed_import(name, ALLOWED_IMPORTS))
+
+
+class FamilyContractTests(unittest.TestCase):
+    BPR_SOURCE = """
+import numpy as np
+from src.models.sampling import sample_bpr_pairs
+
+
+def run(context, parameters):
+    sample_bpr_pairs(context.train_users, context.train_y, np.random.default_rng(0), 1)
+"""
+
+    def test_family_contract_reads_the_registry(self):
+        validate_family_contract(self.BPR_SOURCE, "bpr")
+        with self.assertRaises(SafetyViolation):
+            validate_family_contract("def run(context, parameters):\n    return None\n", "bpr")
+        with self.assertRaises(SafetyViolation):
+            validate_family_contract(self.BPR_SOURCE, "listwise_magic")
+
+    def test_one_of_group_accepts_either_member(self):
+        entry = Family(
+            name="probe",
+            method_card="research/methods/bpr.md",
+            trusted_sampler="sample_bpr_pairs",
+            required_calls=(("sample_bpr_pairs", "sample_softmax_groups"), ("build_features",)),
+        )
+        with patch.dict(FAMILIES, {"probe": entry}):
+            both = "sample_softmax_groups(a, b, c)\nbuild_features(rows, spec)\n"
+            validate_family_contract(both, "probe")
+            with self.assertRaises(SafetyViolation) as raised:
+                validate_family_contract("sample_bpr_pairs(a, b, c)\n", "probe")
+            self.assertIn("build_features()", str(raised.exception))
+
+    def test_registry_defaults_reproduce_todays_sanitiser(self):
+        """The promise to A: pointing sanitize_parameters at the registry changes no behaviour."""
+        for name in ("bpr", "group_softmax"):
+            with self.subTest(family=name):
+                self.assertEqual(sanitize_parameters(name, {}), FAMILIES[name].defaults)
+
+    def test_every_grid_value_is_accepted_by_todays_sanitiser(self):
+        for name, entry in FAMILIES.items():
+            for key, allowed in entry.grid.items():
+                values = (0, 999) if key == "seed" else tuple(allowed)
+                for value in values:
+                    with self.subTest(family=name, parameter=key, value=value):
+                        parameters = sanitize_parameters(name, {**entry.defaults, key: value})
+                        self.assertEqual(parameters[key], value)
+
+    def test_coverage_families_is_the_minimum_set_not_every_family(self):
+        self.assertEqual(coverage_families(), frozenset({"bpr", "group_softmax"}))
+        self.assertTrue(coverage_families().issubset(family_names()))
+
+    def test_family_entries_stay_hashable_despite_grid_dicts(self):
+        self.assertEqual(len({FAMILIES["bpr"], FAMILIES["bpr"]}), 1)
+        self.assertEqual(len(set(FAMILIES.values())), len(FAMILIES))
+
+    def test_builder_brief_names_the_mandatory_calls_and_the_grid(self):
+        brief = builder_brief("bpr")
+        self.assertIn("src.models.sampling.sample_bpr_pairs()", brief)
+        self.assertIn("learning_rate: 0.0003, 0.0005, 0.001", brief)
+        self.assertIn("seed: 0-999", brief)
+        self.assertIn("negatives_per_positive: 1, 2", brief)
 
 
 if __name__ == "__main__":

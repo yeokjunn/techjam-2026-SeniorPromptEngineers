@@ -21,6 +21,8 @@ import builtins
 import re
 from pathlib import Path
 
+from .families import required_call_groups
+
 
 ALLOWED_IMPORTS = {
     "__future__",
@@ -229,13 +231,17 @@ def restricted_builtins(*, test_file: bool = False) -> dict[str, object]:
 
 
 def validate_family_contract(source: str, family: str) -> None:
+    """Require the trusted helpers the registry declares for ``family``.
+
+    The requirement is a tuple of one-of groups, so a family may demand "one of the two
+    samplers *and* build_features" without this function growing a second literal list.
+    """
+    try:
+        groups = required_call_groups(family)
+    except KeyError:
+        raise SafetyViolation(f"Unsupported candidate family: {family}") from None
+
     tree = ast.parse(source)
-    required = {
-        "bpr": "sample_bpr_pairs",
-        "group_softmax": "sample_softmax_groups",
-    }.get(family)
-    if required is None:
-        raise SafetyViolation(f"Unsupported candidate family: {family}")
     called = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -244,9 +250,17 @@ def validate_family_contract(source: str, family: str) -> None:
             called.add(node.func.id)
         elif isinstance(node.func, ast.Attribute):
             called.add(node.func.attr)
-    if required not in called:
+
+    for group in groups:
+        if any(name in called for name in group):
+            continue
+        if len(group) == 1:
+            raise SafetyViolation(
+                f"{family} candidate must call the trusted same-user sampler {group[0]}()."
+            )
+        rendered = ", ".join(f"{name}()" for name in group)
         raise SafetyViolation(
-            f"{family} candidate must call the trusted same-user sampler {required}()."
+            f"{family} candidate must call at least one of: {rendered}."
         )
 
 

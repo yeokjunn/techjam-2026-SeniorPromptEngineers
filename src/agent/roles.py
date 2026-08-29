@@ -5,6 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from .activity import ROLE_OBJECTIVES, summarize_role_output
 from .audit import ResearchAudit
 from .catalog import MethodCatalog
 from .errors import RoleOutputInvalid, TokenBudgetExceeded
@@ -97,15 +98,31 @@ class ResearchRoles:
     ) -> LLMCallResult:
         if state.token_usage.total_tokens >= self.max_total_tokens:
             raise TokenBudgetExceeded("LLM token budget reached before the next role pass.")
-        result = self.provider.complete(
+        stage = "researcher" if role == "researcher_web" else role
+        activity = self.audit.start_activity(
+            iteration,
+            stage,
             role=role,
-            instructions=BASE_INSTRUCTIONS,
-            prompt=prompt,
-            schema_name=schema_name,
-            allow_web_search=allow_web_search,
+            attempt=sequence + 1,
+            objective=ROLE_OBJECTIVES.get(role, f"Complete the {role} pass."),
         )
+        try:
+            result = self.provider.complete(
+                role=role,
+                instructions=BASE_INSTRUCTIONS,
+                prompt=prompt,
+                schema_name=schema_name,
+                allow_web_search=allow_web_search,
+            )
+        except Exception as exc:
+            self.audit.finish_activity(activity, status="failed", error=str(exc))
+            raise
         state.token_usage.add(result.usage)
         self.audit.record_pass(iteration, role, prompt, result, sequence)
+        self.audit.finish_activity(
+            activity,
+            agent_note=summarize_role_output(role, result.data),
+        )
         if state.token_usage.total_tokens > self.max_total_tokens:
             raise TokenBudgetExceeded("LLM token budget exceeded by the completed role pass.")
         return result

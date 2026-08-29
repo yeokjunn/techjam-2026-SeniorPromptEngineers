@@ -97,7 +97,7 @@ class ResearchRoles:
         sequence: int = 0,
     ) -> LLMCallResult:
         if state.token_usage.total_tokens >= self.max_total_tokens:
-            raise RuntimeError("LLM token budget reached before the next role pass.")
+            raise TokenBudgetExceeded("LLM token budget reached before the next role pass.")
         stage = "researcher" if role == "researcher_web" else role
         activity = self.audit.start_activity(
             iteration,

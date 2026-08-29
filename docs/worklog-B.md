@@ -92,9 +92,39 @@ Scope: `docs/reviews/2026-08-28-harness-review/plans/B-gate-contracts.md` (T1–
 
 ---
 
+## 2026-08-29 · T3 — `gate.py` writes `submission.csv` + runs the kit check (C1, I-1)
+
+**Done** (TDD: 10 tests written first, all RED against the stub, then implementation → GREEN)
+- `src/evaluation/gate.py` (stub replaced; `GateResult` unchanged from the Step-0 freeze)
+  - `run_gate(run_dir, node_dir, data_dir, kit_dir)` — **positional-or-keyword** until A converts the controller call site; a thin wrapper that can never raise: `_run_gate` inside `try/except Exception` → `status="error"`, `details={"reason": "unexpected", ...}`. All four args resolved via `_abs()` (repo-relative accepted; defence in depth alongside A's T10 fix).
+  - `gate_done.json` idempotency: existing marker returns the stored result with `details["reused"]=True`; the marker is written **only on `status="ok"`**, so a failed gate retries next run.
+  - Score resolution: first of `node_dir/test_scores.npy`, then `run_dir/artifacts/<node name>/test_scores.npy` (the T2 spelling). Neither → `missing_test_scores` with the paths searched. Not 1-D / non-finite / wrong length vs `len(load_test_meta(data_dir).meta)` → `bad_test_scores` with both counts — rejected before any CSV or kit run.
+  - CSV: header exactly `row_id,user_id,video_id,score`; original id strings; `%.9g` scores; written `.tmp` → `os.replace`; `run_dir` created if absent (found during verification — the hand-run acceptance points at fresh run dirs).
+  - Kit check as a subprocess (`cwd=kit_dir`, minimal env, `timeout=600`, `check=False`): missing `submit.py` → `kit_unavailable`; non-zero exit (or timeout) → `check_failed` with the last 2,000 chars. `_kit_python()` returns `/usr/bin/python3` only when numpy imports there, else `sys.executable`.
+  - Success → `status="ok"`, repo-relative `submission_path`, `details={rows, sha256, check_stdout, checked_with, scored: False}` — **no metric of any kind** in `GateResult` (the scored delta is the organizers', against this artifact).
+- `tests/test_gate.py` (new, 10 tests) — synthetic 3-window data dir + the real tracked kit, ~0.5 s, no 240 MB dependency: happy path (exact header, 4 rows, ids as original strings, gate_done written), idempotency (digest unchanged), artifacts-dir fallback, missing/wrong-length/non-finite scores, missing kit, unexpected-exception → `status="error"`, no-metric regex on `asdict`, repo-relative path under repo root.
+- `tests/test_interfaces.py` — the one sanctioned edit (≤5 lines, in this PR): `test_gate_stub_reports_not_implemented` → `test_gate_reports_error_when_scores_are_missing`, expecting `status="error"` + `details["reason"]=="missing_test_scores"` from the four-identical-temp-dir positional call.
+
+**Justification**
+- Closes review **C1** end to end: T1 loaded features → T2 persisted trusted scores → T3 now materialises the only artifact the hidden-test delta (35% rubric weight) is computed from, and validates it with the organizers' own `--check` as the kit README instructs.
+- Never-raises + reason-coded errors mean a gate fault costs at most a missing `submission.csv`, never the run's `summary.json` (B's half of the C4 containment; A's call-site wrap lands separately).
+- Labels stay out of the harness process: the kit's `load()` materialises test labels only inside the throwaway check subprocess (docstring records why), and no score value enters `GateResult`.
+- `%.9g` because float64 carries ~9 significant digits; fewer would let formatting create ties in the within-user ranking that the model never made.
+
+**Verification evidence**
+- `pytest tests/test_gate.py tests/test_interfaces.py -q -W error` → **25 passed** (10 new gate + 15 interfaces incl. the updated assertion), 0.48 s.
+- Full suite: **67 passed, 16 subtests, 8.86s** (57 → 67), still `-W error`, no API key.
+- `grep -n "GAUC\|nDCG\|primary" src/evaluation/gate.py` → **no hits** (DoD item).
+- Real-data acceptance (random 170,588 scores at the artifacts spelling, repo-relative data/kit paths): `status: ok`, `rows: 170588`, `check_stdout: "✓ 格式与对齐校验通过：170,588 行，split=test"`, `checked_with: .venv/bin/python` (expected — this machine's `/usr/bin/python3` lacks numpy, per the setup deviation), CSV head `row_id,user_id,video_id,score` / `0,0,3978,0.636961687`.
+- Fixed during verification: fresh `run_dir` lacked `mkdir`, surfacing as `unexpected/FileNotFoundError` — now created before the CSV write.
+
+**Not committed** — standalone PR per plan §5's split. Optional step 7 (labelled self-computed test score CLI) deliberately deferred until after T1–T8, per plan.
+
+---
+
 ## Queue (next up)
 
-- **T3** — `gate.py`: `submission.csv` + kit `submit.py --check --split test` (note: this machine's `/usr/bin/python3` lacks numpy → `_kit_python()` falls back to the venv interpreter).
-- Then T4 (minimal env — dependency-free), T5/T6, T7, T8; hand-offs per plan §6. T1+T2 PR ready to push.
+- **T4** — minimal candidate environment (kill the C3 API-key leak); dependency-free, `candidate_runner.py` only. E's `restricted_builtins()` wire-in stays deferred until E announces their T2.
+- Then T5/T6 (same PR as T4 per plan §5), T7, T8; hand-offs per plan §6 (A needs to know T3 is merged: keyword call-site conversion + `test_scores_path` in iterations.jsonl).
 
 *Append new entries above this line.*

@@ -1,0 +1,17 @@
+[
+  {
+    "action": "explore",
+    "delta_vs_baseline": 0.0004608631134033203,
+    "experiment_id": "offline_bpr_smoke_candidate",
+    "family": "bpr",
+    "iteration": 1,
+    "metrics": {
+      "GAUC": 0.6678825616836548,
+      "nDCG@5": 0.5359782576560974,
+      "primary": 0.6019303798675537,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "status": "success"
+  }
+]

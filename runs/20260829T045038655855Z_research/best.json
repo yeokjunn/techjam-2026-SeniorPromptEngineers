@@ -1,0 +1,12 @@
+{
+  "artifact_path": "C:\\Users\\Admin\\OneDrive - Nanyang Technological University\\2026_projects\\tiktok_techjam_clean\\techjam-2026-SeniorPromptEngineers\\runs\\20260828T141646Z_baseline\\artifacts\\003_official_fm_seed0\\model.npz",
+  "candidate_dir": null,
+  "experiment_id": "official_fm_seed0",
+  "metrics": {
+    "GAUC": 0.6671333909034729,
+    "nDCG@5": 0.5358057022094727,
+    "primary": 0.6014695167541504,
+    "rows": 124909.0,
+    "users": 22377.0
+  }
+}

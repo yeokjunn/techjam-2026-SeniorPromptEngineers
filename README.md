@@ -110,6 +110,21 @@ python -m src.agent.controller `
 The agent never reads `data/judge/`. Final judge prediction generation remains a
 separate, explicit user-authorized step.
 
+### Run the offline smoke test
+
+For a complete end-to-end test of the real training subprocess without an API
+key or network access, run:
+
+```powershell
+python -m src.agent.controller --config configs/offline_smoke.json
+```
+
+This test uses a scripted LLM provider and fixed mock decisions. It runs exactly
+one iteration with the BPR candidate, trains on real data, evaluates on the
+validation set, and exits. Expected validation primary score is approximately
+`0.602`. This configuration confirms that the full generate→train→evaluate path
+works end-to-end before depending on live LLM calls.
+
 ### Generated candidate contract
 
 The Builder writes only under `generated_experiments/<run-id>/<iteration>/`.
@@ -141,6 +156,21 @@ Generated source is statically checked before writing/execution. Judge paths,
 official evaluator imports, file/network/process access, dynamic execution, path
 traversal, and non-approved imports are rejected. Candidate unit tests run before
 training, and the Debugger gets at most two hypothesis-preserving repairs.
+
+## Iteration, Training, and Convergence Definitions
+
+The research loop tracks three distinct counts:
+
+**Iteration** (`max_iterations`, cap 50)
+: One scored candidate experiment. The loop increments the iteration count once a candidate has run to completion and been evaluated on validation data. Stop reason `candidate_budget_reached` fires when iteration count reaches `max_iterations`.
+
+**Training attempt** (`max_training_attempts`)
+: One executor subprocess call to train a candidate model. Multiple attempts may occur during recovery after training failure (e.g., OOM, process timeout). Stop reason `iteration_budget_reached` fires when training-attempt count reaches `max_iterations` (the knobs are unified during initial development).
+
+**Proposal** (`max_proposals`, default `max_iterations × 2`)
+: One research→build cycle, including rejected candidates. The Critic may reject a candidate's preflight check; rejected proposals increment the proposal counter but do not run training. Stop reason `proposal_budget_reached` fires when proposal count reaches `max_proposals`.
+
+**Convergence** occurs when no improvement greater than ε = **0.002** is observed over N = **3** consecutive scored iterations. Formally, the run stops when `k > N` and `max(scores[:k]) − max(scores[:k−N]) ≤ 0.002`, where scores are validation-primary metrics of successfully completed training attempts. This is reported as `converged_official: true` in `summary.json`, separate from `stop_reason: "converged"`. The convergence check is enabled only after both approved method families (BPR and group-softmax) have been tested at least once.
 
 ## First research agenda
 

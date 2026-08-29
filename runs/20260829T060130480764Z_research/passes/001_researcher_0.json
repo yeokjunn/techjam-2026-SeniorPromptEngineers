@@ -1,0 +1,46 @@
+{
+  "prompt": "ROLE: Researcher\nPropose one controlled ranking-loss experiment. Choose BPR or group-softmax based on evidence and the experiment history.\nUse the curated cards first. Set needs_web_search=true only if these cards cannot support the decision.\nAll parameter fields in the schema must be present; use null only for parameters irrelevant to the family.\n\nRESEARCH STATE:\n{\n  \"baseline_primary\": 0.6014695167541504,\n  \"best_metrics\": {\n    \"GAUC\": 0.6671333909034729,\n    \"nDCG@5\": 0.5358057022094727,\n    \"primary\": 0.6014695167541504,\n    \"rows\": 124909.0,\n    \"users\": 22377.0\n  },\n  \"stagnant_iterations\": 0,\n  \"experiments\": []\n}\n\nAPPROVED METHOD CARDS:\nMETHOD CARD bpr\n# Bayesian Personalized Ranking (BPR)\n\n## Primary source\n\n- Steffen Rendle, Christoph Freudenthaler, Zeno Gantner, Lars Schmidt-Thieme,\n  \"BPR: Bayesian Personalized Ranking from Implicit Feedback,\" UAI 2009.\n  https://arxiv.org/abs/1205.2618\n\n## Hypothesis\n\nThe official FM uses pointwise binary cross-entropy even though evaluation ranks\nitems within a user. BPR instead optimizes the ordering of a positive interaction\nabove a negative interaction from the same user.\n\n## Objective\n\nFor a user-specific positive item `i` and negative item `j`:\n\n```text\nd = score(user, i) - score(user, j)\nloss = softplus(-d) = -log(sigmoid(d))\n```\n\nThe derivative with respect to `d` is `sigmoid(d) - 1`.\n\n## Safe initial search space\n\n- Same-user negative sampling only\n- One or two negatives per positive\n- FM embedding dimension fixed at 16 for attribution\n- Learning rate: 0.0003, 0.0005, or 0.001\n- Batch size: 2048 or 4096 pairs\n- Resample negatives every epoch\n\n## Known failure modes\n\n- Sampling negatives from a different user misaligns the task.\n- Users with only positives or only negatives cannot form pairs and must be skipped.\n- First-order user bias and global bias cancel in score differences; this is expected.\n- Very frequent items/users can dominate without balanced sampling.\n\n\n\nMETHOD CARD group_softmax\n# Same-user Group Softmax\n\n## Primary sources\n\n- Zhe Cao, Tao Qin, Tie-Yan Liu, Ming-Feng Tsai, Hang Li, \"Learning to Rank:\n  From Pairwise Approach to Listwise Approach,\" ICML 2007.\n  https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/\n- S\u00e9bastien Jean et al., \"On Using Very Large Target Vocabulary for Neural\n  Machine Translation,\" ACL 2015 (sampled normalization reference).\n  https://aclanthology.org/P15-1001/\n\n## Hypothesis\n\nRanking one positive against several negatives from the same user provides a\ncloser approximation to the evaluated within-user list than independent\npointwise examples or a single BPR pair.\n\n## Objective\n\nFor one positive score and `K` same-user negative scores:\n\n```text\nlogits = [positive, negative_1, ..., negative_K] / temperature\nloss = -log_softmax(logits)[0]\n```\n\nThe score gradient is `softmax(logits) - one_hot(positive)`, divided by the\ntemperature.\n\n## Safe initial search space\n\n- Same-user negatives only\n- `K`: 4 or 8\n- Temperature: 0.5, 1.0, or 2.0\n- FM embedding dimension fixed at 16 for attribution\n- Learning rate: 0.0003, 0.0005, or 0.001\n- Batch size: 512, 1024, or 2048 groups\n\n## Known failure modes\n\n- Groups with duplicate negative rows reduce effective list size.\n- Users without both labels must be skipped.\n- Unstable exponentials require max-shifted softmax.\n- Increasing `K` changes compute per step and must be reported.\n\n\n",
+  "result": {
+    "data": {
+      "action": "explore",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "family": "bpr",
+      "hypothesis": "Same-user BPR should align FM training with within-user ranking.",
+      "hypothesis_id": "offline_bpr_smoke",
+      "needs_web_search": false,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 3,
+        "k": 16,
+        "learning_rate": 0.001,
+        "negatives_per_group": null,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "seed": 0,
+        "temperature": null
+      },
+      "parent_experiment": null,
+      "rationale": "The committed BPR method card specifies same-user positive-negative pairs and the pairwise logistic objective."
+    },
+    "latency_seconds": 0.0,
+    "model": "scripted",
+    "response_id": "scripted-1",
+    "retries": 0,
+    "role": "researcher",
+    "sources": [],
+    "tool_calls": [],
+    "usage": {
+      "cached_tokens": 0,
+      "input_tokens": 180,
+      "output_tokens": 120,
+      "total_tokens": 300,
+      "web_search_calls": 0
+    }
+  }
+}

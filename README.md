@@ -93,7 +93,7 @@ set in PowerShell or CI takes precedence over the file.
 
 The research run uses `gpt-5.5` with medium reasoning and low verbosity by
 default. Edit `configs/ranking_losses.json` to use a model available to your
-OpenAI project. It has an explicit 150,000-token research budget, eight training
+OpenAI project. It has an explicit 150,000-token research budget, 50 training
 attempts, two debugger repairs per candidate, and the official six-hour ceiling.
 
 The run first reuses a passing official-FM run; if none exists it automatically
@@ -113,6 +113,9 @@ The agent never reads `data/judge/`. Final judge prediction generation remains a
 separate, explicit user-authorized step.
 
 ## Run the read-only research dashboard
+
+For the complete two-terminal UI and live-agent walkthrough, see
+[`docs/UI_QUICKSTART.md`](docs/UI_QUICKSTART.md).
 
 Install the optional UI dependencies:
 

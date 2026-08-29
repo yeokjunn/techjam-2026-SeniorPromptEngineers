@@ -123,4 +123,3 @@ class ActivityHandle:
             started_at=utc_now(),
             objective=redact_text(objective),
         )
-

@@ -88,4 +88,3 @@ class SubmissionCheck:
     warnings: tuple[str, ...]
     duplicate_pairs: int
     alignment_checked: bool = False
-

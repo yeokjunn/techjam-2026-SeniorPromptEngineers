@@ -424,4 +424,33 @@ which stood at **84 passed, 16 subtests** when this branch was cut (B took it 47
 
 ---
 
+## 2026-08-29 · T9 + T7 + T6 — save-before-record, real intervene counter, wall-clock from before the baseline gate (I3, I10/I-8, I9)
+
+**Done**
+
+- `research_controller.py:551-552` (`_record_rejection`) and `:824-825` (`_execute`): `self._save()` now precedes `self.audit.record_iteration(`. `_record_failed_proposal` `:515-516` already had that order and is unchanged.
+- `research_controller.py:302` `self.session_started = time.monotonic()` is the first statement of `__init__` (was late, after `_ensure_baseline`); the late assignment is gone. `_save()` `:442-445` still folds elapsed into `state.wall_clock_seconds` and resets the marker.
+- `controller.py:29` `_count_interventions(run_dir)` — non-blank lines of `<run_dir>/interventions.jsonl`, 0 if absent. `research_controller.py:442` calls it as `_save()`'s first statement; `controller.py:160` uses it for the baseline summary total and `:103`/`:125` for the per-iteration flag.
+- `controller.py:170-226` `main()` gains `command` (`run`|`intervene`, default `run`), `--run`, `--reason` (both required by `intervene`); `intervene` appends `{"ts","run_id","reason"}` to `interventions.jsonl`, then reloads `state.json` with `RunState.from_dict`, sets `manual_interventions` to the line count and writes it back via `ResearchAudit(run_dir, resume=True).save_state(...)`. Missing run dir → stderr message, `sys.exit(2)`.
+- `research_controller.py:363` writes an empty `interventions.jsonl` at run start (was `interventions.json` = `[]`); `:418` initialises `_interventions_at_iteration_start`, `:943` captures it at the top of each `run()` pass, and `:522`, `:566`, `:854` replace the three `"manual_intervention": False` literals.
+- `research_controller.py:285-287` (T2's deferred M5): a **regenerated** baseline whose `best.artifact_path` does not resolve to a file now raises `Official FM baseline produced no artifact at …`, mirroring the adopted path's check.
+- T11 step 1: optional `run_id_prefix` (default `""`) at `research_controller.py:335-336` and `controller.py:69-70`; the ids still end in `_research` / `_baseline`. No config edited — the key is optional.
+
+**Justification** — I3: the node is appended to `state.nodes` before either write, so saving first means a crash between them loses at most one `iterations.jsonl` line instead of duplicating one on resume. I10/I-8: autonomy is 20% of the score and its only evidence was a hardcoded `False`; the count is now derived from a file a judge can read, so a concurrent `intervene` can never be clobbered by the loop's own save. I9: `_ensure_baseline` can spend minutes reproducing the official run, and that time belongs in `resources.json`, the file Feasibility is scored on.
+
+**Verification**
+
+- **RED** — `… tests/test_controller_robustness.py` → **5 failed, 20 passed, 22 subtests** (the four new failures plus the I11 subtest; the two CLI tests passed for the wrong reason — argparse's own exit 2).
+- **GREEN** — same file → **24 passed, 23 subtests passed in 4.72s**.
+- **Gate** — `env -u OPENAI_API_KEY PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -W error` → **0 failed, 168 passed, 1 skipped, 80 subtests passed in 55.54s**. Floor was 162 / 1 / 80; the delta is exactly this PR's six named tests.
+- **Acceptance** — `grep -rn '"manual_intervention": False' src/` → no hits; `grep -rn 'interventions.json"' src/agent/research_controller.py` → no hits; `python -m src.agent.controller intervene --run <dir> --reason "restarted after API outage"` writes the line and exits 0, a missing dir exits 2, and `--config <path>` still parses.
+
+**Hand-off to Owner D (`@stephan0b`)** — a research run now writes `<run_dir>/interventions.jsonl`, one JSON object per line: `ts` (ISO-8601 UTC), `run_id`, `reason`. `manual_interventions` is **derived from that file's line count on every save** (`state.json`, `resources.json`); `summary.json` carries the count as of run end, so prefer `resources.json` or the file itself when rendering. Never incremented — re-read it rather than trusting a cached total. The per-iteration `manual_intervention` flag in `iterations.jsonl` now means "an intervention was recorded during this iteration", not "ever". `report.py:439` already reads both file names, so nothing breaks; `src/ui/` reads neither. Please also de-duplicate `iterations.jsonl` by `iteration` when rendering — with the save/record swap a resume can now replay an iteration rather than duplicate a line, and de-duplicating reads correctly under either failure mode.
+
+**Hand-off to Owner C (`@ppeixinn`)** — `roles.research` / `critic_preflight` / `build` (`roles.py:154/203/220`) accept no `sequence`, so `_role_call` cannot number re-prompt attempts and each retry's `passes/` file overwrites the rejected attempt. Add `sequence: int = 0` to those three and forward it to `_call(...)` (`audit.record_pass` already takes it); A then passes the attempt index. ≤10 lines each side, A's half follows.
+
+**Not committed** — every commit on this branch is the human's.
+
+---
+
 *Append new entries above this line.*

@@ -4,7 +4,16 @@ import unittest
 import tempfile
 
 from src.agent.candidate_runner import CandidateExecutor, CandidateWorkspace
-from src.agent.safety import SafetyViolation, contained_path, validate_source
+from src.agent.safety import (
+    ALLOWED_IMPORTS,
+    FORBIDDEN_CALLS,
+    SAFE_BUILTIN_NAMES,
+    SafetyViolation,
+    contained_path,
+    is_allowed_import,
+    restricted_builtins,
+    validate_source,
+)
 from src.agent.types import CandidateManifest
 from pathlib import Path
 
@@ -115,6 +124,70 @@ if __name__ == '__main__':
     unittest.main()
 """
         validate_source(source, test_file=True)
+
+
+class RestrictedBuiltinsTests(unittest.TestCase):
+    def namespace(self, *, test_file=False):
+        """Mirror the namespace run_candidate.py builds via module_from_spec."""
+        return {
+            "__builtins__": restricted_builtins(test_file=test_file),
+            "__name__": "generated_candidate",
+        }
+
+    def test_restricted_builtins_block_open_and_import(self):
+        namespace = self.namespace()
+        with self.assertRaises(NameError):
+            exec("open('x')", namespace)
+        with self.assertRaises(SafetyViolation):
+            exec("import os", namespace)
+        with self.assertRaises(SafetyViolation):
+            exec("__import__('os')", namespace)
+
+    def test_guarded_import_rejects_relative_imports(self):
+        with self.assertRaises(SafetyViolation):
+            exec("from . import candidate", self.namespace(test_file=True))
+
+    def test_guarded_import_allows_numpy_and_project_modules(self):
+        namespace = self.namespace()
+        exec("import numpy as np", namespace)
+        exec("import numpy.random", namespace)
+        exec("from src.models.sampling import sample_bpr_pairs", namespace)
+        exec("from src.experiments.contracts import CandidateOutput", namespace)
+
+    def test_test_only_imports_need_the_test_file_flag(self):
+        exec("import unittest", self.namespace(test_file=True))
+        with self.assertRaises(SafetyViolation):
+            exec("import unittest", self.namespace())
+
+    def test_restricted_builtins_support_class_definitions(self):
+        namespace = self.namespace()
+        source = """
+class Trainer:
+    def __init__(self, epochs):
+        super().__init__()
+        self.epochs = epochs
+
+    def total(self):
+        return sum(range(self.epochs))
+
+
+result = Trainer(4).total()
+"""
+        exec(source, namespace)
+        self.assertEqual(namespace["result"], 6)
+
+    def test_safe_builtins_exclude_every_forbidden_call(self):
+        self.assertEqual(SAFE_BUILTIN_NAMES & FORBIDDEN_CALLS, set())
+        self.assertNotIn("open", restricted_builtins())
+
+    def test_static_and_dynamic_import_rules_agree(self):
+        """The guarded __import__ and validate_source share is_allowed_import by construction."""
+        for name in ("os", "subprocess", "pathlib", "src.evaluation.official"):
+            with self.subTest(module=name):
+                self.assertFalse(is_allowed_import(name, ALLOWED_IMPORTS))
+        for name in ("numpy", "numpy.random", "src.models.sampling", "__future__"):
+            with self.subTest(module=name):
+                self.assertTrue(is_allowed_import(name, ALLOWED_IMPORTS))
 
 
 if __name__ == "__main__":

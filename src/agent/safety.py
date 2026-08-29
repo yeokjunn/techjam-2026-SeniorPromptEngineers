@@ -17,6 +17,7 @@ deliberately conservative. Two rules keep it honest:
 from __future__ import annotations
 
 import ast
+import builtins
 import re
 from pathlib import Path
 
@@ -152,6 +153,79 @@ def validate_source(source: str, *, test_file: bool = False) -> None:
             target = node.value
             if isinstance(target, ast.Name) and target.id.startswith("__"):
                 raise SafetyViolation(f"Subscript of a dunder name is not allowed: {target.id}")
+
+
+# Everything in ``builtins`` a training loop legitimately needs: pure builders, iterators,
+# numerics, the class machinery and the exception types. Every name in FORBIDDEN_CALLS is
+# excluded by construction -- see the assertion below, which fails the import if that drifts.
+SAFE_BUILTIN_NAMES = frozenset(
+    {
+        # constructors and containers
+        "bool", "bytearray", "bytes", "complex", "dict", "float", "frozenset", "int",
+        "list", "memoryview", "object", "set", "slice", "str", "tuple",
+        # iteration and functional helpers
+        "all", "any", "enumerate", "filter", "iter", "len", "map", "next", "range",
+        "reversed", "sorted", "sum", "zip",
+        # numerics and formatting
+        "abs", "ascii", "bin", "chr", "divmod", "format", "hex", "max", "min", "oct",
+        "ord", "pow", "repr", "round",
+        # introspection that cannot reach the filesystem
+        "callable", "hasattr", "hash", "id", "isinstance", "issubclass", "type",
+        # class machinery
+        "classmethod", "property", "staticmethod", "super",
+        # diagnostics
+        "print",
+        # sentinels
+        "Ellipsis", "NotImplemented",
+        # exception types a candidate may raise or catch
+        "ArithmeticError", "AssertionError", "AttributeError", "BaseException",
+        "Exception", "FloatingPointError", "ImportError", "IndexError", "KeyError",
+        "LookupError", "MemoryError", "NameError", "NotImplementedError", "OSError",
+        "OverflowError", "RecursionError", "RuntimeError", "StopIteration",
+        "TypeError", "UnboundLocalError", "ValueError", "ZeroDivisionError",
+    }
+)
+assert not (SAFE_BUILTIN_NAMES & FORBIDDEN_CALLS), "safe builtins must exclude FORBIDDEN_CALLS"
+
+
+def _guarded_import(*, test_file: bool = False):
+    """Return an ``__import__`` replacement enforcing the same allowlist as ``validate_source``."""
+    allowed = ALLOWED_IMPORTS | (TEST_ONLY_IMPORTS if test_file else set())
+
+    def guarded(name, globals=None, locals=None, fromlist=(), level=0):
+        if level:
+            raise SafetyViolation("Relative imports are not allowed.")
+        if not is_allowed_import(name, allowed):
+            raise SafetyViolation(f"Import is not allowed: {name}")
+        return builtins.__import__(name, globals, locals, fromlist, level)
+
+    return guarded
+
+
+def restricted_builtins(*, test_file: bool = False) -> dict[str, object]:
+    """A ``__builtins__`` mapping for executed candidate code.
+
+    Defence in depth behind ``validate_source``: even if a bypass were found in the AST rules,
+    the executed module cannot reach ``open`` (absent -> NameError) or import outside the
+    allowlist (guarded ``__import__`` -> SafetyViolation).
+
+    Scope, deliberately narrow: this covers the **training** run, where
+    ``run_candidate.py::_load_candidate`` execs the candidate module and can pre-set the key.
+    It does not cover the unit-test subprocess, which imports ``candidate.py`` through the
+    normal import system (``candidate_runner.py``), nor modules the candidate imports -- those
+    keep their own real builtins. T1's AST rules stay the primary defence.
+
+    Precondition: the executing namespace must carry ``__name__`` -- a class body reads it to
+    fill ``__module__``. ``importlib.util.module_from_spec`` sets it, so the real call site is
+    already correct; a bare ``exec`` namespace has to supply it.
+    """
+    mapping: dict[str, object] = {
+        name: getattr(builtins, name) for name in sorted(SAFE_BUILTIN_NAMES)
+    }
+    # Without __build_class__ every `class` statement in the candidate fails.
+    mapping["__build_class__"] = builtins.__build_class__
+    mapping["__import__"] = _guarded_import(test_file=test_file)
+    return mapping
 
 
 def validate_family_contract(source: str, family: str) -> None:

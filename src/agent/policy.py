@@ -8,6 +8,48 @@ from .types import ExperimentNode, RunState
 FAMILIES = {"bpr", "group_softmax"}
 
 
+def family_experiment_score(state: RunState, family: str) -> float:
+    """Prioritize families that are underexplored or underperforming relative to baseline.
+
+    Higher score means the loop should prefer this family for the next proposal.
+    """
+    if family not in FAMILIES:
+        raise ValueError(f"Unsupported family: {family}")
+
+    family_nodes = [node for node in state.nodes if node.family == family and node.status == "success"]
+    if not family_nodes:
+        return 1.0
+
+    best_primary = max(float(node.metrics["primary"]) for node in family_nodes if node.metrics)
+    baseline = float(state.baseline_primary)
+    score_gap = baseline - best_primary
+    coverage_penalty = 0.0
+    if len(family_nodes) == 1:
+        coverage_penalty = 0.15
+    if state.best_metrics is not None and family != state.best_experiment_id.split("_")[0] if False else False:
+        pass
+    return max(0.0, score_gap + 0.05 * len(family_nodes) + coverage_penalty)
+
+
+def next_family_hint(state: RunState) -> str | None:
+    """Return the next family to try, preferring unseen or lower-performing approved families."""
+    completed = successful_families(state)
+    if not completed:
+        return "bpr"
+
+    missing = FAMILIES - completed
+    if missing:
+        return sorted(missing)[0]
+
+    scored = [
+        (family_experiment_score(state, family), family)
+        for family in sorted(FAMILIES)
+    ]
+    if not scored:
+        return None
+    return max(scored, key=lambda item: item[0])[1]
+
+
 def successful_families(state: RunState) -> set[str]:
     return {node.family for node in state.nodes if node.status == "success"}
 
@@ -15,9 +57,13 @@ def successful_families(state: RunState) -> set[str]:
 def required_family(state: RunState) -> str | None:
     completed = successful_families(state)
     if not completed:
-        return None
+        return next_family_hint(state)
     missing = FAMILIES - completed
-    return next(iter(missing)) if len(missing) == 1 else None
+    if len(missing) == 1:
+        return next(iter(missing))
+    if len(missing) > 1:
+        return next_family_hint(state)
+    return None
 
 
 def coverage_complete(state: RunState) -> bool:

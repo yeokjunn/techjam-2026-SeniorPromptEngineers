@@ -14,6 +14,7 @@ from .audit import ResearchAudit
 from .candidate_runner import CandidateExecutor, CandidateWorkspace, repaired_manifest
 from .catalog import MethodCatalog
 from .controller import REPO_ROOT, _resolve_repo_path, _source_manifest, run_agent
+from .errors import LLMError, TokenBudgetExceeded
 from .llm import LLMProvider, build_provider
 from .policy import SearchPolicy, coverage_complete, required_family, sanitize_parameters
 from .report import render_reports
@@ -29,6 +30,35 @@ from .types import (
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+# Classification of every exception source the correctness review names (C4).
+# ``roles.py``, ``types.py``, ``llm.py`` and ``policy.py`` are not ours to edit,
+# so the loop classifies by exception *type*. The message check keeps budget
+# stops correct while ``roles.py:52,63`` still raise a bare ``RuntimeError``
+# (C's T2 step 7 converts them to ``TokenBudgetExceeded``, which subclasses
+# ``RuntimeError``, so both spellings classify the same before and after).
+# ``KeyboardInterrupt`` is a ``BaseException`` and is deliberately not caught:
+# Ctrl-C still exits, and the operator records it with ``intervene``.
+
+
+def _is_budget_error(exc: BaseException) -> bool:
+    return isinstance(exc, TokenBudgetExceeded) or (
+        isinstance(exc, RuntimeError) and "token budget" in str(exc).lower())
+
+
+def _error_kind(exc: BaseException) -> str:      # 'budget' | 'proposal' | 'harness'
+    if _is_budget_error(exc): return "budget"
+    # ``LLMError`` first, and only after the budget check above: every non-budget
+    # subclass (``RoleOutputInvalid``, ``IncompleteResponse``) marks output the
+    # model can be asked to produce again, so it must classify exactly like the
+    # bare ``ValueError`` the same raise site throws today. Widening this to all
+    # ``RuntimeError`` would wrongly re-prompt a missing API key (``llm.py:198``).
+    return (
+        "proposal"
+        if isinstance(exc, (LLMError, ValueError, TypeError, KeyError))
+        else "harness"
+    )
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -137,6 +167,10 @@ class ResearchLoop:
             test_timeout_seconds=int(self.budgets["test_timeout_seconds"]),
         )
         self.session_started = time.monotonic()
+        # Circuit breaker for infrastructure failures. It lives on the loop and
+        # not on RunState (frozen types.py), so a resume starts from a clean
+        # slate — which is the behaviour we want after an operator intervenes.
+        self.consecutive_harness_errors = 0
 
     def _elapsed(self) -> float:
         return self.state.wall_clock_seconds + (time.monotonic() - self.session_started)
@@ -145,6 +179,61 @@ class ResearchLoop:
         self.state.wall_clock_seconds = self._elapsed()
         self.session_started = time.monotonic()
         self.audit.save_state(self.state.to_dict())
+
+    def _role_call(self, label: str, iteration: int, call) -> Any:
+        """Run one role pass, re-prompting the model while its own output is at fault.
+
+        ``call`` takes the feedback string to hand back to the model (``None`` on
+        the first attempt). A proposal-shaped failure — bad schema, off-grid
+        parameters, a family the researcher was told not to pick — is the model's
+        to fix, so the role is re-sampled up to ``budgets.max_role_reprompts``
+        times with the rejection reason attached. Budget and harness failures are
+        the run's to handle and re-raise immediately.
+        """
+        maximum = int(self.budgets.get("max_role_reprompts", 2))
+        feedback: str | None = None
+        reprompts = 0
+        while True:
+            try:
+                return call(feedback)
+            except Exception as exc:
+                if reprompts >= maximum or _error_kind(exc) != "proposal":
+                    raise
+                reprompts += 1
+                feedback = f"Your previous {label} response was rejected: {exc}"
+                self.audit.append_jsonl(
+                    self.run_dir / "research_memory.jsonl",
+                    {
+                        "type": "role_retry",
+                        "label": label,
+                        "iteration": iteration,
+                        "reprompt": reprompts,
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                    },
+                )
+
+    def _record_failed_proposal(
+        self, iteration: int, exc: BaseException, status: str
+    ) -> None:
+        """Ledger a proposal that never became an experiment.
+
+        No ``ExperimentNode`` is appended — a failed proposal has no family — and
+        ``iteration_count`` is not advanced, so the experiment tree stays a record
+        of real experiments. ``proposal_attempts`` was already charged for the
+        pass, so ``max_proposals`` bounds this path; the breaker is for harness
+        errors only.
+        """
+        self._save()
+        self.audit.record_iteration(
+            {
+                "iteration": iteration,
+                "status": status,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "manual_intervention": False,
+            }
+        )
 
     def _record_rejection(
         self, iteration: int, decision: ResearchDecision, critic: CriticDecision
@@ -369,44 +458,98 @@ class ResearchLoop:
                 self.state.stop_reason = "llm_token_budget_reached"
                 break
 
+            # Bound before the try so the error handler can always name the pass,
+            # and remember whether this pass ever charged a proposal (see the
+            # no-progress guard in the handler).
+            iteration = self.state.iteration_count + 1
+            proposals_before = self.state.proposal_attempts
             try:
                 if self.state.pending_replications and coverage_complete(self.state):
                     task = self.state.pending_replications[0]
                     self._replication(task)
                     self.state.pending_replications.pop(0)
+                    self.consecutive_harness_errors = 0
                     self._save()
                     continue
                 if self.state.proposal_attempts >= max_proposals:
                     self.state.stop_reason = "proposal_budget_reached"
                     break
 
-                iteration = self.state.iteration_count + 1
                 self.state.proposal_attempts += 1
-                decision = self.roles.research(
-                    self.state, iteration, required_family(self.state)
+                decision = self._role_call(
+                    "researcher",
+                    iteration,
+                    lambda fb: self.roles.research(
+                        self.state, iteration, required_family(self.state)
+                    ),
                 )
-                preflight = self.roles.critic_preflight(
-                    self.state, iteration, decision
+                preflight = self._role_call(
+                    "critic_preflight",
+                    iteration,
+                    lambda fb: self.roles.critic_preflight(
+                        self.state, iteration, decision
+                    ),
                 )
                 self.state.iteration_count += 1
                 if not preflight.approved:
                     self._record_rejection(iteration, decision, preflight)
+                    self.consecutive_harness_errors = 0
                     continue
-                manifest = self.roles.build(self.state, iteration, decision)
+                manifest = self._role_call(
+                    "builder",
+                    iteration,
+                    lambda fb: self.roles.build(self.state, iteration, decision),
+                )
                 self._execute(iteration, decision, preflight, manifest)
+                self.consecutive_harness_errors = 0
             except Exception as exc:
+                kind = _error_kind(exc)
+                if kind == "proposal" and self.state.proposal_attempts == proposals_before:
+                    # No proposal was charged, so the failure came from the
+                    # replication branch: there is no model output to re-prompt
+                    # and `max_proposals` cannot bound it. A `continue` here would
+                    # retry the identical pass at full speed until the wall clock
+                    # ran out. A corrupt run directory is a harness fault however
+                    # it surfaces (a truncated manifest.json raises
+                    # JSONDecodeError, not OSError), so let the breaker bound it.
+                    kind = "harness"
                 self.audit.append_jsonl(
                     self.run_dir / "research_memory.jsonl",
-                    {"type": "controller_error", "error": str(exc)},
+                    {
+                        "type": "controller_error",
+                        "kind": kind,
+                        "iteration": iteration,
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                    },
                 )
-                if "token budget" in str(exc).lower():
+                if kind == "budget":
                     self.state.stop_reason = "llm_token_budget_reached"
                     break
-                self.state.stop_reason = "controller_error"
-                self.audit.write_json_atomic(
-                    self.run_dir / "error.json", {"error": str(exc)}
-                )
-                break
+                if kind == "proposal":
+                    # The model's fault and already re-prompted: drop this
+                    # proposal, keep the run.
+                    self.consecutive_harness_errors = 0
+                    self._record_failed_proposal(iteration, exc, "proposal_failed")
+                    continue
+                self.consecutive_harness_errors += 1
+                if self.consecutive_harness_errors >= int(
+                    self.budgets.get("max_consecutive_harness_errors", 3)
+                ):
+                    self.audit.write_json_atomic(
+                        self.run_dir / "error.json",
+                        {
+                            "error": str(exc),
+                            "error_type": type(exc).__name__,
+                            "kind": kind,
+                            "iteration": iteration,
+                            "consecutive_harness_errors": self.consecutive_harness_errors,
+                        },
+                    )
+                    self.state.stop_reason = "harness_error_breaker"
+                    break
+                self._record_failed_proposal(iteration, exc, "harness_error")
+                continue
 
         self.state.status = "completed"
         self._save()

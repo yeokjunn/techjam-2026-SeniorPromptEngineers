@@ -10,7 +10,7 @@
   "data_card_path": null,
   "llm": {
     "provider": "openai",
-    "model": "gpt-5.5",
+    "model": "glm-5.3-flash[1m]",
     "reasoning_effort": "medium",
     "verbosity": "low",
     "store": false,

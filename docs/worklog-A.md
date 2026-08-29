@@ -462,4 +462,12 @@ which stood at **84 passed, 16 subtests** when this branch was cut (B took it 47
 
 ---
 
+## 2026-08-29 · Tests follow Owner E's registry (history_features + grids landed)
+
+- **Done** — `tests/test_controller_wiring.py:304-318` uses `nope_family` (asserted absent from the registry) for the unknown-family `ValueError`, since `history_features` is now registered; `:320-338` drops the pre-registry exact messages for `bpr`'s `batch_size` / `k` / `learning_rate` / `epochs` and asserts the rejection names the offending key; `:455-469` likewise for both shipped families' `batch_size`, plus `assertNotEqual` against the shared 65536 message so "the sanity limit is never consulted" still bites; `:477-484` asserts the coverage set is a *strict* subset of `family_names()` instead of pinning three names, now that `multi_task` exists. `tests/test_controller_robustness.py:389` → `assertIn("epochs", retries[0]["error"])`.
+- **Justification** — E's registry made the old expectations false, not `policy.py`. Every key those tests probe is now in E's grid, so the grid message supersedes the hard-coded bound: `bpr batch_size=256 is outside the registry grid (2048, 4096).` and `bpr epochs=99 is outside the registry grid range(1, 41).` Behaviour is unchanged — the same values are still rejected, on the same first-failure ordering. No source file touched.
+- **Verification** — `env -u OPENAI_API_KEY PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -W error` → **0 failed, 222 passed, 1 skipped, 437 subtests passed in 29.63s**.
+
+---
+
 *Append new entries above this line.*

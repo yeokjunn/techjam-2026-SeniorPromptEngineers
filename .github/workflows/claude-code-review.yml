@@ -42,4 +42,7 @@ jobs:
           prompt: "/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
           # Read-only commands allowlisted so large PRs don't die in
           # permission-denial retry loops (see PR #9's 27-min failure).
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(ls:*)"'
+          # py_compile compiles without executing target code; pytest runs
+          # in the ephemeral runner (see REVIEW.md for scope guidance).
+          # Never allowlist bare python/python -c/pip install.
+          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(ls:*),Bash(python -m py_compile:*),Bash(pytest:*)"'

@@ -400,4 +400,28 @@ which stood at **84 passed, 16 subtests** when this branch was cut (B took it 47
 
 ---
 
+## 2026-08-29 · T5 + T4 — One convergence implementation; official verdict reported separately from the harness stop (I7, I6/I-9)
+
+**Done**
+
+- `convergence.py:7` `official_converged(scores, epsilon=0.002, patience=3)` — the organizers' rule, `max(s[:k]) - max(s[:k-N]) <= eps` for `k > N`, latching on the first firing prefix; `:29` `stagnation(scores, epsilon)` → `(meaningful_best, stagnant_iterations)`, today's ratchet exactly; `:56` `ConvergenceTracker.observe` keeps its signature (`controller.py:122`), stores `self.scores` and delegates to both. `controller.py` itself is unchanged.
+- `policy.py:199` `scored_primaries(state)`; `:265` `observe_success` sets `state.meaningful_best, state.stagnant_iterations = stagnation([state.baseline_primary] + scored_primaries(state), self.epsilon)` at `:273`. The inline ratchet is deleted; `should_stop` is untouched, deliberately.
+- `research_controller.py:117` `_official_convergence_iteration(state, epsilon, patience)` — the *node's* `iteration`, not the prefix length, since `seq[0]` is the baseline seed; `:405` the logged-once flag; `:427` `_note_official_convergence`, called at `:790` right after `observe_success`; `:1030-1033` the two summary keys.
+- Tests: `test_agent.py:95` (2,000 `random.Random(0)` sequences against a separately written literal reference loop), `:114`; `test_research_loop.py:462`.
+
+**Justification** — I7: the ratchet lived twice and neither copy was the organizers' formula; it now lives once, and the *verdict* is the reference rule — where the two disagree the reference wins, which is what the 2,000-sequence test pins. I6/I-9: `should_stop` is the harness's own agenda (coverage, replications, budgets) and is left alone, while `summary.json` now carries the official verdict beside it, so a converged run that stops on a budget says so instead of reading as unconverged. One deviation to flag: the plan's T4 sketch has "only `bpr` ever succeeds", which the loop forbids — `required_family` pins every proposal after the first success to the uncovered family, so no bpr-only run reaches three scored iterations. The test uses the candidate cap as the harness agenda that outlives the rule, which is the `stop_reason` the plan's own "Why" names.
+
+**Verification**
+
+- **RED** — `… tests/test_agent.py tests/test_research_loop.py` → `ImportError: cannot import name 'official_converged'`; T4 alone ran the scenario and failed on `KeyError: 'converged_official'`, with `"stop_reason": "candidate_budget_reached"` and `"iterations": 3` already correct.
+- **GREEN** — `… tests/test_agent.py tests/test_research_loop.py` → **14 passed in 4.55s**, the two existing `ConvergenceTests` cases green and unedited.
+- **Gate** — `env -u OPENAI_API_KEY PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -W error` → **0 failed, 162 passed, 1 skipped, 80 subtests passed in 56.28s**. Floor was 159 / 1 / 80; the delta is exactly this task's three named tests.
+- **Acceptance** — `grep -n 'stagnant_iterations +=' src/agent/policy.py` → no hits (exit 1).
+
+**Hand-off to Owner D (`@stephan0b`)** — `summary.json` gains two keys next to `stop_reason`: **`converged_official: bool`** (the organizers' ε=0.002 / N=3 rule over `[baseline_primary] + scored primaries`) and **`converged_official_iteration: int | None`** (the `iteration` of the scored node whose prefix first fires, `None` if it never does). Print both: they are independent of `stop_reason`, which keeps its old meaning, so a run can be `converged_official: true` with `stop_reason: "candidate_budget_reached"`. `research_memory.jsonl` gains one line the first time the rule fires — `{"type": "convergence", "iteration": <k>, "official": true}` — same `k` as the summary key, at most once per session (a resume may re-log it; the summary is recomputed from the nodes either way).
+
+**Not committed** — every commit on this branch is the human's.
+
+---
+
 *Append new entries above this line.*

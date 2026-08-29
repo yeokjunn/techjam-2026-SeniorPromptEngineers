@@ -205,9 +205,34 @@ Scope: `docs/reviews/2026-08-28-harness-review/plans/B-gate-contracts.md` (T1–
 
 ---
 
+## 2026-08-29 · T8 — Regenerate + commit the baseline run (C5)
+
+**Done**
+- Committed T7 first (`test:` + `docs:` pair) so the run would be produced by committed code — C5's essence. (T1–T6 were already committed on the branch in the plan's task-sized pairs.)
+- `env -u OPENAI_API_KEY .venv/bin/python -m src.agent.controller --config configs/baseline.json` → `runs/20260829T041834051989Z_baseline`.
+- **Scrub found a real leak:** `iterations.jsonl` embedded absolute `/Users/...` paths inside the three `outcome.command` argv arrays (the literal subprocess argv; every other path field was already repo-relative). Hand-rewrote the argv to repo-relative spelling per plan step 3 — same command, portable form (`.venv/bin/python -m src.experiments.run_baseline … runs/…`), informational accuracy preserved.
+- `git rm -r --cached runs/20260828T141646Z_baseline` + disk delete (the unreproducible run with Windows OneDrive paths and no `source_manifest.json`); staged **exactly** the five files of the new run; single `chore:` commit.
+
+**Justification**
+- The old committed run could not have been produced by the code at its commit (no `source_manifest.json`/`code_revision`, which the controller writes unconditionally) and leaked `C:\Users\Admin\OneDrive - …` into a soon-to-be-public repo — both halves of C5's artifact half (A owns the select-by-revision logic; untouched).
+- The regenerated run is fully attributable: `source_manifest.revision` matches `_source_manifest()['revision']` for the committed `src/` tree, and every `iterations.jsonl` line carries `code_revision`.
+
+**Verification evidence**
+- **primary 0.60147** (|Δ| = 0.00013 ≤ 0.0008 of 0.6016) · GAUC 0.66713 (≈0.6671) · nDCG@5 0.53581 (≈0.5358).
+- `stop_reason: iteration_budget_reached` · `successful_iterations: 3` (3/3 `success`) · `manual_interventions: 0` · `llm_tokens: 0`.
+- Post-rewrite scrub `grep -rn "C:\\\\\|OneDrive\|/Users/" runs/<new>/` → **no matches**.
+- `git ls-files runs/ | cut -d/ -f2 | sort -u` → exactly **one** directory: `20260829T041834051989Z_baseline`.
+- `source_manifest.json` revision == live `_source_manifest()['revision']` → **True**; `code_revision` in all 3 iteration lines → **True**.
+- `best.json` `artifact_path` = `runs/20260829T…/artifacts/003_official_fm_seed0/model.npz` — repo-relative, no drive letter.
+- `git status --porcelain` after staging showed only the run swap (4 old deletions/renames + 5 new adds); `artifacts/` and `stdout/` remain gitignored on disk.
+- Baseline rung sanity in passing: random 0.4827 (≈0.4834 published), popularity 0.5807 (=0.5807 published) — the ladder's lower rungs match the kit too.
+
+---
+
 ## Queue (next up)
 
-- **T8** — regenerate the baseline run with committed code (`env -u OPENAI_API_KEY python -m src.agent.controller --config configs/baseline.json`), verify 0.6016±0.0008 / stop_reason / scrub greps, replace `runs/20260828T141646Z_baseline`, stage exactly five files.
-- Then hand-offs per plan §6 and the DoD sweep. Commit/PR sequence per plan §5: T1+T2 / T3 / T4+T5+T6 / T7 / T8.
+- **Hand-offs (plan §6)** — the `_ensure_baseline` diff for A is drafted in the T5+T6 entry; tell A the gate is merged (keyword call-site conversion), tell C the Builder wording, tell D `failure_class`/`test_scores_path` are in the iteration record and the new run id is `20260829T041834051989Z_baseline`, tell E the `load_test_meta` signature.
+- **DoD sweep (plan §5)** — final verification pass over the whole checklist.
+- Optional post-T1–T8 extra per plan: the labelled self-computed test-score CLI (T3 step 7), only after the CSV is frozen.
 
 *Append new entries above this line.*

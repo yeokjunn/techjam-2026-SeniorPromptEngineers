@@ -1,0 +1,23 @@
+{
+  "best": {
+    "artifact_path": "runs/20260829T041834051989Z_baseline/artifacts/003_official_fm_seed0/model.npz",
+    "experiment_id": "official_fm_seed0",
+    "iteration": 3,
+    "metrics": {
+      "GAUC": 0.6671333909034729,
+      "nDCG@5": 0.5358057022094727,
+      "primary": 0.6014695167541504,
+      "rows": 124909.0,
+      "users": 22377.0
+    }
+  },
+  "config_name": "kuairand-pure-baseline-ladder",
+  "iterations": 3,
+  "llm_tokens": 0,
+  "manual_interventions": 0,
+  "run_id": "20260829T041834051989Z_baseline",
+  "stop_reason": "iteration_budget_reached",
+  "successful_iterations": 3,
+  "summary_path": "C:\\Users\\Admin\\OneDrive - Nanyang Technological University\\2026_projects\\tiktok_techjam_clean\\techjam-2026-SeniorPromptEngineers\\runs\\20260829T041834051989Z_baseline\\summary.json",
+  "wall_clock_seconds": 32.01894945800086
+}

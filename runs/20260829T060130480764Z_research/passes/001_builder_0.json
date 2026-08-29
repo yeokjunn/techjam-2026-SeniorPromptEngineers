@@ -1,0 +1,37 @@
+{
+  "prompt": "ROLE: Builder\nGenerate a self-contained candidate.py and test_candidate.py for the approved proposal.\ncandidate.py must define `run(context, parameters) -> CandidateOutput`.\nUse only numpy, collections, math, time, src.models.fm_core.FMRanker,\nsrc.models.sampling, and\nsrc.experiments.contracts.CandidateOutput. The context provides train_x, train_y,\ntrain_users, valid_x, valid_users, field_dimension, and evaluate_validation(scores).\nDo not import evaluators or perform file, network, process, or dynamic-code operations.\nThe trusted worker writes checkpoints and computes final metrics. Return finite validation\nscores, a dict of numpy checkpoint arrays, a training trace, and diagnostics. Tests must\nexercise same-user sampling/group construction without loading the real dataset.\nFor BPR you must call src.models.sampling.sample_bpr_pairs. For group-softmax you must\ncall src.models.sampling.sample_softmax_groups. These trusted samplers are mandatory.\n\nPROPOSAL:\n{\n  \"hypothesis_id\": \"offline_bpr_smoke\",\n  \"family\": \"bpr\",\n  \"action\": \"explore\",\n  \"hypothesis\": \"Same-user BPR should align FM training with within-user ranking.\",\n  \"rationale\": \"The committed BPR method card specifies same-user positive-negative pairs and the pairwise logistic objective.\",\n  \"parameters\": {\n    \"seed\": 0,\n    \"k\": 16,\n    \"learning_rate\": 0.001,\n    \"epochs\": 3,\n    \"batch_size\": 4096,\n    \"patience\": 2,\n    \"negatives_per_positive\": 1\n  },\n  \"evidence\": [\n    {\n      \"title\": \"Bayesian Personalized Ranking from Implicit Feedback\",\n      \"url\": \"https://arxiv.org/abs/1205.2618\",\n      \"method_card_id\": \"bpr\"\n    }\n  ],\n  \"needs_web_search\": false,\n  \"parent_experiment\": null\n}\n",
+  "result": {
+    "data": {
+      "candidate_id": "offline_bpr_smoke_candidate",
+      "code": "import numpy as np\nfrom src.experiments.contracts import CandidateOutput\nfrom src.models.fm_core import FMRanker, sigmoid\nfrom src.models.sampling import sample_bpr_pairs\n\ndef run(context, parameters):\n    seed = int(parameters.get(\"seed\", 0))\n    batch_size = int(parameters.get(\"batch_size\", 4096))\n    per_positive = int(parameters.get(\"negatives_per_positive\", 1))\n    model = FMRanker(context.field_dimension, embedding_dim=int(parameters.get(\"k\", 16)),\n                     learning_rate=float(parameters.get(\"learning_rate\", 0.001)), seed=seed)\n    rng = np.random.default_rng(seed)\n    trace, best_primary, best_state = [], -1.0, model.state_dict()\n    for epoch in range(1, int(parameters.get(\"epochs\", 3)) + 1):\n        positive_rows, negative_rows = sample_bpr_pairs(context.train_users, context.train_y, rng, per_positive)\n        order = rng.permutation(len(positive_rows))\n        for start in range(0, len(order), batch_size):\n            batch = order[start : start + batch_size]\n            positive_x = context.train_x[positive_rows[batch]]\n            negative_x = context.train_x[negative_rows[batch]]\n            difference = model.logits(positive_x)[0] - model.logits(negative_x)[0]\n            gradient = ((sigmoid(difference) - 1.0) / len(batch)).astype(np.float32)\n            grad_v_p, grad_w_p, _ = model.gradients(positive_x, gradient)\n            grad_v_n, grad_w_n, _ = model.gradients(negative_x, -gradient)\n            model.apply_gradients(grad_v_p + grad_v_n, grad_w_p + grad_w_n, 0.0)\n        metrics = context.evaluate_validation(model.predict(context.valid_x))\n        trace.append({\"epoch\": epoch, \"primary\": float(metrics[\"primary\"])})\n        if float(metrics[\"primary\"]) > best_primary:\n            best_primary, best_state = float(metrics[\"primary\"]), model.state_dict()\n    model.load_state_dict(best_state)\n    return CandidateOutput(\n        validation_scores=model.predict(context.valid_x), checkpoint_state=best_state,\n        training_trace=trace, diagnostics={\"pairs\": int(len(positive_rows)), \"best_primary\": best_primary},\n        test_scores=None if context.test_x is None else model.predict(context.test_x))\n",
+      "family": "bpr",
+      "hypothesis_id": "offline_bpr_smoke",
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 3,
+        "k": 16,
+        "learning_rate": 0.001,
+        "negatives_per_group": null,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "seed": 0,
+        "temperature": null
+      },
+      "tests": "import unittest\nimport numpy as np\nimport candidate\nfrom src.models.sampling import sample_bpr_pairs\n\nclass CandidateTests(unittest.TestCase):\n    def test_same_user_opposite_label_pairs(self):\n        users = (\"u1\", \"u1\", \"u2\", \"u2\")\n        labels = np.asarray([1, 0, 1, 0], dtype=np.float32)\n        positives, negatives = sample_bpr_pairs(users, labels, np.random.default_rng(0), 1)\n        self.assertTrue(all(users[p] == users[n] for p, n in zip(positives, negatives)))\n        self.assertTrue(all(labels[p] == 1 and labels[n] == 0 for p, n in zip(positives, negatives)))\n\n    def test_run_is_callable(self):\n        self.assertTrue(callable(candidate.run))\n"
+    },
+    "latency_seconds": 0.0,
+    "model": "scripted",
+    "response_id": "scripted-3",
+    "retries": 0,
+    "role": "builder",
+    "sources": [],
+    "tool_calls": [],
+    "usage": {
+      "cached_tokens": 0,
+      "input_tokens": 500,
+      "output_tokens": 1200,
+      "total_tokens": 1700,
+      "web_search_calls": 0
+    }
+  }
+}

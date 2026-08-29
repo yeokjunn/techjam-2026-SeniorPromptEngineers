@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import random
 import unittest
 
-from src.agent.convergence import ConvergenceTracker
+from src.agent.convergence import ConvergenceTracker, official_converged
+from src.agent.policy import (
+    SearchPolicy,
+    family_experiment_score,
+    next_family_hint,
+    scored_primaries,
+)
 from src.agent.proposer import ConfigProposer
 from src.agent.reflector import reflect
-from src.agent.types import ExperimentOutcome, ExperimentSpec
+from src.agent.types import ExperimentNode, ExperimentOutcome, ExperimentSpec, RunState
 
 
 class ConvergenceTests(unittest.TestCase):
@@ -47,6 +54,82 @@ class ReflectionTests(unittest.TestCase):
         )
         result = reflect(spec, outcome, previous_best=0.58, official_baseline=0.6016)
         self.assertEqual(result["decision"], "promote_to_best")
+
+
+class PolicyTests(unittest.TestCase):
+    def test_family_experiment_score_prefers_a_lower_quality_family(self):
+        state = RunState(
+            run_id="demo",
+            status="running",
+            started_at="2026-01-01T00:00:00Z",
+            baseline_primary=0.6016,
+            nodes=[
+                ExperimentNode(
+                    iteration=1,
+                    experiment_id="bpr_run",
+                    hypothesis_id="h1",
+                    family="bpr",
+                    action="explore",
+                    parameters={},
+                    status="success",
+                    metrics={"GAUC": 0.66, "nDCG@5": 0.52, "primary": 0.61},
+                ),
+            ],
+        )
+        self.assertGreater(family_experiment_score(state, "group_softmax"), family_experiment_score(state, "bpr"))
+
+    def test_next_family_hint_prefers_unseen_family_when_none_are_covered(self):
+        state = RunState(
+            run_id="demo",
+            status="running",
+            started_at="2026-01-01T00:00:00Z",
+            baseline_primary=0.6016,
+            nodes=[],
+        )
+        self.assertEqual(next_family_hint(state), "bpr")
+
+
+class OfficialConvergenceTests(unittest.TestCase):
+    """T5 / I7: one implementation, checked against the organizers' formula."""
+
+    def test_official_rule_matches_the_literal_reference_over_random_sequences(self):
+        """`official_converged` is the reference rule, not the ratchet.
+
+        The loop below is the spec written out longhand — best over the prefix
+        minus best over the prefix `patience` earlier — and it is the authority:
+        where the shipped ratchet and this ever disagree, this is what wins.
+        """
+        rng = random.Random(0)
+        epsilon, patience = 0.002, 3
+        for _ in range(2000):
+            scores = [rng.uniform(0.45, 0.75) for _ in range(rng.randint(1, 20))]
+            fired = False
+            for k in range(1, len(scores) + 1):
+                if k > patience and max(scores[:k]) - max(scores[: k - patience]) <= epsilon:
+                    fired = True
+                self.assertEqual(
+                    official_converged(scores[:k], epsilon, patience), fired, (scores, k)
+                )
+
+    def test_stagnation_is_the_only_ratchet(self):
+        """The tracker and the policy ratchet through one shared implementation."""
+        scores = [0.6015, 0.6016, 0.6018, 0.6060, 0.6061, 0.6062, 0.6063]
+        state = RunState("run", "running", "now", scores[0], meaningful_best=scores[0])
+        policy = SearchPolicy(0.002, 3, [])
+        tracker = ConvergenceTracker(epsilon=0.002, patience=3)
+        tracker.observe(scores[0])
+        for iteration, score in enumerate(scores[1:], start=1):
+            node = ExperimentNode(
+                iteration, f"e{iteration}", "h", "bpr", "explore", {}, "success",
+                {"primary": score},
+            )
+            state.nodes.append(node)
+            policy.observe_success(state, node)
+            tracker.observe(score)
+            self.assertEqual(tracker.meaningful_best, state.meaningful_best, iteration)
+            self.assertEqual(tracker.stagnant_iterations, state.stagnant_iterations, iteration)
+        self.assertEqual(scored_primaries(state), scores[1:])
+        self.assertEqual(state.stagnant_iterations, 3)
 
 
 if __name__ == "__main__":

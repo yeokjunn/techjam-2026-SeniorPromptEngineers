@@ -1,0 +1,51 @@
+{
+  "prompt": "ROLE: Researcher\nPropose one controlled ranking-loss experiment. Choose BPR or group-softmax based on evidence and the experiment history.\nUse the curated cards first. Set needs_web_search=true only if these cards cannot support the decision.\nAll parameter fields in the schema must be present; use null only for parameters irrelevant to the family.\n\nRESEARCH STATE:\n{\n  \"baseline_primary\": 0.6014695167541504,\n  \"best_metrics\": {\n    \"GAUC\": 0.6671333909034729,\n    \"nDCG@5\": 0.5358057022094727,\n    \"primary\": 0.6014695167541504,\n    \"rows\": 124909.0,\n    \"users\": 22377.0\n  },\n  \"stagnant_iterations\": 0,\n  \"experiments\": []\n}\n\nAPPROVED METHOD CARDS:\nMETHOD CARD bpr\n# Bayesian Personalized Ranking (BPR)\n\n## Primary source\n\n- Steffen Rendle, Christoph Freudenthaler, Zeno Gantner, Lars Schmidt-Thieme,\n  \"BPR: Bayesian Personalized Ranking from Implicit Feedback,\" UAI 2009.\n  https://arxiv.org/abs/1205.2618\n\n## Hypothesis\n\nThe official FM uses pointwise binary cross-entropy even though evaluation ranks\nitems within a user. BPR instead optimizes the ordering of a positive interaction\nabove a negative interaction from the same user.\n\n## Objective\n\nFor a user-specific positive item `i` and negative item `j`:\n\n```text\nd = score(user, i) - score(user, j)\nloss = softplus(-d) = -log(sigmoid(d))\n```\n\nThe derivative with respect to `d` is `sigmoid(d) - 1`.\n\n## Safe initial search space\n\n- Same-user negative sampling only\n- One or two negatives per positive\n- FM embedding dimension fixed at 16 for attribution\n- Learning rate: 0.0003, 0.0005, or 0.001\n- Batch size: 2048 or 4096 pairs\n- Resample negatives every epoch\n\n## Known failure modes\n\n- Sampling negatives from a different user misaligns the task.\n- Users with only positives or only negatives cannot form pairs and must be skipped.\n- First-order user bias and global bias cancel in score differences; this is expected.\n- Very frequent items/users can dominate without balanced sampling.\n\n\n\nMETHOD CARD group_softmax\n# Same-user Group Softmax\n\n## Primary sources\n\n- Zhe Cao, Tao Qin, Tie-Yan Liu, Ming-Feng Tsai, Hang Li, \"Learning to Rank:\n  From Pairwise Approach to Listwise Approach,\" ICML 2007.\n  https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/\n- S\u00e9bastien Jean et al., \"On Using Very Large Target Vocabulary for Neural\n  Machine Translation,\" ACL 2015 (sampled normalization reference).\n  https://aclanthology.org/P15-1001/\n\n## Hypothesis\n\nRanking one positive against several negatives from the same user provides a\ncloser approximation to the evaluated within-user list than independent\npointwise examples or a single BPR pair.\n\n## Objective\n\nFor one positive score and `K` same-user negative scores:\n\n```text\nlogits = [positive, negative_1, ..., negative_K] / temperature\nloss = -log_softmax(logits)[0]\n```\n\nThe score gradient is `softmax(logits) - one_hot(positive)`, divided by the\ntemperature.\n\n## Safe initial search space\n\n- Same-user negatives only\n- `K`: 4 or 8\n- Temperature: 0.5, 1.0, or 2.0\n- FM embedding dimension fixed at 16 for attribution\n- Learning rate: 0.0003, 0.0005, or 0.001\n- Batch size: 512, 1024, or 2048 groups\n\n## Known failure modes\n\n- Groups with duplicate negative rows reduce effective list size.\n- Users without both labels must be skipped.\n- Unstable exponentials require max-shifted softmax.\n- Increasing `K` changes compute per step and must be reported.\n\n\n",
+  "result": {
+    "data": {
+      "action": "explore",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Same-user Group Softmax",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        },
+        {
+          "method_card_id": "group_softmax",
+          "title": "On Using Very Large Target Vocabulary for Neural Machine Translation",
+          "url": "https://aclanthology.org/P15-1001/"
+        }
+      ],
+      "family": "group_softmax",
+      "hypothesis": "Same-user group-softmax with 4 negatives per positive will better align FM training with within-user long_view ranking than pointwise BCE by directly optimizing each positive against a small same-user candidate list.",
+      "hypothesis_id": "gs_init_k4_t1_lr5e4",
+      "needs_web_search": false,
+      "parameters": {
+        "batch_size": 1024,
+        "epochs": 30,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 4,
+        "negatives_per_positive": null,
+        "patience": 3,
+        "seed": 20240829,
+        "temperature": 1.0
+      },
+      "parent_experiment": null,
+      "rationale": "No ranking-loss experiments have been run yet. Group-softmax is a strong first exploration because the validation task is within-user ranking and the method card states that ranking one positive against several same-user negatives more closely approximates the evaluated list than independent pointwise examples or single-pair BPR. Use conservative mid-range hyperparameters from the approved safe search space for a controlled initial run."
+    },
+    "latency_seconds": 9.712541799999599,
+    "model": "gpt-5.5-2026-04-23",
+    "response_id": "resp_0995b798c6f4eee6016a926520933487d09f6acf98ba0e7c6f",
+    "retries": 0,
+    "role": "researcher",
+    "sources": [],
+    "tool_calls": [],
+    "usage": {
+      "cached_tokens": 0,
+      "input_tokens": 1225,
+      "output_tokens": 546,
+      "total_tokens": 1771,
+      "web_search_calls": 0
+    }
+  }
+}

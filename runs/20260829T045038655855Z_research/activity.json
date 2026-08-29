@@ -1,0 +1,28 @@
+{
+  "agent_note": {
+    "best_experiment": "official_fm_seed0",
+    "decision": "Research run completed.",
+    "stop_reason": "controller_error"
+  },
+  "attempt": 1,
+  "change_summary": null,
+  "completed_at": "2026-08-29T04:52:21.435048+00:00",
+  "error": null,
+  "event_id": "34d523f1d0984db789f2d80d6c30f5f1",
+  "experiment_id": "official_fm_seed0",
+  "iteration": 1,
+  "metrics": {
+    "GAUC": 0.6671333909034729,
+    "nDCG@5": 0.5358057022094727,
+    "primary": 0.6014695167541504,
+    "rows": 124909.0,
+    "users": 22377.0
+  },
+  "objective": "Mark the research run complete and expose its stop reason.",
+  "repair": null,
+  "role": null,
+  "stage": "completed",
+  "started_at": "2026-08-29T04:52:21.428601+00:00",
+  "status": "completed",
+  "updated_at": "2026-08-29T04:52:21.435048+00:00"
+}

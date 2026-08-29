@@ -29,16 +29,18 @@ is not the working task definition. Follow the repeated conventions above and
 
 ## Never access hidden judge truth
 
-- Treat `data/judge/**` as judge-owned and opaque.
+- `data/judge/**` is not part of this repository; if such a path appears, treat it
+  as judge-owned and opaque.
 - Do not open, print, parse, search, summarize, copy, rename, edit, or delete any
   judge truth, answer key, hidden label, or similarly named file.
 - In particular, never access files matching `*truth*`, `*label*`, `*answer*`, or
   `*ground_truth*` under `data/judge/`.
 - Do not use hidden-test results for feature selection, hyperparameter tuning,
   early stopping, checkpoint selection, ensembling, or debugging.
-- A label-free `data/judge/test.csv` may be read only when the user explicitly
-  asks to generate or validate final test predictions. It must never influence
-  model selection.
+- The real test surface is the 2022-04-29 through 2022-05-08 segment of
+  `log_standard_4_22_to_5_08_pure.csv`. The final Gate may automatically read
+  only its metadata and score the validation-best checkpoint once. This is not a
+  manual intervention and must never influence model selection.
 - If hidden labels become visible accidentally, stop and tell the user. Do not
   incorporate any information learned from them.
 

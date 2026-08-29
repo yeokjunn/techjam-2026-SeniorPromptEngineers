@@ -2,7 +2,9 @@
 
 ## Summary
 
-The whole agent is **not built yet**. The repository currently contains the trusted baseline harness: safe data loading, official evaluation, isolated execution, logging, budgets, convergence, and best-checkpoint tracking.
+The end-to-end agent is implemented: role-based proposing/critique/build/repair,
+trusted subprocess training and evaluation, persistence/resume, a final gate, and
+a read-only dashboard. Remaining limitations are tracked in the README.
 
 Build one role-based research agent first:
 
@@ -30,7 +32,8 @@ Use one shared memory and one OpenAI client. Researcher, critic, builder, and de
   - `DebugDecision`
 - Record response ID, model, input/output/total tokens, cached tokens, latency, tool calls, and retry count.
 - Use stateless calls built from the persisted research memory instead of relying on conversational state.
-- Retry transient API failures twice with bounded exponential backoff.
+- Retry transient API failures for 5 total attempts with 2–60 second bounded
+  exponential backoff, honoring numeric `Retry-After` values.
 - Use the Responses API web-search tool only when the curated catalog has an evidence gap. This follows current [official OpenAI Responses API guidance](https://developers.openai.com/api/reference/cli/resources/beta/subresources/responses).
 
 ### 2. Curated research agenda and policy
@@ -44,7 +47,8 @@ The first autonomous run must:
 3. Attempt at least one group-softmax candidate.
 4. After both families are covered, explore variants from the better family.
 5. Replicate any improvement greater than `0.002` using seeds 1 and 2.
-6. Stop after three non-meaningful successful iterations, eight development candidates, or six hours.
+6. Stop after three non-meaningful successful iterations, 50 scored candidates,
+   50 training attempts, 100 proposals, or six hours.
 
 The researcher chooses:
 
@@ -72,6 +76,7 @@ Candidate code receives trusted train/validation structures and parameters. It r
 ```python
 CandidateOutput(
     validation_scores: np.ndarray,
+    test_scores: np.ndarray | None,
     checkpoint_state: dict[str, np.ndarray],
     training_trace: list[dict],
     diagnostics: dict,
@@ -144,7 +149,7 @@ Keep `ConfigProposer` for deterministic baseline and offline tests.
 
 Provide two commands:
 
-```powershell
+```bash
 # Deterministic existing baseline
 python -m src.agent.controller --config configs/baseline.json
 
@@ -152,7 +157,9 @@ python -m src.agent.controller --config configs/baseline.json
 python -m src.agent.controller --config configs/ranking_losses.json
 ```
 
-The research configuration defaults to eight candidate iterations, two debugger repairs per candidate, 150,000 total LLM tokens, and the official six-hour ceiling.
+The research configuration defaults to 50 candidate iterations/training attempts,
+100 proposals, two debugger repairs per candidate, 150,000 total LLM tokens, and
+the official six-hour ceiling.
 
 ## Test Plan
 

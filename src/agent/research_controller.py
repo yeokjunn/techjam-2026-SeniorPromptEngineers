@@ -642,14 +642,14 @@ class ResearchLoop:
                     "researcher",
                     iteration,
                     lambda fb: self.roles.research(
-                        self.state, iteration, required_family(self.state)
+                        self.state, iteration, required_family(self.state), feedback=fb
                     ),
                 )
                 preflight = self._role_call(
                     "critic_preflight",
                     iteration,
                     lambda fb: self.roles.critic_preflight(
-                        self.state, iteration, decision
+                        self.state, iteration, decision, feedback=fb
                     ),
                 )
                 self.state.iteration_count += 1
@@ -660,7 +660,9 @@ class ResearchLoop:
                 manifest = self._role_call(
                     "builder",
                     iteration,
-                    lambda fb: self.roles.build(self.state, iteration, decision),
+                    lambda fb: self.roles.build(
+                        self.state, iteration, decision, feedback=fb
+                    ),
                 )
                 self._execute(iteration, decision, preflight, manifest)
                 self.consecutive_harness_errors = 0

@@ -135,10 +135,38 @@ class OfflineSmokeTests(unittest.TestCase):
         self.assertIsInstance(provider, ScriptedProvider)
         self.assertEqual(len(provider.responses), 5)
 
+    def test_scripted_provider_round_trips_a_non_empty_script(self):
+        provider = ScriptedProvider([
+            {"value": 1, "_usage": {"total_tokens": 7}},
+            {"value": 2, "_usage": {"total_tokens": 11}},
+        ])
+        first = provider.complete(role="critic")
+        second = provider.complete(role="builder")
+        self.assertEqual((first.data, first.usage.total_tokens), ({"value": 1}, 7))
+        self.assertEqual((second.data, second.usage.total_tokens), ({"value": 2}, 11))
+
+    def test_relative_script_path_resolves_against_the_repo_root(self):
+        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        self.assertFalse(Path(config["llm"]["script_path"]).is_absolute())
+        self.assertEqual(len(build_provider(config).responses), 5)
+
     @pytest.mark.slow
     @unittest.skipUnless(DATA_FILE.is_file(), "KuaiRand-Pure dataset is not extracted")
     def test_scripted_loop_scores_one_real_bpr_iteration(self):
-        provider = ScriptedProvider(copy.deepcopy(_load_script()))
+        script = copy.deepcopy(_load_script())
+        # One bounded BPR batch keeps the acceptance test below 60 seconds; the
+        # committed offline config retains the full three-epoch ~0.602 run.
+        script[0]["parameters"]["epochs"] = 1
+        script[2]["parameters"]["epochs"] = 1
+        script[2]["code"] = script[2]["code"].replace(
+            "range(0, len(order), batch_size)",
+            "range(0, min(len(order), batch_size), batch_size)",
+        )
+        script[2]["code"] = script[2]["code"].replace(
+            "sample_bpr_pairs(context.train_users, context.train_y, rng, per_positive)",
+            "sample_bpr_pairs(context.train_users[:1000], context.train_y[:1000], rng, per_positive)",
+        )
+        provider = ScriptedProvider(script)
         baseline = {
             "best": {
                 "experiment_id": "official_fm_seed0",

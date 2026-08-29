@@ -143,9 +143,10 @@ class StubTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.assertIsNone(render_reports(Path(directory)))
 
-    def test_history_features_are_not_implemented_yet(self):
-        with self.assertRaises(NotImplementedError):
-            build_features([], {})
+    def test_history_features_return_one_column_per_enabled_group(self):
+        train = [(20220408, "u", "v", "a", "1", 1.0, 1)]
+        spec = {"split": "train", "history_rows": {"train": train}}
+        self.assertEqual(build_features(np.zeros((1, 5)), spec).shape, (1, 6))
 
 
 class ResearchConfigTests(unittest.TestCase):

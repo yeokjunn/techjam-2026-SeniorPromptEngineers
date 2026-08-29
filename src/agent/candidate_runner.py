@@ -15,7 +15,31 @@ from .safety import (
     validate_identifier,
     validate_source,
 )
+from src.evaluation.official import SANITY_CEILING, SANITY_FLOOR
+
 from .types import CandidateManifest, ExperimentOutcome
+
+
+# The candidate environment is built from scratch, never copied from
+# os.environ (.env is loaded there by the LLM layer): this allowlist is what
+# keeps provider keys — and everything else — out of LLM-written subprocesses.
+PASSTHROUGH_KEYS = (
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "SYSTEMROOT",
+    "SystemRoot",
+    "COMSPEC",
+    "WINDIR",
+)
+THREAD_CAP_KEYS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+)
 
 
 class CandidateWorkspace:
@@ -55,10 +79,28 @@ class CandidateExecutor:
         self.test_timeout_seconds = int(test_timeout_seconds)
         self.max_output_chars = int(max_output_chars)
 
-    def _environment(self) -> dict[str, str]:
-        environment = dict(os.environ)
-        current = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = str(self.repo_root) + (os.pathsep + current if current else "")
+    def _environment(self, workspace: CandidateWorkspace) -> dict[str, str]:
+        """Minimal scratch environment for candidate subprocesses (review C3)."""
+        environment = {
+            name: os.environ[name]
+            for name in PASSTHROUGH_KEYS
+            if name in os.environ
+        }
+        environment.update(
+            {
+                "PYTHONPATH": str(self.repo_root),
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "HOME": str(workspace.directory),
+                "TMPDIR": str(workspace.directory),
+                "TEMP": str(workspace.directory),
+                "TMP": str(workspace.directory),
+                "KUAIRAND_DATA_DIR": str(self.data_dir),
+                **{name: "1" for name in THREAD_CAP_KEYS},
+            }
+        )
+        assert not any(
+            key.startswith(("OPENAI_", "ANTHROPIC_")) for key in environment
+        ), "provider keys must never reach candidate subprocesses"
         return environment
 
     def test(self, workspace: CandidateWorkspace) -> tuple[bool, str]:
@@ -68,7 +110,7 @@ class CandidateExecutor:
             completed = subprocess.run(
                 [sys.executable, "-m", "unittest", "-v", "test_candidate.py"],
                 cwd=workspace.directory,
-                env=self._environment(),
+                env=self._environment(workspace),
                 capture_output=True,
                 text=True,
                 timeout=self.test_timeout_seconds,
@@ -117,8 +159,8 @@ class CandidateExecutor:
         try:
             completed = subprocess.run(
                 command,
-                cwd=self.repo_root,
-                env=self._environment(),
+                cwd=workspace.directory,
+                env=self._environment(workspace),
                 capture_output=True,
                 text=True,
                 timeout=self.experiment_timeout_seconds,
@@ -137,11 +179,49 @@ class CandidateExecutor:
                     stdout_path=str(stdout_path.relative_to(self.repo_root)),
                     stderr_path=str(stderr_path.relative_to(self.repo_root)),
                     command=command,
+                    failure_class="crash",
                 )
             payload = json.loads(result_path.read_text(encoding="utf-8"))
             metrics = {key: float(value) for key, value in payload["metrics"].items()}
             if any(not math.isfinite(value) for value in metrics.values()):
                 raise ValueError("Worker returned a non-finite trusted metric.")
+            sanity_class = payload.get("sanity_class")
+            if sanity_class is not None:
+                # A leaked 0.99 or a learned-nothing 0.40: keep the number in
+                # the ledger, never promote it, and not worth a repair round.
+                return ExperimentOutcome(
+                    status="failed",
+                    metrics=metrics,
+                    duration_seconds=duration,
+                    error=(
+                        f"Validation primary {metrics['primary']:.6f} is outside "
+                        f"the sanity band [{SANITY_FLOOR}, {SANITY_CEILING}]."
+                    ),
+                    recovery="Rejected without promotion; previous best retained.",
+                    stdout_path=str(stdout_path.relative_to(self.repo_root)),
+                    stderr_path=str(stderr_path.relative_to(self.repo_root)),
+                    command=command,
+                    failure_class=sanity_class,
+                )
+            test_scores_status = str(payload.get("test_scores_status", "not_required"))
+            if test_scores_status not in ("ok", "not_required"):
+                # Keep metrics so the ledger retains the number, but never
+                # promote: observe_success only runs for status == "success".
+                return ExperimentOutcome(
+                    status="failed",
+                    metrics=metrics,
+                    duration_seconds=duration,
+                    error=(
+                        "CandidateOutput.test_scores must be a finite 1-D float "
+                        "array of length 170588 (one score per "
+                        "data.load()['test'] row, same order)."
+                    ),
+                    recovery="Rejected before promotion; the previous best is intact.",
+                    stdout_path=str(stdout_path.relative_to(self.repo_root)),
+                    stderr_path=str(stderr_path.relative_to(self.repo_root)),
+                    command=command,
+                    failure_class="missing_test_scores",
+                )
             return ExperimentOutcome(
                 status="success",
                 metrics=metrics,
@@ -152,6 +232,7 @@ class CandidateExecutor:
                 stdout_path=str(stdout_path.relative_to(self.repo_root)),
                 stderr_path=str(stderr_path.relative_to(self.repo_root)),
                 command=command,
+                test_scores_path=payload.get("test_scores_path"),
             )
         except subprocess.TimeoutExpired:
             return ExperimentOutcome(
@@ -163,6 +244,7 @@ class CandidateExecutor:
                 stdout_path=str(stdout_path.relative_to(self.repo_root)),
                 stderr_path=str(stderr_path.relative_to(self.repo_root)),
                 command=command,
+                failure_class="timeout",
             )
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
             return ExperimentOutcome(
@@ -172,6 +254,7 @@ class CandidateExecutor:
                 error=f"Invalid candidate result: {exc}",
                 recovery="Result was rejected; previous best remains intact.",
                 command=command,
+                failure_class="bad_output",
             )
 
 

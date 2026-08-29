@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..evaluation.gate import run_gate
+from ..evaluation.official import BASELINE_TOLERANCE, within_baseline_tolerance
 from .audit import ResearchAudit
 from .candidate_runner import CandidateExecutor, CandidateWorkspace, repaired_manifest
 from .catalog import MethodCatalog
@@ -65,35 +66,116 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _latest_valid_baseline(run_root: Path, threshold: float) -> dict[str, Any] | None:
-    candidates: list[tuple[float, dict[str, Any]]] = []
-    for path in run_root.glob("*/summary.json"):
+def _baseline_skip_reason(
+    summary: dict[str, Any], run_dir: Path, threshold: float, revision: str
+) -> str | None:
+    """The first admission check a candidate baseline fails, or ``None`` if it passes.
+
+    The checks run in the review's order — identity, then score, then provenance,
+    then the artifact — and only the *first* failure is reported, so the reason an
+    operator reads is the one they should act on rather than a pile of
+    consequences. ``revision`` is ``controller._source_manifest()["revision"]``,
+    the digest over every ``src/**/*.py``: a summary produced by code that is no
+    longer on disk describes an experiment nobody can re-run, and adopting its
+    number silently rebases every later comparison on a phantom (C5).
+    """
+    best = summary.get("best") or {}
+    if best.get("experiment_id") != "official_fm_seed0":
+        return "experiment_id_mismatch"
+    primary = float((best.get("metrics") or {}).get("primary", float("-inf")))
+    # I11, B's predicate: two-sided. ``threshold`` keeps its name but now carries
+    # the official *centre*, so a leaked 0.85 is as unacceptable as a 0.40 — under
+    # the old one-sided lower-bound gate it was adopted as a baseline.
+    if not within_baseline_tolerance(primary, threshold):
+        return "outside_tolerance"
+    manifest_path = run_dir / "source_manifest.json"
+    if not manifest_path.is_file():
+        return "no_source_manifest"
+    try:
+        recorded = _load_json(manifest_path).get("revision")
+    except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
+        # A manifest that cannot be read yields no revision to compare, which is
+        # the same operational fact as having none — and is reported as such
+        # rather than as an unreadable *summary*, which this is not.
+        # ``AttributeError`` is the shape ``[]`` or ``"x"`` takes: the file parses
+        # but is not a mapping, so ``.get`` is not a method it has.
+        return "no_source_manifest"
+    if recorded != revision:
+        return "revision_mismatch"
+    artifact = best.get("artifact_path")
+    # The committed baseline's ``artifact_path`` is a Windows path from another
+    # machine. It is not absolute here and not a real relative path either, so
+    # ``_resolve_repo_path`` folds it under the repo root and it does not exist —
+    # which is exactly the answer wanted: the file the gate would submit is absent.
+    if not artifact or not _resolve_repo_path(str(artifact)).is_file():
+        return "artifact_missing"
+    return None
+
+
+def _latest_valid_baseline(
+    run_root: Path, threshold: float, revision: str
+) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
+    """Pick an adoptable baseline summary and report every one that was not.
+
+    Returns ``(summary | None, skips)`` where each skip is
+    ``{"path": str, "reason": str}``. Nothing is discarded silently: the old bare
+    ``except … continue`` made a corrupt summary indistinguishable from "no
+    baseline exists" (I12), so an unreadable file is now a recorded outcome.
+
+    Ordering is by **run id** (``path.parent.name``), not by the filesystem's
+    modification timestamps. Run ids are UTC timestamps, so lexicographic order
+    is chronological and survives a clone, a copy or a checkout — each of which
+    rewrites those timestamps and so used to reorder the candidates arbitrarily.
+    """
+    accepted: list[tuple[str, dict[str, Any]]] = []
+    skipped: list[dict[str, str]] = []
+    for path in sorted(run_root.glob("*/summary.json")):
         try:
             summary = _load_json(path)
-            best = summary.get("best") or {}
-            primary = float((best.get("metrics") or {}).get("primary", float("-inf")))
-            if best.get("experiment_id") == "official_fm_seed0" and primary >= threshold:
-                candidates.append((path.stat().st_mtime, {**summary, "summary_path": str(path)}))
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            reason = _baseline_skip_reason(summary, path.parent, threshold, revision)
+        except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
+            # ``AttributeError`` covers every shape a summary can take that
+            # *parses* but is not the mapping the readers assume — the whole file
+            # being ``[]``, or ``best``, ``best.metrics`` being a list or a
+            # string. Each of those makes a ``.get`` call raise, and every one of
+            # those calls is inside ``_baseline_skip_reason``'s narrow parse of a
+            # single candidate, so nothing else can be swallowed here. Without it
+            # one malformed file under ``runs/`` ends every research run at
+            # construction instead of costing that one candidate.
+            reason = "unreadable_summary"
+        if reason is not None:
+            skipped.append({"path": str(path), "reason": reason})
             continue
-    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+        accepted.append((path.parent.name, {**summary, "summary_path": str(path)}))
+    best = max(accepted, key=lambda item: item[0])[1] if accepted else None
+    return best, skipped
 
 
-def _ensure_baseline(config: dict[str, Any]) -> dict[str, Any]:
+def _ensure_baseline(
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
     run_root = _resolve_repo_path(config.get("run_root", "runs"))
     official = float(config["official_validation_baseline"])
-    baseline = _latest_valid_baseline(run_root, official - 0.002)
+    revision = str(_source_manifest()["revision"])
+    baseline, skipped = _latest_valid_baseline(run_root, official, revision)
+    # One line per skip, to stdout, for the operator watching the run start: the
+    # JSON record is for the audit, this is for the human deciding whether a
+    # six-hour run is about to be spent re-training a baseline they thought was
+    # already on disk.
+    for record in skipped:
+        print(f"Baseline summary skipped: {record['path']} ({record['reason']})")
     if baseline is not None:
-        return baseline
+        return baseline, skipped
     baseline_config = _resolve_repo_path(config.get("baseline_config", "configs/baseline.json"))
     run_dir = run_agent(baseline_config)
     summary = _load_json(run_dir / "summary.json")
     primary = float(summary["best"]["metrics"]["primary"])
-    if primary < official - 0.002:
+    if not within_baseline_tolerance(primary, official):
         raise RuntimeError(
-            f"Official FM baseline gate failed: {primary:.4f} < {official - 0.002:.4f}"
+            f"Official FM baseline gate failed: {primary:.4f} outside "
+            f"[{official - BASELINE_TOLERANCE:.4f}, {official + BASELINE_TOLERANCE:.4f}]"
         )
-    return {**summary, "summary_path": str(run_dir / "summary.json")}
+    return {**summary, "summary_path": str(run_dir / "summary.json")}, skipped
 
 
 class ResearchLoop:
@@ -126,7 +208,14 @@ class ResearchLoop:
         self.convergence = config["convergence"]
         llm_config = config["llm"]
         self.provider = provider or build_provider(config)
-        self.baseline_summary = baseline_summary or _ensure_baseline(config)
+        # An injected baseline is the caller's own and was never selected from
+        # ``runs/``, so it has no skip list — `[]` says "nothing was rejected",
+        # which is true, rather than "nothing was examined", which is not
+        # something ``baseline_selection.json`` is written for on that path.
+        if baseline_summary is None:
+            self.baseline_summary, baseline_skips = _ensure_baseline(config)
+        else:
+            self.baseline_summary, baseline_skips = baseline_summary, []
         baseline_primary = float(self.baseline_summary["best"]["metrics"]["primary"])
 
         if resume_dir is None:
@@ -146,6 +235,17 @@ class ResearchLoop:
             shutil.copy2(config_path, self.run_dir / "run_config.json")
             self.audit.write_json_atomic(self.run_dir / "source_manifest.json", _source_manifest())
             self.audit.write_json_atomic(self.run_dir / "baseline_gate.json", self.baseline_summary)
+            # Which summary this run is measured against, and every summary that
+            # was considered and rejected, with the reason (C5 / I12). Written on
+            # a new run only: a resume adopts nothing and re-selects nothing, so
+            # the record the original run wrote stays the truthful one.
+            self.audit.write_json_atomic(
+                self.run_dir / "baseline_selection.json",
+                {
+                    "selected": self.baseline_summary.get("summary_path"),
+                    "skipped": baseline_skips,
+                },
+            )
             self.audit.write_json_atomic(self.run_dir / "interventions.json", [])
         else:
             self.run_dir = resume_dir.resolve()

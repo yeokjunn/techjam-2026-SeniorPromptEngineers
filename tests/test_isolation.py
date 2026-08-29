@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import inspect
+import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from src.agent.candidate_runner import CandidateExecutor, CandidateWorkspace
 from src.evaluation.official import (
     LABEL_PLACEHOLDER,
     TEST_ROWS,
@@ -113,6 +119,70 @@ class TestSplitLoaderTests(unittest.TestCase):
         self.assertEqual(len(split.rows), len(kit_rows))
         self.assertEqual(
             [row[:6] for row in split.rows], [row[:6] for row in kit_rows]
+        )
+
+
+class CandidateEnvironmentTests(unittest.TestCase):
+    def _fixture(self, root: Path):
+        workspace = CandidateWorkspace(root / "generated", "run0001", 1, "cand01")
+        executor = CandidateExecutor(
+            repo_root=REPO_ROOT,
+            data_dir=root / "data_dir",
+            experiment_timeout_seconds=60,
+            test_timeout_seconds=60,
+        )
+        return workspace, executor
+
+    def test_candidate_environment_drops_provider_keys(self):
+        thread_caps = (
+            "OMP_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+            "VECLIB_MAXIMUM_THREADS",
+        )
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "sentinel", "ANTHROPIC_API_KEY": "sentinel"},
+        ):
+            workspace, executor = self._fixture(Path(tmp))
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os,json;print(json.dumps(dict(os.environ)))",
+                ],
+                env=executor._environment(workspace),
+                cwd=workspace.directory,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            seen = json.loads(completed.stdout)
+        self.assertFalse(
+            any(key.startswith(("OPENAI_", "ANTHROPIC_")) for key in seen)
+        )
+        self.assertNotIn("sentinel", json.dumps(seen))
+        self.assertEqual(seen["PYTHONDONTWRITEBYTECODE"], "1")
+        for name in thread_caps:
+            self.assertEqual(seen[name], "1")
+        self.assertEqual(seen["PYTHONPATH"], str(REPO_ROOT))
+        self.assertEqual(seen["KUAIRAND_DATA_DIR"], str(Path(tmp) / "data_dir"))
+        self.assertEqual(seen["HOME"], str(workspace.directory))
+
+    def test_candidate_subprocess_cwd_is_the_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, executor = self._fixture(Path(tmp))
+            completed = subprocess.run(
+                [sys.executable, "-c", "import os;print(os.getcwd())"],
+                env=executor._environment(workspace),
+                cwd=workspace.directory,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        self.assertEqual(
+            Path(completed.stdout.strip()).resolve(), workspace.directory.resolve()
         )
 
 

@@ -18,6 +18,28 @@ from .safety import (
 from .types import CandidateManifest, ExperimentOutcome
 
 
+# The candidate environment is built from scratch, never copied from
+# os.environ (.env is loaded there by the LLM layer): this allowlist is what
+# keeps provider keys — and everything else — out of LLM-written subprocesses.
+PASSTHROUGH_KEYS = (
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "SYSTEMROOT",
+    "SystemRoot",
+    "COMSPEC",
+    "WINDIR",
+)
+THREAD_CAP_KEYS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+)
+
+
 class CandidateWorkspace:
     def __init__(self, generated_root: Path, run_id: str, iteration: int, candidate_id: str):
         validate_identifier(run_id, "run ID")
@@ -55,10 +77,28 @@ class CandidateExecutor:
         self.test_timeout_seconds = int(test_timeout_seconds)
         self.max_output_chars = int(max_output_chars)
 
-    def _environment(self) -> dict[str, str]:
-        environment = dict(os.environ)
-        current = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = str(self.repo_root) + (os.pathsep + current if current else "")
+    def _environment(self, workspace: CandidateWorkspace) -> dict[str, str]:
+        """Minimal scratch environment for candidate subprocesses (review C3)."""
+        environment = {
+            name: os.environ[name]
+            for name in PASSTHROUGH_KEYS
+            if name in os.environ
+        }
+        environment.update(
+            {
+                "PYTHONPATH": str(self.repo_root),
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "HOME": str(workspace.directory),
+                "TMPDIR": str(workspace.directory),
+                "TEMP": str(workspace.directory),
+                "TMP": str(workspace.directory),
+                "KUAIRAND_DATA_DIR": str(self.data_dir),
+                **{name: "1" for name in THREAD_CAP_KEYS},
+            }
+        )
+        assert not any(
+            key.startswith(("OPENAI_", "ANTHROPIC_")) for key in environment
+        ), "provider keys must never reach candidate subprocesses"
         return environment
 
     def test(self, workspace: CandidateWorkspace) -> tuple[bool, str]:
@@ -68,7 +108,7 @@ class CandidateExecutor:
             completed = subprocess.run(
                 [sys.executable, "-m", "unittest", "-v", "test_candidate.py"],
                 cwd=workspace.directory,
-                env=self._environment(),
+                env=self._environment(workspace),
                 capture_output=True,
                 text=True,
                 timeout=self.test_timeout_seconds,
@@ -117,8 +157,8 @@ class CandidateExecutor:
         try:
             completed = subprocess.run(
                 command,
-                cwd=self.repo_root,
-                env=self._environment(),
+                cwd=workspace.directory,
+                env=self._environment(workspace),
                 capture_output=True,
                 text=True,
                 timeout=self.experiment_timeout_seconds,

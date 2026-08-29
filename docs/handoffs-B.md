@@ -47,7 +47,7 @@ Status: **T1–T8 complete on `feat/b-gate-contracts`** (task-paired commits, su
    - `.meta` — `(row_id, user_id, video_id)` per row, exactly `data.load()['test']` order (0-based).
    - `.rows` — kit-shaped 7-tuples `(date, user_id, video_id, author_id, tab, duration_ms, LABEL_PLACEHOLDER)`; **no label column is read anywhere** (source-tested).
 2. `KUAIRAND_DATA_DIR` is in the minimal candidate environment (T4) — your `features.py` fallback entry.
-3. **I still owe you** the `restricted_builtins()` wire-in: two lines in `_load_candidate` (`run_candidate.py:42-52`), landing the day you announce your T2. Untouched until then, per plan.
+3. **I still owe you** the `restricted_builtins()` wire-in: two lines in `_load_candidate` (`run_candidate.py:60`; the plan's `:42-52` predates B's T1/T2 edits above it), landing the day you announce your T2. Untouched until then, per plan.
 4. After your `safety.py` `FORBIDDEN_TEXT` merge, I re-run `pytest` (nothing I wrote is `validate_source`-validated, so no conflict expected).
 
 ---

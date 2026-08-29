@@ -17,15 +17,19 @@ responsibility rather than the gate's:
   recorder below therefore accepts keyword arguments only, and the loop runs
   from a scratch directory so that only repo-root resolution can pass.
 
-T10 ships as four sibling PRs; this file carries step 1's two tests and step 4's
-one test (`RegistryDrivenPolicyTests`, review I-7 — `policy.py` reading Owner E's
-family registry instead of its own literals). Steps 2 and 3 append theirs here.
+T10 ships as four sibling PRs; this file carries step 1's two tests, step 4's one
+test (`RegistryDrivenPolicyTests`, review I-7 — `policy.py` reading Owner E's
+family registry instead of its own literals) and step 2's one test
+(`DataCardWiringTests`, review I-4 — the data card rendered at run start for
+Owner C's Researcher prompt). Step 3 appends its own here.
 """
 
 from __future__ import annotations
 
 import contextlib
+import io
 import json
+import shutil
 import tempfile
 import unittest
 from dataclasses import dataclass, field
@@ -67,8 +71,8 @@ def wired_loop():
     """A ``ResearchLoop`` parked at the end of ``run()``, from a foreign cwd.
 
     ``max_wall_clock_seconds: 0`` trips the first loop-top budget check
-    (``research_controller.py:458``), so the loop body never executes and no
-    model call is made: what the test observes is only what ``run()`` does
+    (``research_controller.py:754-760``), so the loop body never executes and
+    no model call is made: what the test observes is only what ``run()`` does
     *after* the loop. The working directory is moved out of the repo for the
     duration of ``run()`` because a path resolved against the cwd is the I-1 bug.
     """
@@ -508,6 +512,234 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
         # No history, no steer — unchanged, and the reason `required_family`
         # cannot simply return `sorted(missing)[0]` unconditionally.
         self.assertIsNone(policy.required_family(successful_state()))
+
+
+# --------------------------------------------------------------------------- #
+# T10 step 2 · I-4 — the data card the Researcher's prompt prefix reads
+# --------------------------------------------------------------------------- #
+
+# What the patched renderer returns: the real card's first line, so the fixture
+# is recognisable as a card, plus one fact, so equality can be exact.
+FAKE_CARD = "# Dataset Profile\n\nrows: 3\n"
+
+
+class CardRecorder:
+    """A ``render_data_card`` double recording every directory it is handed."""
+
+    def __init__(self, card: str = FAKE_CARD) -> None:
+        self.card = card
+        self.calls: list[Path] = []
+
+    def __call__(self, data_dir: Path) -> str:
+        self.calls.append(data_dir)
+        return self.card
+
+
+def card_config(
+    root: Path, data_dir: Path, run_root: Path, **overrides: Any
+) -> dict[str, Any]:
+    """``wired_loop``'s configuration, with the data directory under test control.
+
+    The renderer is the subject here rather than the gate, so the data directory
+    is a parameter: a directory holding none of ``datacard.py``'s required CSVs
+    is what makes the *real* renderer return the empty string.
+    """
+    return {
+        "mode": "research",
+        "name": "data-card",
+        "data_dir": str(data_dir),
+        "run_root": str(run_root),
+        "generated_root": str(root / "generated"),
+        "method_catalog": str(REPO_ROOT / "research" / "methods"),
+        "official_validation_baseline": 0.6016,
+        "llm": {"max_total_tokens": 1000},
+        "budgets": {
+            "max_iterations": 1,
+            "max_wall_clock_seconds": 0,
+            "experiment_timeout_seconds": 10,
+            "test_timeout_seconds": 10,
+            "max_debug_repairs": 2,
+        },
+        "convergence": {"epsilon": 0.002, "patience": 3},
+        "replication_seeds": [1, 2],
+        **overrides,
+    }
+
+
+def card_loop(
+    config: dict[str, Any], config_path: Path, resume_dir: Path | None = None
+) -> ResearchLoop:
+    """Construct a loop from ``config``, freezing it at ``config_path`` first.
+
+    A resume re-reads the frozen copy and refuses a config that differs, so the
+    same call writes the same bytes and the resume branch is reachable.
+    """
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    return ResearchLoop(
+        config,
+        config_path,
+        provider=UnusedProvider(),
+        resume_dir=resume_dir,
+        baseline_summary=BASELINE_SUMMARY,
+    )
+
+
+class DataCardWiringTests(unittest.TestCase):
+    """Run start renders the data card, writes it, and records where it went."""
+
+    def setUp(self) -> None:
+        # The render is memoized per data directory for the life of the process
+        # (`research_controller.py:38-52`), so a test that patches the renderer has
+        # to start from an empty cache — otherwise a call the loop *should* make
+        # is served from the cache and "was it called?" stops meaning anything —
+        # and must not leave its fake card behind for the next test that builds
+        # a loop against the same directory.
+        research_controller._cached_data_card.cache_clear()
+        self.addCleanup(research_controller._cached_data_card.cache_clear)
+
+    def test_data_card_is_written_and_skipped_when_empty(self):
+        """I-4: `<run_dir>/DATA_CARD.md` and `RunState.data_card_path`, or neither.
+
+        Owner C's Researcher prompt already appends the card's text when
+        `state.data_card_path` names a readable file (`roles.py:58-71, 85-86`);
+        Owner D already renders it (`datacard.py:42`). Nothing rendered the card
+        or set the path, so the wiring — this — is the whole of the feature, and
+        an empty card must leave *no* trace rather than an empty file the prompt
+        would carry as a heading with nothing under it.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_dir = root / "data"
+            data_dir.mkdir()
+            config = card_config(root, data_dir, root / "runs")
+            config_path = root / "config.json"
+
+            recorder = CardRecorder()
+            with patch.object(research_controller, "render_data_card", recorder):
+                with self.subTest("the card is rendered, written, and pointed at"):
+                    loop = card_loop(config, config_path)
+                    self.assertEqual(
+                        (loop.run_dir / "DATA_CARD.md").read_text(encoding="utf-8"),
+                        FAKE_CARD,
+                    )
+                    self.assertEqual(recorder.calls, [loop.data_dir])
+                    # The state points at the file that was just written: this
+                    # is the exact round trip `roles.py:67` performs.
+                    self.assertIsNotNone(loop.state.data_card_path)
+                    self.assertEqual(
+                        Path(loop.state.data_card_path).read_text(encoding="utf-8"),
+                        FAKE_CARD,
+                    )
+                    # ... and it reaches the file a resume reads back.
+                    loop._save()
+                    saved = json.loads(
+                        (loop.run_dir / "state.json").read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(saved["data_card_path"], loop.state.data_card_path)
+
+                with self.subTest("a second loop re-uses the memoized render"):
+                    # Deliberately *not* clearing the cache: the real renderer
+                    # takes seconds on the real dataset and the suite builds
+                    # ~25 loops against it, so the second construction must
+                    # write the same card without scanning the data again.
+                    twin = card_loop(config, config_path)
+                    self.assertEqual(len(recorder.calls), 1)
+                    self.assertEqual(
+                        (twin.run_dir / "DATA_CARD.md").read_text(encoding="utf-8"),
+                        FAKE_CARD,
+                    )
+                    self.assertEqual(
+                        Path(twin.state.data_card_path).read_text(encoding="utf-8"),
+                        FAKE_CARD,
+                    )
+
+            with self.subTest("a resume adopts the stored path and renders nothing"):
+                # Cache cleared first, so a resume that wrongly re-rendered
+                # would reach the recorder instead of being served silently.
+                research_controller._cached_data_card.cache_clear()
+                resumed_recorder = CardRecorder("# Dataset Profile\n\nrows: 999\n")
+                with patch.object(
+                    research_controller, "render_data_card", resumed_recorder
+                ):
+                    resumed = card_loop(config, config_path, resume_dir=loop.run_dir)
+                self.assertEqual(resumed_recorder.calls, [])
+                self.assertEqual(resumed.state.data_card_path, loop.state.data_card_path)
+                self.assertEqual(
+                    (resumed.run_dir / "DATA_CARD.md").read_text(encoding="utf-8"),
+                    FAKE_CARD,
+                )
+
+            with self.subTest("an empty card is skipped silently"):
+                # The *real* renderer, against a directory holding none of the
+                # KuaiRand CSVs it requires (`datacard.py:45-47`): no file, no
+                # path, and nothing on stdout for the operator to misread as an
+                # error. This is also the pre-data state of a fresh clone.
+                research_controller._cached_data_card.cache_clear()
+                empty_data = root / "no_data"
+                empty_data.mkdir()
+                empty_config = card_config(root, empty_data, root / "runs")
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    bare = card_loop(empty_config, root / "config_empty.json")
+                self.assertFalse((bare.run_dir / "DATA_CARD.md").exists())
+                self.assertIsNone(bare.state.data_card_path)
+                self.assertEqual(stdout.getvalue(), "")
+
+            with self.subTest("a configured path wins and suppresses the render"):
+                # `configs/ranking_losses.json:10` carries the key. An operator
+                # who has named a card is not asking for one to be made, and the
+                # path is taken verbatim: C's reader already tolerates a file
+                # that is not there (`roles.py:66-69`), so verifying it here
+                # would only move the failure earlier and lose the run.
+                research_controller._cached_data_card.cache_clear()
+                unused = CardRecorder()
+                configured = card_config(
+                    root, data_dir, root / "runs", data_card_path="docs/some_card.md"
+                )
+                with patch.object(research_controller, "render_data_card", unused):
+                    overridden = card_loop(configured, root / "config_named.json")
+                self.assertEqual(unused.calls, [])
+                self.assertEqual(overridden.state.data_card_path, "docs/some_card.md")
+                self.assertFalse((overridden.run_dir / "DATA_CARD.md").exists())
+
+            with self.subTest("a run under the repo stores a repo-relative path"):
+                # T11 forbids absolute machine paths in the committed final
+                # run's files, and `candidate_dir` already stores itself this
+                # way (`research_controller.py:634-637`). Every other case above
+                # runs from a temporary directory, so only this one reaches the
+                # `relative_to(REPO_ROOT)` branch.
+                research_controller._cached_data_card.cache_clear()
+                run_root = REPO_ROOT / "runs"
+                before = set(run_root.iterdir())
+                inside = None
+                try:
+                    with patch.object(
+                        research_controller, "render_data_card", CardRecorder()
+                    ):
+                        inside = card_loop(
+                            card_config(root, data_dir, run_root),
+                            root / "config_repo.json",
+                        )
+                    stored = inside.state.data_card_path
+                    self.assertFalse(Path(stored).is_absolute(), stored)
+                    self.assertEqual(
+                        stored,
+                        (inside.run_dir / "DATA_CARD.md").relative_to(REPO_ROOT).as_posix(),
+                    )
+                    self.assertEqual(
+                        (REPO_ROOT / stored).read_text(encoding="utf-8"), FAKE_CARD
+                    )
+                finally:
+                    # Exactly the directory this loop made — never everything
+                    # that appeared under `runs/` during the block, which would
+                    # reach a real run started in the same window — and no
+                    # `ignore_errors`, because a cleanup that failed silently
+                    # would leave a run directory inside the repo.
+                    if inside is not None:
+                        shutil.rmtree(inside.run_dir)
+                # Outside the `finally`, so it reports on cleanup rather than
+                # being part of it: that one directory was the only thing added.
+                self.assertEqual(set(run_root.iterdir()), before)
 
 
 if __name__ == "__main__":

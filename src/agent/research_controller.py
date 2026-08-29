@@ -413,7 +413,7 @@ class ResearchLoop:
                 },
                 parent_sources,
             )
-            if self.state.training_attempts >= int(self.budgets["max_iterations"]):
+            if self.state.training_attempts >= self.max_training_attempts:
                 validation_error = "Training-attempt budget reached before execution."
                 break
             self.state.training_attempts += 1

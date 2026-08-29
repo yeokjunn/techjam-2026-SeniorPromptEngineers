@@ -50,6 +50,7 @@ class ExperimentOutcome:
     command: list[str] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
     failure_class: str | None = None
+    test_scores_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -49,7 +49,9 @@ class ResearchAudit:
             self.passes_dir / f"{iteration:03d}_{role}_{sequence}.json",
             {"prompt": prompt, "result": result.to_record()},
         )
-        self.append_jsonl(self.run_dir / "research_memory.jsonl", result.to_record())
+        memory_record = result.to_record()
+        memory_record["iteration"] = iteration
+        self.append_jsonl(self.run_dir / "research_memory.jsonl", memory_record)
 
     def record_iteration(self, record: dict[str, Any]) -> None:
         self.append_jsonl(self.run_dir / "iterations.jsonl", record)

@@ -146,9 +146,51 @@ Scope: `docs/reviews/2026-08-28-harness-review/plans/B-gate-contracts.md` (T1–
 
 ---
 
+## 2026-08-29 · T5 + T6 — `failure_class` everywhere + sanity band/two-sided predicate (I-3, I11)
+
+**Done** (TDD: 6 new tests first, RED, then implementation → GREEN)
+- `src/evaluation/official.py` — new constants `SANITY_FLOOR = 0.47`, `SANITY_CEILING = 0.80`, `OFFICIAL_VALIDATION_BASELINE = 0.6016`, `BASELINE_TOLERANCE = 0.003`, and two pure functions:
+  - `classify_primary(primary)` → `"low_score"` below the floor, `"leak"` above the ceiling, else `None`. Classifier only — callers decide.
+  - `within_baseline_tolerance(primary, official=0.6016, tolerance=0.003)` → `abs(primary - official) <= tolerance + 1e-12` (cushion keeps the boundary inclusive under binary floats — `|0.5986 − 0.6016|` computes as `0.0030000000000000027`, so the naive `<= 0.003` rejects the plan's own True cases).
+- `src/experiments/run_candidate.py` — the T2 placeholder `"sanity_class": None` is now `classify_primary(float(metrics["primary"]))`. Classified, never raised: `result.json` still written, ledger keeps the number.
+- `src/agent/candidate_runner.py` — every failed `ExperimentOutcome` now carries a `failure_class` from the frozen six-value set: `"crash"` (non-zero exit), `"timeout"` (TimeoutExpired), `"bad_output"` (OSError/ValueError/KeyError/JSONDecodeError, which also catches the non-finite-metric raise), `"missing_test_scores"` (T2), `"low_score"`/`"leak"` (new sanity branch: non-`None` `sanity_class` → failed with the band in the error text, metrics kept). No control flow keys on message text (I13).
+- `tests/test_isolation.py` — `test_failure_classes_cover_every_return_path` (AST-parses `candidate_runner.py`; every `status="failed"` call has the `failure_class` keyword; literal values ∈ six-set; the sanity branch's runtime value is domain-pinned by `classify_primary`'s bounds test), `test_timeout_outcome_is_classified` (real executor with `experiment_timeout_seconds=0`), `test_classify_primary_bounds`, `test_within_baseline_tolerance_is_two_sided`.
+- `tests/test_candidate_output.py` — `test_ceiling_hit_is_marked_as_leak` (reuses the canonical perfect-ranking fixture, primary 1.0 = above ceiling, with a comment saying why), `test_floor_miss_is_marked_low_score` (inverted scores → primary 0.0).
+
+**Justification**
+- I-3: A's Debugger picks retry-vs-skip from `failure_class` and D's journal prints it — untyped strings would have forced exactly the message-text matching I13 forbids. `"leak"`/`"low_score"` tell A *not* to spend a repair round.
+- I11: finiteness-only checks let a leaked 0.99 be promoted to best and let 0.85 pass the baseline gate. The band [0.47, 0.80] brackets random (0.475) to well past the official FM (0.5946) while sitting under the oracle ceiling (0.8484 valid); `observe_success` only runs for `status == "success"`, so a ceiling hit can never become best.
+- Ownership respected: B shipped only the predicate; the two `_ensure_baseline` call sites are A's — PR draft below, not applied.
+
+**Draft PR for A (≤20 lines, `research_controller.py` — B does not apply this):**
+```diff
++from src.evaluation.official import within_baseline_tolerance
+ # in _latest_valid_baseline's loop (currently :45):
+-            if best.get("experiment_id") == "official_fm_seed0" and primary >= threshold:
++            if best.get("experiment_id") == "official_fm_seed0" and within_baseline_tolerance(primary, threshold):
+ # in _ensure_baseline (currently :55, :62):
+-    baseline = _latest_valid_baseline(run_root, official - 0.002)
++    baseline = _latest_valid_baseline(run_root, official)
+-    if primary < official - 0.002:
+-        raise RuntimeError(f"Official FM baseline gate failed: {primary:.4f} < {official - 0.002:.4f}")
++    if not within_baseline_tolerance(primary, official):
++        raise RuntimeError(f"Official FM baseline gate failed: {primary:.4f} outside [{official - 0.003:.4f}, {official + 0.003:.4f}]")
+```
+(`threshold` keeps its parameter name; it now carries the official centre instead of a lower bound.)
+
+**Verification evidence**
+- `pytest tests/test_isolation.py tests/test_candidate_output.py -q -W error` → **21 passed** (11 + 10), including the plan's exact bound cases (0.4699/0.47/0.80/0.8001/0.6015; 0.5986/0.6046 True, 0.5985/0.6047/0.85 False).
+- Acceptance grep `grep -c "failure_class=" src/agent/candidate_runner.py` → **5** (≥ 5).
+- The three pre-existing `test_candidate_output.py` cases still pass.
+- Full suite: **75 passed, 16 subtests, 8.72s** (69 → 75), `-W error`, no API key.
+- Two RED-phase fixes: the float-boundary cushion above (implementation nuance), and my timeout test originally used an out-of-repo run dir — tripping the same documented `relative_to(repo_root)` invariant as the T4 smoke; the test now uses an in-repo scratch dir with cleanup.
+- Consistency: the T4 smoke candidate's primary (0.4837) sits inside the band, so in-band candidates still succeed — no behavior regression from the sanity branch.
+
+---
+
 ## Queue (next up)
 
-- **T5 + T6** (one PR with T4 per plan §5): six `failure_class` values on every failure path; sanity floor/ceiling + two-sided baseline predicate (`within_baseline_tolerance`), with the ≤20-line PR to A for the two `_ensure_baseline` call sites.
-- Then T7, T8; hand-offs per plan §6.
+- **T7** — isolation + evaluator-convention tests (I1: split sizes 1,141,112/124,909, the 20220428 cut-off, row-for-row kit equality; I2: six hand-computed evaluator conventions).
+- Then **T8** (regenerate + commit the baseline run), hand-offs per plan §6, DoD sweep.
 
 *Append new entries above this line.*

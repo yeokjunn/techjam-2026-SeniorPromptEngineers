@@ -3,17 +3,37 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+.DS_Store
 
 # Local secrets and machine-specific environment files. Commit only the template.
 .env
 .env.*
 !.env.example
 
-# Competition inputs and generated artifacts must not be committed.
+# Competition inputs must not be committed. Fetch them with scripts/download_data.sh.
 data/
 *.tar.gz
+
+# Run artefacts. Judges need the final run's ledger, stdout and generated code, so
+# the exclusions below are child globs (git cannot re-include a path underneath an
+# excluded *directory*, only underneath an excluded child).
+#
+# Two routes for the final run:
+#   1. Name it `final` and it is committable as-is (the re-inclusions below).
+#   2. Keep its timestamped id and force-add it:
+#        git add -f runs/<id> runs/<id>/stdout generated_experiments/<id>
+runs/*/stdout/
+!runs/final/stdout/
+generated_experiments/*
+!generated_experiments/final/
+
+# Personal research run directories (runs/<initials>_<timestamp>_research/) stay out
+# of git. `runs/*_baseline/` is deliberately not matched, so the regenerated baseline
+# run can be committed without -f.
+runs/*_research/
+
+# Checkpoints never go in git, not even for the final run — keep these last so they
+# win over the re-inclusions above.
 artifacts/
 runs/*/artifacts/
-runs/*/stdout/
 *.npz
-generated_experiments/

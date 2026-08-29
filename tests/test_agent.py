@@ -3,9 +3,10 @@ from __future__ import annotations
 import unittest
 
 from src.agent.convergence import ConvergenceTracker
+from src.agent.policy import family_experiment_score, next_family_hint
 from src.agent.proposer import ConfigProposer
 from src.agent.reflector import reflect
-from src.agent.types import ExperimentOutcome, ExperimentSpec
+from src.agent.types import ExperimentNode, ExperimentOutcome, ExperimentSpec, RunState
 
 
 class ConvergenceTests(unittest.TestCase):
@@ -47,6 +48,39 @@ class ReflectionTests(unittest.TestCase):
         )
         result = reflect(spec, outcome, previous_best=0.58, official_baseline=0.6016)
         self.assertEqual(result["decision"], "promote_to_best")
+
+
+class PolicyTests(unittest.TestCase):
+    def test_family_experiment_score_prefers_a_lower_quality_family(self):
+        state = RunState(
+            run_id="demo",
+            status="running",
+            started_at="2026-01-01T00:00:00Z",
+            baseline_primary=0.6016,
+            nodes=[
+                ExperimentNode(
+                    iteration=1,
+                    experiment_id="bpr_run",
+                    hypothesis_id="h1",
+                    family="bpr",
+                    action="explore",
+                    parameters={},
+                    status="success",
+                    metrics={"GAUC": 0.66, "nDCG@5": 0.52, "primary": 0.61},
+                ),
+            ],
+        )
+        self.assertGreater(family_experiment_score(state, "group_softmax"), family_experiment_score(state, "bpr"))
+
+    def test_next_family_hint_prefers_unseen_family_when_none_are_covered(self):
+        state = RunState(
+            run_id="demo",
+            status="running",
+            started_at="2026-01-01T00:00:00Z",
+            baseline_primary=0.6016,
+            nodes=[],
+        )
+        self.assertEqual(next_family_hint(state), "bpr")
 
 
 if __name__ == "__main__":

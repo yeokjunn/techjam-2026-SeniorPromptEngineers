@@ -16,10 +16,17 @@ from ..evaluation.official import BASELINE_TOLERANCE, within_baseline_tolerance
 from .audit import ResearchAudit
 from .candidate_runner import CandidateExecutor, CandidateWorkspace, repaired_manifest
 from .catalog import MethodCatalog
+from .convergence import official_converged
 from .controller import REPO_ROOT, _resolve_repo_path, _source_manifest, run_agent
 from .errors import LLMError, TokenBudgetExceeded
 from .llm import LLMProvider, build_provider
-from .policy import SearchPolicy, coverage_complete, required_family, sanitize_parameters
+from .policy import (
+    SearchPolicy,
+    coverage_complete,
+    required_family,
+    sanitize_parameters,
+    scored_primaries,
+)
 from .report import render_reports
 from .roles import ResearchRoles
 from .types import (
@@ -105,6 +112,24 @@ def _repo_relative(path: Path) -> str:
         return path.relative_to(REPO_ROOT).as_posix()
     except ValueError:
         return path.as_posix()
+
+
+def _official_convergence_iteration(
+    state: RunState, epsilon: float, patience: int
+) -> int | None:
+    """The iteration of the scored node whose prefix first meets the official rule.
+
+    ``seq[0]`` is the baseline seed rather than an iteration, so the number
+    reported is the node's own ``iteration`` and not the prefix length. ``None``
+    when the rule never fires.
+    """
+    # Same filter as policy.scored_primaries; the index below depends on it.
+    scored = [node for node in state.nodes if node.status == "success" and node.metrics]
+    sequence = [state.baseline_primary] + scored_primaries(state)
+    for length in range(patience + 1, len(sequence) + 1):
+        if official_converged(sequence[:length], epsilon, patience):
+            return scored[length - 2].iteration
+    return None
 
 
 # Classification of every exception source the correctness review names (C4).
@@ -374,6 +399,10 @@ class ResearchLoop:
         )
         self.session_started = time.monotonic()
         self.consecutive_harness_errors = 0
+        # Logged-once flag for the mid-run convergence line, not run state: a
+        # resume re-logs it, which costs a duplicate journal line and no
+        # correctness (`summary.json` is recomputed from the nodes).
+        self._official_converged_iteration: int | None = None
         initialized = self.audit.start_activity(
             0,
             "initializing",
@@ -394,6 +423,30 @@ class ResearchLoop:
         self.state.wall_clock_seconds = self._elapsed()
         self.session_started = time.monotonic()
         self.audit.save_state(self.state.to_dict())
+
+    def _note_official_convergence(self) -> None:
+        """Journal the first iteration at which the organizers' rule fires (I6).
+
+        `should_stop` is the harness agenda and is not weakened by this: the
+        line exists so the journal can say "the official rule fired at iteration
+        k; the harness continued for coverage".
+        """
+        if self._official_converged_iteration is not None:
+            return
+        self._official_converged_iteration = _official_convergence_iteration(
+            self.state,
+            float(self.convergence["epsilon"]),
+            int(self.convergence["patience"]),
+        )
+        if self._official_converged_iteration is not None:
+            self.audit.append_jsonl(
+                self.run_dir / "research_memory.jsonl",
+                {
+                    "type": "convergence",
+                    "iteration": self._official_converged_iteration,
+                    "official": True,
+                },
+            )
 
     def _role_call(self, label: str, iteration: int, call) -> Any:
         """Run one role pass, re-prompting the model while its own output is at fault.
@@ -734,6 +787,7 @@ class ResearchLoop:
         self.state.nodes.append(node)
         if status == "success":
             self.policy.observe_success(self.state, node)
+            self._note_official_convergence()
 
         persistence = self.audit.start_activity(
             iteration,
@@ -957,6 +1011,13 @@ class ResearchLoop:
 
         self.state.status = "completed"
         self._save()
+        # I6 / I-9: the organizers' verdict, reported beside the harness's stop
+        # and never in place of it. `should_stop` is coverage-gated and the caps
+        # bound it, so a run can satisfy the epsilon/N rule and still stop for
+        # some other reason — Owner D prints both numbers.
+        epsilon = float(self.convergence["epsilon"])
+        patience = int(self.convergence["patience"])
+        official_sequence = [self.state.baseline_primary] + scored_primaries(self.state)
         summary = {
             "run_id": self.state.run_id,
             "status": self.state.status,
@@ -966,6 +1027,10 @@ class ResearchLoop:
             "manual_interventions": self.state.manual_interventions,
             "token_usage": self.state.token_usage.to_dict(),
             "wall_clock_seconds": self.state.wall_clock_seconds,
+            "converged_official": official_converged(official_sequence, epsilon, patience),
+            "converged_official_iteration": _official_convergence_iteration(
+                self.state, epsilon, patience
+            ),
             "best": {
                 "experiment_id": self.state.best_experiment_id,
                 "metrics": self.state.best_metrics,

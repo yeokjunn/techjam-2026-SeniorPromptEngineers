@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from . import families
+from .convergence import stagnation
 from .types import ExperimentNode, RunState
 
 
@@ -195,6 +196,15 @@ def coverage_complete(state: RunState) -> bool:
     return _coverage_families().issubset(successful_families(state))
 
 
+def scored_primaries(state: RunState) -> list[float]:
+    """Every scored iteration, in order — the sequence both convergence rules read."""
+    return [
+        float(node.metrics["primary"])
+        for node in state.nodes
+        if node.status == "success" and node.metrics
+    ]
+
+
 def sanitize_parameters(family: str, raw: dict[str, Any]) -> dict[str, Any]:
     """Coerce and validate a proposal's parameters against the family registry.
 
@@ -255,12 +265,14 @@ class SearchPolicy:
     def observe_success(self, state: RunState, node: ExperimentNode) -> None:
         assert node.metrics is not None
         score = float(node.metrics["primary"])
-        previous_meaningful = state.meaningful_best
-        if previous_meaningful is None or score > previous_meaningful + self.epsilon:
-            state.meaningful_best = score
-            state.stagnant_iterations = 0
-        else:
-            state.stagnant_iterations += 1
+        # One ratchet, in `convergence.py` (I7). `node` is already on
+        # `state.nodes` when the loop calls this, and the baseline seeds the
+        # sequence exactly as `meaningful_best` is seeded at the run's start
+        # (`research_controller.py:329`) — so recomputing from scratch is what
+        # the old incremental update said, and is right after a resume too.
+        state.meaningful_best, state.stagnant_iterations = stagnation(
+            [state.baseline_primary] + scored_primaries(state), self.epsilon
+        )
 
         if state.best_metrics is None or score > float(state.best_metrics["primary"]):
             state.best_metrics = dict(node.metrics)

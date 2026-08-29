@@ -34,6 +34,21 @@ Cross-check the PR description's stated acceptance criteria against the
 actual diff. Flag any claim the code does not deliver, and cite the PR
 description when doing so.
 
+## Test execution
+
+You may run Python to verify claims (allowlisted). Prefer the cheap gates
+first and targeted runs over suite marathons — time and quota matter:
+
+1. `python -m py_compile <changed .py files>` — syntax gate, no execution
+2. `pytest --collect-only -q` — import/collection gate; catches SyntaxErrors
+   and import breakage across the whole suite (PR #9's failure mode)
+3. `pytest -q -x <test files covering the diff>` — targeted validation of
+   the PR's claims. Avoid `slow`-marked tests and full-suite runs unless
+   the PR claims harness-wide behavior changes.
+
+When execution is denied or unavailable, say so explicitly in the review
+rather than implying tests were run.
+
 ## Severity calibration
 
 - Important: correctness bugs, contract violations, security issues

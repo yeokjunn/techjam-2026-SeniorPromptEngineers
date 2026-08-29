@@ -1,0 +1,8 @@
+{
+  "run_root": "runs",
+  "data_dir": "data/KuaiRand-Pure/data",
+  "eda_profile_path": "artifacts/ui/kuairand_pure_eda.json",
+  "official_baseline": 0.6016,
+  "active_refresh_seconds": 5,
+  "stale_after_seconds": 1200
+}

@@ -21,7 +21,9 @@ T10 ships as four sibling PRs; this file carries step 1's two tests, step 4's on
 test (`RegistryDrivenPolicyTests`, review I-7 — `policy.py` reading Owner E's
 family registry instead of its own literals) and step 2's one test
 (`DataCardWiringTests`, review I-4 — the data card rendered at run start for
-Owner C's Researcher prompt). Step 3 appends its own here.
+Owner C's Researcher prompt), and step 3's one test (`FailureClassRoutingTests`,
+review I-3 — Owner B's `failure_class` choosing the Debugger's brief and whether
+a failed candidate is repaired at all).
 """
 
 from __future__ import annotations
@@ -38,14 +40,15 @@ from typing import Any
 from unittest.mock import patch
 
 from src.agent import families, policy, research_controller
+from src.agent.llm import LLMCallResult
 from src.agent.research_controller import ResearchLoop
-from src.agent.types import ExperimentNode, RunState
+from src.agent.types import ExperimentNode, ExperimentOutcome, RunState, TokenUsage
 from src.evaluation.gate import GateResult
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# The shape ``_execute`` stores (``research_controller.py:363``) and ``policy.py:220``
+# The shape ``_execute`` stores (``research_controller.py:717``) and ``policy.py:269``
 # copies onto the state: relative to the repo root, no leading slash. Nothing has
 # to exist on disk — the gate is a double in both tests.
 CANDIDATE_DIR = "generated_experiments/20260829T000000Z_research/1/candidate_bpr"
@@ -71,7 +74,7 @@ def wired_loop():
     """A ``ResearchLoop`` parked at the end of ``run()``, from a foreign cwd.
 
     ``max_wall_clock_seconds: 0`` trips the first loop-top budget check
-    (``research_controller.py:754-760``), so the loop body never executes and
+    (``research_controller.py:836-842``), so the loop body never executes and
     no model call is made: what the test observes is only what ``run()`` does
     *after* the loop. The working directory is moved out of the repo for the
     duration of ``run()`` because a path resolved against the cwd is the I-1 bug.
@@ -589,7 +592,7 @@ class DataCardWiringTests(unittest.TestCase):
 
     def setUp(self) -> None:
         # The render is memoized per data directory for the life of the process
-        # (`research_controller.py:38-52`), so a test that patches the renderer has
+        # (`research_controller.py:80-94`), so a test that patches the renderer has
         # to start from an empty cache — otherwise a call the loop *should* make
         # is served from the cache and "was it called?" stops meaning anything —
         # and must not leave its fake card behind for the next test that builds
@@ -705,7 +708,7 @@ class DataCardWiringTests(unittest.TestCase):
             with self.subTest("a run under the repo stores a repo-relative path"):
                 # T11 forbids absolute machine paths in the committed final
                 # run's files, and `candidate_dir` already stores itself this
-                # way (`research_controller.py:634-637`). Every other case above
+                # way (`research_controller.py:716-719`). Every other case above
                 # runs from a temporary directory, so only this one reaches the
                 # `relative_to(REPO_ROOT)` branch.
                 research_controller._cached_data_card.cache_clear()
@@ -740,6 +743,356 @@ class DataCardWiringTests(unittest.TestCase):
                 # Outside the `finally`, so it reports on cleanup rather than
                 # being part of it: that one directory was the only thing added.
                 self.assertEqual(set(run_root.iterdir()), before)
+
+
+# --------------------------------------------------------------------------- #
+# T10 step 3 · I-3 — Owner B's `failure_class` picks the brief and retry vs skip
+# --------------------------------------------------------------------------- #
+
+# The candidate the Builder proposes and the Debugger hands back unchanged.
+# `CandidateWorkspace.write` validates the source and the family contract before
+# any test runs (`candidate_runner.py:64-72`), so the body has to call `bpr`'s
+# trusted sampler — nothing here ever executes it, because the executor below is
+# a double.
+CANDIDATE_CODE = '''import numpy as np
+from src.experiments.contracts import CandidateOutput
+from src.models.sampling import sample_bpr_pairs
+
+def run(context, parameters):
+    sample_bpr_pairs(context.train_users, context.train_y, np.random.default_rng(0), 1)
+    return CandidateOutput(np.zeros(len(context.valid_x)), {"weights": np.zeros(1)}, [], {"pairs": 1})
+'''
+
+CANDIDATE_TESTS = """import unittest
+import candidate
+
+class CandidateTests(unittest.TestCase):
+    def test_contract(self):
+        self.assertTrue(callable(candidate.run))
+"""
+
+# Valid against the shipped registry, so nothing here is rejected by
+# `sanitize_parameters` on the Builder's way through (`roles.py:238`).
+BPR_PARAMETERS: dict[str, Any] = {
+    "seed": 0,
+    "k": 16,
+    "learning_rate": 0.001,
+    "epochs": 5,
+    "batch_size": 2048,
+    "patience": 2,
+    "negatives_per_positive": 1,
+    "negatives_per_group": None,
+    "temperature": None,
+}
+
+CRITIC_PAYLOAD: dict[str, Any] = {
+    "approved": True,
+    "decision": "proceed",
+    "rationale": "safe controlled experiment",
+    "concerns": [],
+    "next_focus": "compare trusted metrics",
+}
+
+# Answered by role rather than in call order: how many role passes the loop makes
+# is exactly what this test measures, so the fixture must not have to predict it.
+ROLE_PAYLOADS: dict[str, dict[str, Any]] = {
+    "researcher": {
+        "hypothesis_id": "h_bpr",
+        "family": "bpr",
+        "action": "explore",
+        "hypothesis": "controlled bpr ranking loss",
+        "rationale": "approved method card",
+        "parameters": BPR_PARAMETERS,
+        "evidence": [
+            {
+                "title": "Primary paper",
+                "url": "https://arxiv.org/abs/1205.2618",
+                "method_card_id": "bpr",
+            }
+        ],
+        "needs_web_search": False,
+        "parent_experiment": None,
+    },
+    "critic_preflight": CRITIC_PAYLOAD,
+    "builder": {
+        "candidate_id": "candidate_bpr",
+        "hypothesis_id": "h_bpr",
+        "family": "bpr",
+        "code": CANDIDATE_CODE,
+        "tests": CANDIDATE_TESTS,
+        "parameters": BPR_PARAMETERS,
+    },
+    "debugger": {
+        "preserve_hypothesis": True,
+        "diagnosis": "bounded repair",
+        "replacement_code": CANDIDATE_CODE,
+        "replacement_tests": CANDIDATE_TESTS,
+    },
+    "critic_postflight": CRITIC_PAYLOAD,
+}
+
+# The error strings Owner B's worker really produces for these classes
+# (`candidate_runner.py:200-266`), so the assertions below pin the concatenation
+# against text of the shape the Debugger will actually be handed.
+TIMEOUT_ERROR = "Candidate timed out after 10 seconds."
+LEAK_ERROR = "Validation primary 0.990000 is outside the sanity band [0.47, 0.8]."
+MISSING_SCORES_ERROR = (
+    "CandidateOutput.test_scores must be a finite 1-D float array of length "
+    "170588 (one score per data.load()['test'] row, same order)."
+)
+# A failed outcome carrying no class at all: `TrainingFailureExecutor`'s error in
+# `tests/test_research_loop.py:451-456`, i.e. the behaviour that must not move.
+UNCLASSIFIED_ERROR = "training diverged before the first epoch completed"
+
+
+class RoleScriptedProvider:
+    """Offline provider answering by role, recording every prompt it is sent."""
+
+    def __init__(self) -> None:
+        self.prompts: list[tuple[str, str]] = []
+
+    def complete(self, **kwargs: Any) -> LLMCallResult:
+        role = str(kwargs["role"])
+        self.prompts.append((role, str(kwargs["prompt"])))
+        payload = ROLE_PAYLOADS.get(role)
+        if payload is None:
+            raise AssertionError(f"unscripted {role} call")
+        return LLMCallResult(
+            data=dict(payload),
+            response_id=f"scripted-{len(self.prompts)}",
+            model="scripted",
+            role=role,
+            latency_seconds=0.0,
+            retries=0,
+            usage=TokenUsage(total_tokens=10),
+        )
+
+
+class ScriptedTrainer:
+    """Trusted-worker double: the safety tests pass, training is scripted.
+
+    The last outcome repeats forever, so a case says "this class, again" without
+    having to know how many training attempts the policy under test allows.
+    """
+
+    def __init__(self, *outcomes: ExperimentOutcome) -> None:
+        self.outcomes = list(outcomes)
+        self.trainings = 0
+
+    def test(self, workspace: Any) -> tuple[bool, str]:
+        return True, "ok"
+
+    def train(self, iteration: int, manifest: Any, workspace: Any, run_dir: Path):
+        self.trainings += 1
+        return self.outcomes[min(self.trainings, len(self.outcomes)) - 1]
+
+
+def failed_training(error: str, failure_class: str | None) -> ExperimentOutcome:
+    """One rejected training run, shaped as Owner B's worker returns it."""
+    return ExperimentOutcome(
+        status="failed",
+        metrics=None,
+        duration_seconds=0.01,
+        error=error,
+        recovery="Rejected before promotion; the previous best is intact.",
+        failure_class=failure_class,
+    )
+
+
+@contextlib.contextmanager
+def training_failure_loop(*outcomes: ExperimentOutcome):
+    """One research iteration whose training fails the way ``outcomes`` says.
+
+    Unlike ``wired_loop``, the body of ``run()`` *does* execute here — that is
+    the whole point, since the Debugger pass under test happens inside it. Two
+    repairs are allowed and six training attempts, so what stops the loop is the
+    repair policy rather than the attempt budget (``max_training_attempts``
+    defaults to ``max_iterations``, which would be 1 and would end the run before
+    the second attempt this test needs). The data directory is empty on purpose:
+    Owner D's renderer returns ``""`` for it, so the run start costs nothing and
+    leaves no card behind for the next test.
+    """
+    provider = RoleScriptedProvider()
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        data_dir = root / "data"
+        data_dir.mkdir()
+        config = {
+            "mode": "research",
+            "name": "failure-class",
+            "data_dir": str(data_dir),
+            "run_root": str(root / "runs"),
+            "generated_root": str(root / "generated"),
+            "method_catalog": str(REPO_ROOT / "research" / "methods"),
+            "official_validation_baseline": 0.6016,
+            "llm": {"max_total_tokens": 1000},
+            "budgets": {
+                "max_iterations": 1,
+                "max_training_attempts": 6,
+                "max_wall_clock_seconds": 60,
+                "experiment_timeout_seconds": 10,
+                "test_timeout_seconds": 10,
+                "max_debug_repairs": 2,
+            },
+            "convergence": {"epsilon": 0.002, "patience": 3},
+            "replication_seeds": [1, 2],
+        }
+        config_path = root / "config.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        loop = ResearchLoop(
+            config,
+            config_path,
+            provider=provider,
+            baseline_summary=BASELINE_SUMMARY,
+        )
+        trainer = ScriptedTrainer(*outcomes)
+        loop.executor = trainer
+        loop.run()
+        yield loop, trainer
+
+
+def debugger_passes(run_dir: Path) -> list[Path]:
+    """Every recorded Debugger pass, in order. ``audit.py:46-50`` names them
+    ``{iteration:03d}_debugger_{repair_number}.json``, so the file names alone
+    say how many repairs the loop spent and on which iteration."""
+    return sorted((run_dir / "passes").glob("*_debugger_*.json"))
+
+
+def debugger_pass_names(run_dir: Path) -> list[str]:
+    return [path.name for path in debugger_passes(run_dir)]
+
+
+def debugger_prompts(run_dir: Path) -> list[str]:
+    """The prompt each of those passes was sent, in the same order."""
+    return [
+        json.loads(path.read_text(encoding="utf-8"))["prompt"]
+        for path in debugger_passes(run_dir)
+    ]
+
+
+def last_iteration(run_dir: Path) -> dict[str, Any]:
+    """The final ``iterations.jsonl`` record — the ledger row for the node."""
+    lines = (run_dir / "iterations.jsonl").read_text(encoding="utf-8").splitlines()
+    return json.loads([line for line in lines if line.strip()][-1])
+
+
+class FailureClassRoutingTests(unittest.TestCase):
+    """I-3: B's `failure_class` chooses the Debugger's brief and retry vs. skip."""
+
+    def test_debug_brief_follows_the_failure_class(self):
+        """The class picks the brief, the timeout cap, and the leak skip.
+
+        Owner B tags every failed outcome (`types.py:52`, six values). Nothing
+        read the tag: every failure got the same repair budget and the same
+        prompt, so a run that timed out spent the wall clock re-training a
+        candidate that would time out again, and a leaked score — never
+        promotable, and not a code fault the Debugger can fix — bought two model
+        passes. The brief reaches the Debugger inside `roles.py:257`'s `ERROR:`
+        line, which is why this closes with no edit to Owner C's file.
+        """
+        briefs = research_controller.DEBUG_BRIEFS
+
+        with self.subTest("the dictionary is keyed by B's six classes"):
+            # The documented contract, `leak` included even though the skip
+            # below means it never reaches a prompt: B adds a class here, not a
+            # branch, and a class with no brief is the thing to notice.
+            self.assertEqual(
+                sorted(briefs),
+                [
+                    "bad_output",
+                    "crash",
+                    "leak",
+                    "low_score",
+                    "missing_test_scores",
+                    "timeout",
+                ],
+            )
+            for name, text in briefs.items():
+                with self.subTest(brief=name):
+                    self.assertTrue(text.strip(), name)
+                    # One line, because it is prepended to the error on the
+                    # single `ERROR:` line of the prompt.
+                    self.assertNotIn("\n", text)
+
+        with self.subTest("timeout: one Debugger pass, then the node fails"):
+            timeout = failed_training(TIMEOUT_ERROR, "timeout")
+            with training_failure_loop(timeout, timeout) as (loop, trainer):
+                # `max_debug_repairs` is 2, so the ordinary cap would have
+                # bought the second timeout a second pass and a third training
+                # attempt. Each of those attempts is a full training run
+                # charged to the six-hour wall clock, for a candidate that has
+                # already proved it does not fit inside its time budget.
+                self.assertEqual(
+                    debugger_pass_names(loop.run_dir), ["001_debugger_1.json"]
+                )
+                self.assertEqual(trainer.trainings, 2)
+                self.assertIn(
+                    f"\nERROR: {briefs['timeout']}\n{TIMEOUT_ERROR}\n",
+                    debugger_prompts(loop.run_dir)[0],
+                )
+                self.assertEqual([node.status for node in loop.state.nodes], ["failed"])
+                record = last_iteration(loop.run_dir)
+                self.assertEqual(record["status"], "failed")
+                self.assertEqual(record["repairs"], 1)
+                self.assertEqual(record["outcome"]["failure_class"], "timeout")
+
+        with self.subTest("leak: no repair at all, recorded as a failed node"):
+            with training_failure_loop(failed_training(LEAK_ERROR, "leak")) as (
+                loop,
+                trainer,
+            ):
+                # Not a bug in the candidate's code: the number is real and the
+                # label reached the model. A Debugger pass cannot un-leak it,
+                # and the node is never promotable, so the run keeps the two
+                # model calls and the training attempt for the next hypothesis.
+                self.assertEqual(debugger_pass_names(loop.run_dir), [])
+                self.assertEqual(trainer.trainings, 1)
+                self.assertEqual([node.status for node in loop.state.nodes], ["failed"])
+                record = last_iteration(loop.run_dir)
+                self.assertEqual(record["status"], "failed")
+                self.assertEqual(record["repairs"], 0)
+                # The class survives into the ledger, which is where Owner D's
+                # journal reads it back (`report.py:319-326`).
+                self.assertEqual(record["outcome"]["failure_class"], "leak")
+
+        with self.subTest("no class: the raw error, and today's repair budget"):
+            with training_failure_loop(failed_training(UNCLASSIFIED_ERROR, None)) as (
+                loop,
+                trainer,
+            ):
+                # Two repairs (the budget), three training attempts: exactly
+                # what an untagged failure did before this change.
+                self.assertEqual(
+                    debugger_pass_names(loop.run_dir),
+                    ["001_debugger_1.json", "001_debugger_2.json"],
+                )
+                self.assertEqual(trainer.trainings, 3)
+                for index, prompt in enumerate(debugger_prompts(loop.run_dir)):
+                    with self.subTest(debugger_pass=index + 1):
+                        # `.strip()` on an empty brief must not reshape the
+                        # error: the line is the error and nothing else.
+                        self.assertIn(f"\nERROR: {UNCLASSIFIED_ERROR}\n", prompt)
+                        for name, text in briefs.items():
+                            self.assertNotIn(text, prompt, name)
+
+        with self.subTest("missing_test_scores: the class's own brief, verbatim"):
+            with training_failure_loop(
+                failed_training(MISSING_SCORES_ERROR, "missing_test_scores")
+            ) as (loop, trainer):
+                # Not capped: only `timeout` is, so this class keeps the full
+                # repair budget.
+                self.assertEqual(
+                    debugger_pass_names(loop.run_dir),
+                    ["001_debugger_1.json", "001_debugger_2.json"],
+                )
+                self.assertEqual(trainer.trainings, 3)
+                for index, prompt in enumerate(debugger_prompts(loop.run_dir)):
+                    with self.subTest(debugger_pass=index + 1):
+                        self.assertIn(
+                            f"\nERROR: {briefs['missing_test_scores']}\n"
+                            f"{MISSING_SCORES_ERROR}\n",
+                            prompt,
+                        )
 
 
 if __name__ == "__main__":

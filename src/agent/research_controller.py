@@ -31,6 +31,48 @@ from .types import (
 )
 
 
+# I-3: one Debugger brief per failure class Owner B's trusted worker can tag an
+# outcome with (``types.py:52``, set at ``candidate_runner.py:190``, ``:212``,
+# ``:231``, ``:255``, ``:265``). The chosen brief is prepended to the worker's own
+# error and reaches the Debugger verbatim on the ``ERROR:`` line of its prompt
+# (``roles.py:257``), so telling the model *what kind* of failure this is costs
+# Owner C's file nothing. Every one of the six keys is defined, ``"leak"``
+# included even though a leak is skipped rather than repaired below: the
+# dictionary is the documented contract for the classes, so a class B adds shows
+# up here as a missing key rather than as a silently generic prompt. One line
+# each, because the text shares a line with the error.
+DEBUG_BRIEFS: dict[str, str] = {
+    "timeout": (
+        "The run exceeded its time budget. Reduce epochs or batch work; do not "
+        "change the hypothesis."
+    ),
+    "crash": (
+        "The candidate process raised before it produced a result. Fix the "
+        "exception where it is thrown - shapes, dtypes, indexing, imports - and "
+        "leave the approved hypothesis, family and parameters exactly as they are."
+    ),
+    "bad_output": (
+        "The candidate finished but its result could not be read as a "
+        "CandidateOutput. Return one finite validation score per row of "
+        "context.valid_x, in that order, and do not change the hypothesis."
+    ),
+    "low_score": (
+        "Validation ranking quality landed far below the official baseline, which "
+        "usually means the loss or the negative sampler is not training the model. "
+        "Repair the implementation, not the hypothesis."
+    ),
+    "leak": (
+        "Validation ranking quality is implausibly high, so the label or a feature "
+        "derived from it reached the model. Remove the leaking signal and keep the "
+        "hypothesis unchanged."
+    ),
+    "missing_test_scores": (
+        "CandidateOutput.test_scores was absent. Return test scores for "
+        "context.test_x in the same row order."
+    ),
+}
+
+
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -486,10 +528,22 @@ class ResearchLoop:
         workspace: CandidateWorkspace,
         starting_error: str | None = None,
         repairs_used: int = 0,
+        max_repairs: int | None = None,
     ) -> tuple[CandidateManifest, int, str | None]:
+        """Debug the candidate until its own tests pass, or the repairs run out.
+
+        ``max_repairs`` narrows the ``max_debug_repairs`` budget for one call, so
+        a caller that knows this failure is not worth the usual number of model
+        passes can say so without a second loop (I-3: a timeout gets one). It is
+        a *cap*, never an extension — the caller computes it against the budget —
+        and a value ``repairs_used`` has already reached returns the error
+        immediately, exactly as an exhausted budget does.
+        """
         current = manifest
         error = starting_error
-        maximum = int(self.budgets["max_debug_repairs"])
+        maximum = (
+            int(self.budgets["max_debug_repairs"]) if max_repairs is None else max_repairs
+        )
         while True:
             if error is None:
                 safety = self.audit.start_activity(
@@ -554,6 +608,14 @@ class ResearchLoop:
         parent_sources = self._parent_sources(decision.parent_experiment)
         execution_attempt = 0
         outcome = None
+        # I-3: a timeout buys this candidate one Debugger pass and no more. Every
+        # retry is a full training run charged to the six-hour wall clock, and a
+        # candidate that did not fit its time budget usually does not fit it the
+        # second time either, so the cap is measured once here rather than per
+        # failure: the repairs already spent on the safety tests do not consume
+        # the timeout's one pass, and a second timeout finds ``repairs_used``
+        # equal to the cap and returns without calling the Debugger again.
+        timeout_repair_cap = min(int(self.budgets["max_debug_repairs"]), repairs + 1)
         while validation_error is None:
             # Refresh the authoritative patch before every training attempt because
             # a bounded Debugger pass may have changed the candidate after a failure.
@@ -603,13 +665,33 @@ class ResearchLoop:
             )
             if outcome.status == "success":
                 break
+            if outcome.failure_class == "leak":
+                # A leaked validation score is not a defect the Debugger can
+                # repair: the code ran, the number is real, and a feature or the
+                # label carried the answer. The node is never promotable
+                # (``observe_success`` runs for successes only), so repairing it
+                # would spend model passes and training attempts on a result the
+                # run has already refused. Recorded as a failed node by the path
+                # below, with B's error and class intact for the ledger.
+                validation_error = outcome.error
+                break
+            # I-3: the failure class Owner B tagged the outcome with chooses the
+            # Debugger's brief, prepended to B's own error on the prompt's
+            # ``ERROR:`` line (``roles.py:257``). An untagged outcome — or a class
+            # this file has no brief for — leaves the error exactly as it was.
             manifest, repairs, validation_error = self._repair_until_tests_pass(
                 iteration,
                 decision,
                 manifest,
                 workspace,
-                starting_error=outcome.error,
+                starting_error=(
+                    f"{DEBUG_BRIEFS.get(outcome.failure_class, '')}\n{outcome.error or ''}".strip()
+                    or None
+                ),
                 repairs_used=repairs,
+                max_repairs=(
+                    timeout_repair_cap if outcome.failure_class == "timeout" else None
+                ),
             )
             if validation_error is not None:
                 break

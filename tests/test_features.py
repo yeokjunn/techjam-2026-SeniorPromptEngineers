@@ -8,9 +8,12 @@ import unittest
 import numpy as np
 
 from src.models.features import (
+    AUX_HEADS,
     GROUPS,
     SLOTS_PER_GROUP,
     UNKNOWN_SLOT,
+    aux_dimension,
+    build_aux_labels,
     build_features,
     enabled_groups,
     feature_dimension,
@@ -199,6 +202,62 @@ class FeatureBuilderTests(unittest.TestCase):
         heavy = self.build(self.TRAIN, self.spec(smoothing=1000.0))
         self.assertEqual(light.shape, heavy.shape)
         self.assertEqual(light.dtype, heavy.dtype)
+
+class AuxiliaryLabelTests(unittest.TestCase):
+    """The multi_task family's auxiliary targets: (is_click, is_like, play_time_ms) per train row."""
+
+    AUX = [(1, 0, 500.0), (0, 0, 0.0), (1, 1, 120000.0), (0, 0, 250.0), (1, 0, 9000.0)]
+
+    def spec(self, split="train", **overrides):
+        base = {"split": split, "aux_rows": self.AUX}
+        base.update(overrides)
+        return base
+
+    def build(self, spec, rows=None):
+        return build_aux_labels(np.zeros((len(rows or self.AUX), 5)), spec)
+
+    def test_aux_labels_are_train_only_and_finite(self):
+        targets = self.build(self.spec())
+        self.assertEqual(targets.shape, (len(self.AUX), len(AUX_HEADS)))
+        self.assertEqual(targets.dtype, np.float32)
+        self.assertTrue(np.isfinite(targets).all())
+        self.assertTrue(((targets >= 0.0) & (targets <= 1.0)).all())
+        for split in ("valid", "test"):
+            with self.subTest(split=split), self.assertRaises(ValueError):
+                self.build(self.spec(split))
+
+    def test_binary_heads_are_passed_through_unchanged(self):
+        targets = self.build(self.spec())
+        np.testing.assert_array_equal(targets[:, 0], [1.0, 0.0, 1.0, 0.0, 1.0])
+        np.testing.assert_array_equal(targets[:, 1], [0.0, 0.0, 1.0, 0.0, 0.0])
+
+    def test_play_time_is_log_compressed_and_min_max_scaled(self):
+        play = self.build(self.spec())[:, 2]
+        self.assertAlmostEqual(float(play.min()), 0.0, places=6)
+        self.assertAlmostEqual(float(play.max()), 1.0, places=6)
+        # log1p compression: the 120000ms row must not dwarf everything else linearly.
+        self.assertGreater(float(play[4]), 120000.0 / 120000.0 * 0.5)
+
+    def test_constant_play_time_does_not_divide_by_zero(self):
+        spec = self.spec(aux_rows=[(0, 0, 42.0), (1, 0, 42.0)])
+        play = build_aux_labels(np.zeros((2, 5)), spec)[:, 2]
+        self.assertTrue(np.isfinite(play).all())
+        np.testing.assert_array_equal(play, [0.0, 0.0])
+
+    def test_aux_dimension_tracks_enabled_heads(self):
+        self.assertEqual(aux_dimension({}), len(AUX_HEADS))
+        spec = self.spec(use_is_like=False)
+        self.assertEqual(aux_dimension(spec), len(AUX_HEADS) - 1)
+        self.assertEqual(self.build(spec).shape[1], len(AUX_HEADS) - 1)
+
+    def test_disabling_every_head_is_rejected(self):
+        spec = self.spec(**{f"use_{head}": False for head in AUX_HEADS})
+        with self.assertRaises(ValueError):
+            self.build(spec)
+
+    def test_row_count_mismatch_is_rejected(self):
+        with self.assertRaises(ValueError):
+            build_aux_labels(np.zeros((len(self.AUX) + 1, 5)), self.spec())
 
 
 if __name__ == "__main__":

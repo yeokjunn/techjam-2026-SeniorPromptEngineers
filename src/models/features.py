@@ -22,6 +22,10 @@ over-trusts the feature and the gain does not transfer. It exists to be measured
 value buckets from seven interior quantile edges computed on train values only (the kit's trick,
 ``kuairand-starter-kit/data.py:32-33``), plus a reserved slot for "no history / unknown". Unknown
 is deliberately its own slot rather than the prior bucket, so the model can learn it separately.
+
+``build_aux_labels`` serves the sibling ``multi_task`` family with auxiliary train targets
+(``is_click``, ``is_like``, scaled ``play_time``). It is train-only by construction: a loss touches
+train rows only, so no valid/test path exists and none may be added.
 """
 
 from __future__ import annotations
@@ -37,7 +41,13 @@ from typing import Any
 
 import numpy as np
 
-from src.evaluation.official import REPO_ROOT, load_test_meta, load_train_valid
+from src.evaluation.official import (
+    REPO_ROOT,
+    TRAIN_END,
+    TRAIN_START,
+    load_test_meta,
+    load_train_valid,
+)
 
 
 GROUPS = ("user_rate", "user_author", "user_tab", "recency", "video_age", "tab_cross")
@@ -47,6 +57,14 @@ RATE_GROUPS = ("user_rate", "user_author", "user_tab", "tab_cross")
 SLOTS_PER_GROUP = 9
 VALUE_BUCKETS = SLOTS_PER_GROUP - 1  # -> VALUE_BUCKETS - 1 interior quantile edges
 UNKNOWN_SLOT = SLOTS_PER_GROUP - 1
+
+#: Auxiliary training targets for the ``multi_task`` family (review I8, spec appendix A idea 9).
+#: is_click covers 44% of rows and is strongly linked to long_view.
+AUX_HEADS = ("is_click", "is_like", "play_time")
+AUX_SOURCES = (
+    "log_standard_4_08_to_4_21_pure.csv",
+    "log_standard_4_22_to_5_08_pure.csv",
+)
 
 RECENCY_CAP_DAYS = 14
 DEFAULT_SMOOTHING = 20.0
@@ -392,3 +410,110 @@ def build_features(rows, spec: dict) -> np.ndarray:
         base = field_offset + column * SLOTS_PER_GROUP
         features[:, column] = slots.astype(np.int32) + base
     return features
+
+
+# --------------------------------------------------------------------------------------------
+# auxiliary training targets (the ``multi_task`` family)
+# --------------------------------------------------------------------------------------------
+
+
+def enabled_aux_heads(spec: dict) -> tuple[str, ...]:
+    return tuple(name for name in AUX_HEADS if bool(spec.get(f"use_{name}", True)))
+
+
+def aux_dimension(spec: dict) -> int:
+    """Number of auxiliary target columns ``build_aux_labels`` will emit."""
+    return len(enabled_aux_heads(spec))
+
+
+@lru_cache(maxsize=1)
+def _cached_aux_columns(data_dir: str) -> dict[str, np.ndarray]:
+    """``is_click`` / ``is_like`` / ``play_time_ms`` for TRAIN dates only.
+
+    A separate reader because ``load_train_valid``'s 7-tuple drops these three columns. Same
+    discipline as ``official.py``: the date is checked *before* any other column is touched, so
+    no auxiliary signal is ever read from a valid or test row. Rows come out in
+    ``load_train_valid``'s train order -- the two loaders read the same files in the same order
+    with the same filter -- and ``build_aux_labels`` asserts the lengths agree.
+    """
+    clicks: list[float] = []
+    likes: list[float] = []
+    plays: list[float] = []
+    for filename in AUX_SOURCES:
+        with (Path(data_dir) / filename).open(encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                if not (TRAIN_START <= int(row["date"]) <= TRAIN_END):
+                    # Crucially skip before reading any auxiliary label.
+                    continue
+                clicks.append(1.0 if row["is_click"] != "0" else 0.0)
+                likes.append(1.0 if row["is_like"] != "0" else 0.0)
+                plays.append(float(row["play_time_ms"]))
+    return {
+        "is_click": np.asarray(clicks, dtype=np.float64),
+        "is_like": np.asarray(likes, dtype=np.float64),
+        "play_time": np.asarray(plays, dtype=np.float64),
+    }
+
+
+def _aux_columns(spec: dict) -> dict[str, np.ndarray]:
+    override = spec.get("aux_rows")
+    if override is not None:
+        # Documented test override: (is_click, is_like, play_time_ms) per train row.
+        triples = [tuple(item) for item in override]
+        return {
+            "is_click": np.asarray([t[0] for t in triples], dtype=np.float64),
+            "is_like": np.asarray([t[1] for t in triples], dtype=np.float64),
+            "play_time": np.asarray([t[2] for t in triples], dtype=np.float64),
+        }
+    try:
+        return _cached_aux_columns(str(_resolve_data_dir(spec)))
+    except (OSError, KeyError) as exc:
+        raise FeatureDataUnavailable(f"Could not load auxiliary train columns: {exc}") from exc
+
+
+def _scaled_play_time(values: np.ndarray) -> np.ndarray:
+    """``log1p`` then min-max on train. play_time_ms is heavy-tailed and censored at video length."""
+    compressed = np.log1p(np.clip(values, 0.0, None))
+    low = float(compressed.min()) if len(compressed) else 0.0
+    high = float(compressed.max()) if len(compressed) else 0.0
+    if high <= low:
+        return np.zeros_like(compressed)
+    return (compressed - low) / (high - low)
+
+
+def build_aux_labels(rows, spec: dict) -> np.ndarray:
+    """Auxiliary targets for a multi-task loss, read from train dates only.
+
+    Returns ``(len(rows), t)`` float32 in ``[0, 1]``, one column per enabled head in ``AUX_HEADS``
+    order. ``is_click`` and ``is_like`` are binary; ``play_time`` is ``log1p`` compressed and
+    min-max scaled on train.
+
+    **Train-only by construction.** A loss touches train rows only, so no valid/test path exists
+    and none may be added -- this raises for any other split rather than silently returning
+    something a scorer could misuse.
+    """
+    split = str(spec.get("split", "train"))
+    if split != "train":
+        raise ValueError(
+            f"build_aux_labels is train-only; auxiliary targets have no {split!r} path."
+        )
+    heads = enabled_aux_heads(spec)
+    if not heads:
+        raise ValueError("At least one auxiliary head must be enabled.")
+
+    expected = len(rows)
+    columns = _aux_columns(spec)
+    available = len(columns["is_click"])
+    if available != expected:
+        raise ValueError(
+            f"Auxiliary train columns have {available} rows but {expected} were passed; "
+            "row order and length must match the kit's."
+        )
+
+    targets = np.empty((expected, len(heads)), dtype=np.float32)
+    for index, head in enumerate(heads):
+        values = columns[head]
+        targets[:, index] = (
+            _scaled_play_time(values) if head == "play_time" else values
+        ).astype(np.float32)
+    return targets

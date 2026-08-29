@@ -642,14 +642,14 @@ class ResearchLoop:
                     "researcher",
                     iteration,
                     lambda fb: self.roles.research(
-                        self.state, iteration, required_family(self.state)
+                        self.state, iteration, required_family(self.state), feedback=fb
                     ),
                 )
                 preflight = self._role_call(
                     "critic_preflight",
                     iteration,
                     lambda fb: self.roles.critic_preflight(
-                        self.state, iteration, decision
+                        self.state, iteration, decision, feedback=fb
                     ),
                 )
                 self.state.iteration_count += 1
@@ -660,7 +660,9 @@ class ResearchLoop:
                 manifest = self._role_call(
                     "builder",
                     iteration,
-                    lambda fb: self.roles.build(self.state, iteration, decision),
+                    lambda fb: self.roles.build(
+                        self.state, iteration, decision, feedback=fb
+                    ),
                 )
                 self._execute(iteration, decision, preflight, manifest)
                 self.consecutive_harness_errors = 0
@@ -688,17 +690,28 @@ class ResearchLoop:
                 if kind == "budget":
                     self.state.stop_reason = "llm_token_budget_reached"
                     break
-                self.state.stop_reason = "controller_error"
-                self.audit.write_json_atomic(
-                    self.run_dir / "error.json", {"error": str(exc)}
-                )
-                failed = self.audit.start_activity(
-                    self.state.iteration_count,
-                    "persistence",
-                    objective="Record an unexpected controller failure without corrupting the previous best.",
-                )
-                self.audit.finish_activity(failed, status="failed", error=str(exc))
-                break
+                if kind == "proposal":
+                    self.consecutive_harness_errors = 0
+                    self._record_failed_proposal(iteration, exc, "proposal_failed")
+                    continue
+                self.consecutive_harness_errors += 1
+                if self.consecutive_harness_errors >= int(
+                    self.budgets.get("max_consecutive_harness_errors", 3)
+                ):
+                    self.audit.write_json_atomic(
+                        self.run_dir / "error.json",
+                        {
+                            "error": str(exc),
+                            "error_type": type(exc).__name__,
+                            "kind": kind,
+                            "iteration": iteration,
+                            "consecutive_harness_errors": self.consecutive_harness_errors,
+                        },
+                    )
+                    self.state.stop_reason = "harness_error_breaker"
+                    break
+                self._record_failed_proposal(iteration, exc, "harness_error")
+                continue
 
         self.state.status = "completed"
         self._save()

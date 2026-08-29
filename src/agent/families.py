@@ -1,8 +1,22 @@
-"""Registry of the approved research families (shared by types, policy and prompts)."""
+"""Registry of the approved research families (shared by types, policy, prompts and safety).
+
+Each entry carries everything the rest of the harness needs to know about a family, so that
+adding one is a single edit here rather than a literal list in four modules:
+
+* ``grid`` / ``defaults`` -- the approved search space. ``policy.sanitize_parameters`` fills from
+  ``defaults`` and rejects any value ``not in`` the matching grid entry; ``in`` is exact and O(1)
+  for both a ``tuple`` of allowed values and a ``range`` integer bound.
+* ``required_calls`` -- the trusted helpers a candidate must call, as a tuple of *one-of groups*:
+  the candidate must call at least one name from each group. ``safety.validate_family_contract``
+  enforces it against the AST. Empty means "just the trusted sampler".
+* ``method_card`` -- the card ``MethodCatalog`` serves to the Researcher; the filename stem must
+  equal the family name, because the catalog globs ``*.md`` and keys by stem.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -10,21 +24,172 @@ class Family:
     name: str
     method_card: str  # repo-relative path, e.g. "research/methods/bpr.md"
     trusted_sampler: str  # function name in src.models.sampling
+    # ``compare=False`` keeps the frozen dataclass hashable despite the dict fields.
+    grid: dict[str, Any] = field(default_factory=dict, compare=False)
+    defaults: dict[str, Any] = field(default_factory=dict, compare=False)
+    required_calls: tuple[tuple[str, ...], ...] = ()
 
+
+# Exactly today's values from policy.py:27-64, so pointing the sanitiser at the registry
+# changes no behaviour for the two existing families.
+SHARED_GRID: dict[str, Any] = {
+    "seed": range(0, 1000),
+    "k": (16,),
+    "learning_rate": (0.0003, 0.0005, 0.001),
+    "epochs": range(1, 41),
+    "patience": range(1, 7),
+}
+SHARED_DEFAULTS: dict[str, Any] = {
+    "seed": 0,
+    "k": 16,
+    "learning_rate": 0.001,
+    "epochs": 40,
+    "patience": 4,
+}
+
+# Where each trusted helper lives, for prompt rendering only.
+TRUSTED_CALL_MODULES = {
+    "sample_bpr_pairs": "src.models.sampling",
+    "sample_softmax_groups": "src.models.sampling",
+    "build_features": "src.models.features",
+    "build_aux_labels": "src.models.features",
+}
+
+# Literals, deliberately not imported from ``src.models.features``: ``types.py`` imports this
+# module, so this import must stay light (no numpy). ``tests/test_features.py`` pins them equal
+# to the feature module's own tuples, so the duplication cannot drift silently.
+HISTORY_GROUPS = ("user_rate", "user_author", "user_tab", "recency", "video_age", "tab_cross")
+AUX_HEADS = ("is_click", "is_like", "play_time")
+
+#: Either trusted sampler satisfies the loss requirement for the feature-side families -- the
+#: loss is not what they vary, so both are legitimate.
+_EITHER_SAMPLER = ("sample_bpr_pairs", "sample_softmax_groups")
 
 FAMILIES: dict[str, Family] = {
-    "bpr": Family("bpr", "research/methods/bpr.md", "sample_bpr_pairs"),
+    "bpr": Family(
+        name="bpr",
+        method_card="research/methods/bpr.md",
+        trusted_sampler="sample_bpr_pairs",
+        grid={**SHARED_GRID, "batch_size": (2048, 4096), "negatives_per_positive": (1, 2)},
+        defaults={**SHARED_DEFAULTS, "batch_size": 2048, "negatives_per_positive": 1},
+    ),
     "group_softmax": Family(
-        "group_softmax", "research/methods/group_softmax.md", "sample_softmax_groups"
+        name="group_softmax",
+        method_card="research/methods/group_softmax.md",
+        trusted_sampler="sample_softmax_groups",
+        grid={
+            **SHARED_GRID,
+            "batch_size": (512, 1024, 2048),
+            "negatives_per_group": (4, 8),
+            "temperature": (0.5, 1.0, 2.0),
+        },
+        defaults={
+            **SHARED_DEFAULTS,
+            "batch_size": 2048,
+            "negatives_per_group": 4,
+            "temperature": 1.0,
+        },
+    ),
+    # The loss is unchanged; the *field set* is the axis under test. epochs caps at 20 because
+    # six extra fields roughly double the gather/scatter cost (one FM epoch ~12s) against
+    # experiment_timeout_seconds: 900. k stays 16 -- capacity is a measured dead end.
+    "history_features": Family(
+        name="history_features",
+        method_card="research/methods/history_features.md",
+        trusted_sampler="sample_bpr_pairs",
+        grid={
+            **SHARED_GRID,
+            "epochs": range(1, 21),
+            "batch_size": (2048, 4096),
+            "negatives_per_positive": (1, 2),
+            "smoothing": (5.0, 20.0, 100.0),
+            "scheme": ("prior_days", "leave_one_out"),
+            **{f"use_{group}": (True, False) for group in HISTORY_GROUPS},
+        },
+        defaults={
+            **SHARED_DEFAULTS,
+            "epochs": 20,
+            "batch_size": 2048,
+            "negatives_per_positive": 1,
+            "smoothing": 20.0,
+            "scheme": "prior_days",
+            **{f"use_{group}": True for group in HISTORY_GROUPS},
+        },
+        required_calls=(_EITHER_SAMPLER, ("build_features",)),
+    ),
+    # Auxiliary targets add a loss term, not FM fields, so the epoch budget is bpr's.
+    "multi_task": Family(
+        name="multi_task",
+        method_card="research/methods/multi_task.md",
+        trusted_sampler="sample_bpr_pairs",
+        grid={
+            **SHARED_GRID,
+            "batch_size": (2048, 4096),
+            "negatives_per_positive": (1, 2),
+            "aux_weight": (0.1, 0.3, 1.0),
+            **{f"use_{head}": (True, False) for head in AUX_HEADS},
+        },
+        defaults={
+            **SHARED_DEFAULTS,
+            "batch_size": 2048,
+            "negatives_per_positive": 1,
+            "aux_weight": 0.3,
+            **{f"use_{head}": True for head in AUX_HEADS},
+        },
+        required_calls=(_EITHER_SAMPLER, ("build_aux_labels",)),
     ),
 }
+
+# The *minimum* coverage set the harness stop rule must satisfy. Deliberately not
+# ``family_names()``: every family added later would otherwise make the rule unsatisfiable.
+COVERAGE_FAMILIES = frozenset({"bpr", "group_softmax"})
 
 
 def family_names() -> frozenset[str]:
     return frozenset(FAMILIES)
 
 
+def coverage_families() -> frozenset[str]:
+    """Families a run must cover before it may stop (see policy.coverage_complete)."""
+    return COVERAGE_FAMILIES
+
+
+def required_call_groups(family: str) -> tuple[tuple[str, ...], ...]:
+    """One-of groups of trusted calls a ``family`` candidate must make.
+
+    Raises ``KeyError`` for an unregistered family; callers translate that to their own error.
+    """
+    entry = FAMILIES[family]
+    return entry.required_calls or ((entry.trusted_sampler,),)
+
+
+def _qualified(call: str) -> str:
+    module = TRUSTED_CALL_MODULES.get(call)
+    return f"{module}.{call}" if module else call
+
+
+def _render_grid_value(value: Any) -> str:
+    if isinstance(value, range):
+        return f"{value.start}-{value.stop - 1}"
+    return ", ".join(repr(item) if isinstance(item, str) else str(item) for item in value)
+
+
 def builder_brief(name: str) -> str:
-    """Render the trusted sampler requirement for a registered family."""
-    sampler = FAMILIES[name].trusted_sampler
-    return f"You must call src.models.sampling.{sampler}()."
+    """Prompt text for the Builder: the mandatory trusted calls plus the approved grid.
+
+    Consumed by ``roles.py`` so no role prompt has to track the family list by hand.
+    """
+    entry = FAMILIES[name]
+    lines = []
+    for group in required_call_groups(name):
+        rendered = ", ".join(f"{_qualified(call)}()" for call in group)
+        if len(group) == 1:
+            lines.append(f"You must call {rendered}.")
+        else:
+            lines.append(f"You must call at least one of: {rendered}.")
+    if entry.grid:
+        lines.append(f"Approved search space for {name} (values outside it are rejected):")
+        lines.extend(
+            f"  {key}: {_render_grid_value(entry.grid[key])}" for key in sorted(entry.grid)
+        )
+    return "\n".join(lines)

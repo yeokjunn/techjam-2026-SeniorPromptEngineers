@@ -38,7 +38,8 @@ def decision_payload(family: str) -> dict:
 
 class FamilyRegistryTests(unittest.TestCase):
     def test_family_names_expose_the_registered_families(self):
-        self.assertEqual(family_names(), frozenset({"bpr", "group_softmax"}))
+        expected = {"bpr", "group_softmax", "history_features", "multi_task"}
+        self.assertEqual(family_names(), frozenset(expected))
         self.assertEqual(family_names(), frozenset(FAMILIES))
 
     def test_each_family_points_at_a_real_method_card_and_sampler(self):
@@ -143,9 +144,10 @@ class StubTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.assertIsNone(render_reports(Path(directory)))
 
-    def test_history_features_are_not_implemented_yet(self):
-        with self.assertRaises(NotImplementedError):
-            build_features([], {})
+    def test_history_features_return_one_column_per_enabled_group(self):
+        train = [(20220408, "u", "v", "a", "1", 1.0, 1)]
+        spec = {"split": "train", "history_rows": {"train": train}}
+        self.assertEqual(build_features(np.zeros((1, 5)), spec).shape, (1, 6))
 
 
 class ResearchConfigTests(unittest.TestCase):

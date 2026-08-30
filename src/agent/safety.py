@@ -37,7 +37,7 @@ ALLOWED_IMPORTS = {
     "src.models.sampling",
     "src.experiments.contracts",
 }
-TEST_ONLY_IMPORTS = {"unittest", "candidate"}
+TEST_ONLY_IMPORTS = {"unittest", "candidate", "types"}
 # ``__name__`` is the one dunder a candidate legitimately reads: without it every generated test
 # carrying ``if __name__ == "__main__":`` would be rejected.
 ALLOWED_DUNDER_NAMES = {"__name__"}

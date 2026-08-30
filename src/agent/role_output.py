@@ -188,3 +188,4 @@ def enforce_protected_keys(
                 raise RoleOutputInvalid(
                     f"Adjustment mutated protected field {key!r} from {original_data[key]!r} to {adjusted_data[key]!r}"
                 )
+

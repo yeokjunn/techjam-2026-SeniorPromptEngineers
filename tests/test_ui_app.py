@@ -41,6 +41,26 @@ class DashboardAppTests(unittest.TestCase):
         self.assertIn("n0 -> n2;", dot)
         self.assertNotIn("missing-parent ->", dot)
 
+    def test_make_diffs_collapsible(self):
+        from src.ui.app import _make_diffs_collapsible
+
+        # Test with None and empty string
+        self.assertIsNone(_make_diffs_collapsible(None))
+        self.assertEqual(_make_diffs_collapsible(""), "")
+
+        # Test with no diff blocks
+        self.assertEqual(_make_diffs_collapsible("hello world"), "hello world")
+
+        # Test with single diff block
+        md = "Some text\n```diff\n- old\n+ new\n```\nSome other text"
+        expected = "Some text\n<details>\n<summary>🔍 View Code Changes</summary>\n\n```diff\n- old\n+ new\n```\n</details>\nSome other text"
+        self.assertEqual(_make_diffs_collapsible(md), expected)
+
+        # Test with multiple diff blocks
+        md_mult = "t1\n```diff\n- a\n+ b\n```\nt2\n```diff\n- c\n+ d\n```"
+        expected_mult = "t1\n<details>\n<summary>🔍 View Code Changes</summary>\n\n```diff\n- a\n+ b\n```\n</details>\nt2\n<details>\n<summary>🔍 View Code Changes</summary>\n\n```diff\n- c\n+ d\n```\n</details>"
+        self.assertEqual(_make_diffs_collapsible(md_mult), expected_mult)
+
     def test_both_dashboard_entry_points_render_without_exceptions(self):
         from streamlit.testing.v1 import AppTest
 

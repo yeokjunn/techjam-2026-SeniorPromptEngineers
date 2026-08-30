@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -394,6 +395,16 @@ def _dot_escape(value: Any) -> str:
         .replace("\r", " ")
         .replace("\n", "\\n")
     )
+
+
+def _make_diffs_collapsible(markdown_text: str | None) -> str | None:
+    if not markdown_text:
+        return markdown_text
+    pattern = r"(```diff\n.*?\n```)"
+    def replacer(match: Any) -> str:
+        diff_block = match.group(1)
+        return f"<details>\n<summary>🔍 View Code Changes</summary>\n\n{diff_block}\n</details>"
+    return re.sub(pattern, replacer, markdown_text, flags=re.DOTALL)
 
 
 def _experiment_dag_dot(
@@ -817,7 +828,10 @@ def _results(snapshot: RunSnapshot, official: float) -> None:
         st.subheader("Autonomous Research Journal")
         with st.expander("View journal.md", expanded=bool(snapshot.journal_markdown)):
             if snapshot.journal_markdown:
-                st.markdown(snapshot.journal_markdown)
+                st.markdown(
+                    _make_diffs_collapsible(snapshot.journal_markdown),
+                    unsafe_allow_html=True,
+                )
             else:
                 st.caption("journal.md not rendered yet.")
         with st.expander("View results.md", expanded=False):

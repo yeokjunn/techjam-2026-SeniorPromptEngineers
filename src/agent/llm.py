@@ -144,7 +144,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 },
                 "maxItems": 3,
             },
-            "recommended_next_focus": {"type": "string", "maxLength": 180},
+            "recommended_next_focus": {"type": "string", "maxLength": 300},
             "ui_notes": {
                 "type": "array",
                 "items": {"type": "string", "maxLength": 160},

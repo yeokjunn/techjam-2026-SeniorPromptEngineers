@@ -806,6 +806,83 @@ class ResearchLoop:
             },
         )
 
+    @staticmethod
+    def _critic_revision_feedback(critic: CriticDecision) -> str:
+        concerns = "; ".join(critic.concerns)
+        parts = [
+            "PREVIOUS ATTEMPT REJECTED by critic preflight before code generation.",
+            f"Rationale: {critic.rationale}",
+        ]
+        if concerns:
+            parts.append(f"Concerns: {concerns}")
+        if critic.next_focus:
+            parts.append(f"Next focus: {critic.next_focus}")
+        parts.append(
+            "Revise the proposal directly; do not repeat the same hypothesis_id or unsupported mechanism."
+        )
+        return " ".join(parts)
+
+    def _propose_until_preflight_approved(
+        self,
+        iteration: int,
+        eda_report: EDAReport | None,
+        max_proposals: int,
+    ) -> tuple[ResearchDecision, CriticDecision]:
+        """Use Critic preflight rejection as Researcher feedback before burning an iteration."""
+        maximum = int(self.budgets.get("max_role_reprompts", 2))
+        feedback: str | None = None
+        revision = 0
+        while True:
+            if self.state.proposal_attempts >= max_proposals:
+                raise RuntimeError("proposal_budget_reached")
+            self.state.proposal_attempts += 1
+            required = required_family(self.state, float(self.convergence["epsilon"]))
+            decision = self._role_call(
+                "researcher",
+                iteration,
+                lambda fb, seq=0: self.roles.research(
+                    self.state,
+                    iteration,
+                    required,
+                    feedback=feedback if fb is None else fb,
+                    sequence=revision + seq,
+                    eda_report=eda_report,
+                ),
+            )
+            self.discovery_store.record_proposal(iteration, decision)
+            preflight = self._role_call(
+                "critic_preflight",
+                iteration,
+                lambda fb, seq=0: self.roles.critic_preflight(
+                    self.state,
+                    iteration,
+                    decision,
+                    feedback=fb,
+                    sequence=revision + seq,
+                    eda_report=eda_report,
+                ),
+            )
+            if preflight.approved:
+                return decision, preflight
+            self.audit.append_jsonl(
+                self.run_dir / "research_memory.jsonl",
+                {
+                    "type": "critic_preflight_rejection",
+                    "iteration": iteration,
+                    "proposal_attempt": self.state.proposal_attempts,
+                    "hypothesis_id": decision.hypothesis_id,
+                    "family": decision.family,
+                    "rationale": preflight.rationale,
+                    "concerns": list(preflight.concerns),
+                    "next_focus": preflight.next_focus,
+                    "will_revise": revision < maximum,
+                },
+            )
+            if revision >= maximum:
+                return decision, preflight
+            revision += 1
+            feedback = self._critic_revision_feedback(preflight)
+
     def _parent_sources(self, parent_experiment: str | None) -> dict[str, str]:
         if not parent_experiment:
             return {}
@@ -1250,35 +1327,19 @@ class ResearchLoop:
                     self.state.stop_reason = "proposal_budget_reached"
                     break
 
-                self.state.proposal_attempts += 1
                 eda_report, eda_artifact_path = self._run_eda(iteration)
-                decision = self._role_call(
-                    "researcher",
-                    iteration,
-                    lambda fb, seq=0: self.roles.research(
-                        self.state,
+                try:
+                    decision, preflight = self._propose_until_preflight_approved(
                         iteration,
-                        required_family(self.state, float(self.convergence["epsilon"])),
-                        feedback=fb,
-                        sequence=seq,
-                        eda_report=eda_report,
-                    ),
-                )
-                self.discovery_store.record_proposal(iteration, decision)
-                preflight = self._role_call(
-                    "critic_preflight",
-                    iteration,
-                    lambda fb, seq=0: self.roles.critic_preflight(
-                        self.state,
-                        iteration,
-                        decision,
-                        feedback=fb,
-                        sequence=seq,
-                        eda_report=eda_report,
-                    ),
-                )
+                        eda_report,
+                        max_proposals,
+                    )
+                except RuntimeError as exc:
+                    if str(exc) == "proposal_budget_reached":
+                        self.state.stop_reason = "proposal_budget_reached"
+                        break
+                    raise
                 if not preflight.approved:
-                    self.state.iteration_count += 1
                     self._record_rejection(
                         iteration,
                         decision,

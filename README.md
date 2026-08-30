@@ -7,8 +7,8 @@ The working target is `long_view`, evaluated with GAUC and nDCG@5.
 
 The repository provides an end-to-end autonomous research harness:
 
-- a deterministic experiment proposer with an interface that can later be backed
-  by an LLM
+- a live LLM-driven proposer (Researcher/Critic/Builder/Debugger, plus an EDA pass),
+  with a deterministic scripted provider for offline testing
 - an isolated subprocess runner with timeouts and failure capture
 - train/validation-only data loading that skips test dates before reading labels
 - the untouched starter-kit evaluator and FM implementation
@@ -20,7 +20,9 @@ The repository provides an end-to-end autonomous research harness:
 - OpenAI Responses API and OpenAI-compatible Chat Completions adapters, including
   GLM, with structured outputs, retry handling, and token accounting
 - restricted agent-generated candidates with trusted metric computation
-- BPR and same-user group-softmax research cards and audited sampling utilities
+- a user-level validation holdout so early stopping and reporting use disjoint halves
+- four registered research families -- BPR, same-user group-softmax, history features
+  and multi-task auxiliary targets -- each with a method card and audited trusted helpers
 - coarse live-stage observability, structured agent decision notes, and immutable
   per-iteration candidate patches for the local dashboard
 
@@ -385,14 +387,79 @@ Conductor: research_controller.ResearchLoop
   └─ Ledger/UI: ResearchAudit → report.render_reports → read-only Streamlit UI
 ```
 
+## Results
+
+The committed converged run is `runs/final/` (promote another with
+`python scripts/promote_final_run.py runs/<id>_research`). Validation, KuaiRand-Pure:
+
+| Metric | Official baseline | Agent best | Δ |
+|---|---|---|---|
+| GAUC | 0.6674 | 0.6705 | +0.0031 |
+| nDCG@5 | 0.5357 | 0.5375 | +0.0018 |
+| **primary** | **0.6016** | **0.6040** | **+0.0024** |
+
+`score_dataset` (the judging formula, mean of the two metric deltas) = **+0.0025** on
+validation. The ranked score applies the same formula to the hidden test, which is scored
+once and is not computable here.
+
+**Read that delta with the caveat below.** Progress should be judged against the 0.8645
+attainable ceiling rather than 1.0 — 27.1% of test users have no positive label and score
+nDCG 0 for any model — so +0.0024 is roughly 0.9% of the baseline-to-ceiling span.
+
+Resource usage to reach the converged result (Feasibility reporting):
+
+| | |
+|---|---|
+| LLM tokens (input + output) | 354,290 |
+| Agent wall-clock | 49.4 min |
+| GPU-hours | 0.0 |
+| Iterations used | 9 of 50 (stopped on the convergence rule, not the cap) |
+| **Manual interventions** | **0** |
+
+### How much of that delta is real
+
+Every candidate early-stops on validation and reports that same validation number, and the
+run reports the best of ~14 candidates — roughly 112 selections against the same 124,909
+rows. Measured across 21 candidates, a reported score sits **+0.0025 above the median of the
+epoch curve it came from**, which is the size of the delta itself.
+
+`src/evaluation/holdout.py` therefore splits validation by user into a selection half (early
+stopping, candidate choice) and a reporting half (never consulted during training), and the
+baseline is scored on both. The halves are not equally hard — the reporting half is +0.0053
+easier — so the comparison must be made within a half:
+
+| comparison | delta |
+|---|---|
+| candidate report-half vs baseline **full** validation | +0.0049 ← wrong, mismatched populations |
+| candidate report-half vs baseline **report** half | **+0.0023** ← apples to apples |
+
+The honest figure agrees with the full-validation +0.0024, so the improvement appears real
+and consistent rather than a selection artefact. Runs before `runs/final/` predate the split
+and carry no `report_primary`.
+
 ## Limitations and next work
 
-- No committed converged live-LLM run exists yet; the reported autonomous run is
-  the deterministic one-iteration smoke test.
-- The harness lacks the append-only `intervene` command and separate persisted
-  official-convergence verdict.
-- Only BPR and group-softmax are currently registered; sequence features,
-  multi-task feedback, and repeated-seed variance estimates remain next steps.
+- **The improvement is small and near the noise floor.** The baseline's own 5-seed std is
+  0.0008 and candidates are scored on a single seed, so a +0.002 delta is roughly 3σ of
+  seed noise. Scoring each candidate on 2–3 seeds and comparing means is the first thing we
+  would add; the budget allows it (9 of 50 iterations used).
+- **Web search never fires.** 0 search calls across 207 role calls: the provider in use
+  accepts the tool parameter and no-ops it, so the Researcher's evidence is limited to the
+  four method cards in `research/methods/` that we wrote. Two cited URLs in earlier run logs
+  did not resolve. Cited-source validation, and a provider that genuinely searches, are
+  needed before the agent can be said to draw on the literature autonomously.
+- **The model class is fixed.** Candidates must use the trusted `FMRanker`; the competition
+  permits PyTorch, LightGBM and others. We probed the obvious extension directly rather than
+  assuming: a numpy DeepFM (h=32/64) peaked *lower* than the FM (0.6025 vs 0.6030) and
+  overfit from epoch 1. Combined with the kit's measured k-sweep, capacity and nonlinearity
+  both look like dead ends on 1.14M rows.
+- **Two registered families are barely tested.** `history_features` and `multi_task` were
+  unreachable until a prompt fix; `history_features` has since produced six successful
+  candidates in a partial run, `multi_task` still has none.
+- **What we measured and ruled out**, so others need not repeat it: L2 regularisation moves
+  the peak by 0.00005 across three orders of magnitude (Adam normalises gradient-L2 away);
+  cold start is not a factor (1.6% of validation rows contain an unseen id); the binding
+  constraint is that validation primary peaks at epoch 3–5 and then decays below baseline.
 
 ## Team contributions
 

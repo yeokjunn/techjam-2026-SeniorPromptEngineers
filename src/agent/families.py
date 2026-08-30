@@ -53,14 +53,15 @@ TRUSTED_CALL_MODULES = {
     "sample_softmax_groups": "src.models.sampling",
     "build_features": "src.models.features",
     "build_aux_labels": "src.models.features",
-    "FMRanker": "src.models.fm_core",
 }
 
-# Return shapes for the mandatory helpers. The method cards carry the full contract, but a
-# family is only ever shown its *own* card -- history_features and multi_task call the samplers
-# without seeing bpr.md or group_softmax.md -- so the shape that actually gets mis-guessed
-# travels with the signature instead. An observed run called .reshape(-1, K) on the already-2-D
-# negatives array and lost the iteration to "cannot reshape array of size 184".
+TRUSTED_CALL_SIGNATURES = {
+    "sample_bpr_pairs": "(users, labels, rng, negatives_per_positive)",
+    "sample_softmax_groups": "(users, labels, rng, negatives_per_group)",
+    "build_features": "(rows, spec)",
+    "build_aux_labels": "(rows, spec)",
+}
+
 TRUSTED_CALL_RETURNS = {
     "sample_bpr_pairs": (
         "returns (positives, negatives), both int64 row indices of shape (n_pairs,), parallel "
@@ -87,12 +88,11 @@ TRUSTED_CALL_RETURNS = {
 # module, so this import must stay light (no numpy). ``tests/test_features.py`` pins them equal
 # to the feature module's own tuples, so the duplication cannot drift silently.
 HISTORY_GROUPS = ("user_rate", "user_author", "user_tab", "recency", "video_age", "tab_cross")
-AUX_HEADS = ("is_click", "is_like", "play_time")
+AUX_HEADS = ("is_click", "is_like", "is_follow", "is_comment", "is_forward", "play_time")
 
 #: Either trusted sampler satisfies the loss requirement for the feature-side families -- the
 #: loss is not what they vary, so both are legitimate.
 _EITHER_SAMPLER = ("sample_bpr_pairs", "sample_softmax_groups")
-
 
 FAMILIES: dict[str, Family] = {
     "bpr": Family(
@@ -147,6 +147,8 @@ FAMILIES: dict[str, Family] = {
         required_calls=(_EITHER_SAMPLER, ("build_features",)),
     ),
     # Auxiliary targets add a loss term, not FM fields, so the epoch budget is bpr's.
+    # The conservative default is click-only at low weight: prior runs showed that enabling every
+    # sparse/noisy head at 0.3 can swamp the ranking objective before the family gets a fair test.
     "multi_task": Family(
         name="multi_task",
         method_card="research/methods/multi_task.md",
@@ -155,23 +157,22 @@ FAMILIES: dict[str, Family] = {
             **SHARED_GRID,
             "batch_size": (2048, 4096),
             "negatives_per_positive": (1, 2),
-            "aux_weight": (0.1, 0.3, 1.0),
+            "aux_weight": (0.05, 0.1, 0.3, 1.0),
             **{f"use_{head}": (True, False) for head in AUX_HEADS},
         },
         defaults={
             **SHARED_DEFAULTS,
             "batch_size": 2048,
             "negatives_per_positive": 1,
-            "aux_weight": 0.3,
-            **{f"use_{head}": True for head in AUX_HEADS},
+            "aux_weight": 0.05,
+            **{f"use_{head}": head == "is_click" for head in AUX_HEADS},
         },
         required_calls=(_EITHER_SAMPLER, ("build_aux_labels",)),
     ),
 }
 
-# The *minimum* coverage set the harness stop rule must satisfy. Deliberately not
-# ``family_names()``: every family added later would otherwise make the rule unsatisfiable.
-COVERAGE_FAMILIES = frozenset({"bpr", "group_softmax"})
+# The *minimum* coverage set the harness stop rule must satisfy.
+COVERAGE_FAMILIES = frozenset({"bpr", "group_softmax", "history_features", "multi_task"})
 
 
 def family_names() -> frozenset[str]:
@@ -197,40 +198,18 @@ def _qualified(call: str) -> str:
     return f"{module}.{call}" if module else call
 
 
-def _signature(call: str) -> str:
-    """Render ``module.call(args)`` with the *real* signature, read at prompt time.
-
-    Naming a mandatory helper without its signature makes the Builder guess the argument
-    order, and a wrong guess costs the whole iteration: an observed run called
-    ``sample_bpr_pairs(X, y, users, 1)`` instead of ``(users, labels, rng, n)``, which fails
-    deep inside trusted code with ``unhashable type: 'numpy.ndarray'`` and burned both
-    Debugger repairs. Reading the signature from the function keeps the prompt correct by
-    construction rather than by a hand-copied string that can drift.
-
-    The import is deliberately lazy: ``types.py`` imports this module, so module-level
-    imports here must stay light. ``builder_brief`` only runs while building a prompt, by
-    which time numpy is loaded anyway.
-    """
-    qualified = _qualified(call)
-    module_name = TRUSTED_CALL_MODULES.get(call)
-    if not module_name:
-        return f"{qualified}()"
-    try:
-        import importlib
-        import inspect
-
-        function = getattr(importlib.import_module(module_name), call)
-        rendered = f"{qualified}{inspect.signature(function)}"
-    except Exception:
-        return f"{qualified}()"
-    returns = TRUSTED_CALL_RETURNS.get(call)
-    return f"{rendered} -- {returns}" if returns else rendered
-
-
 def _render_grid_value(value: Any) -> str:
     if isinstance(value, range):
         return f"{value.start}-{value.stop - 1}"
     return ", ".join(repr(item) if isinstance(item, str) else str(item) for item in value)
+
+
+def _signature(call: str) -> str:
+    qualified = _qualified(call)
+    sig = TRUSTED_CALL_SIGNATURES.get(call, "()")
+    rendered = f"{qualified}{sig}"
+    returns = TRUSTED_CALL_RETURNS.get(call)
+    return f"{rendered} -- {returns}" if returns else rendered
 
 
 def builder_brief(name: str) -> str:
@@ -240,9 +219,6 @@ def builder_brief(name: str) -> str:
     """
     entry = FAMILIES[name]
     lines = [
-        # safety.validate_identifier turns candidate_id into a directory name and allows only
-        # [A-Za-z0-9_-]. An observed run proposed 'gsm_1_seed42_k16_lr5e-4_neg4_T1.0' and lost
-        # the whole iteration to SafetyViolation, because nothing in the prompt said so.
         "candidate_id must match [A-Za-z0-9_-]{1,80} -- letters, digits, underscore and hyphen "
         "only. No dots, spaces or other punctuation (it becomes a directory name).",
     ]

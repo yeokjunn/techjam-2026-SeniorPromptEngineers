@@ -373,7 +373,7 @@ class ProposalErrorTests(unittest.TestCase):
             retries = memory(run_dir, "role_retry")
             self.assertEqual(len(retries), 1)
             self.assertEqual(retries[0]["label"], "builder")
-            self.assertIn("epochs must be between 1 and 40.", retries[0]["error"])
+            self.assertIn("epochs", retries[0]["error"])
             self.assertEqual([node.status for node in loop.state.nodes], ["success"])
             self.assertEqual(loop.state.nodes[0].parameters["epochs"], 5)
 

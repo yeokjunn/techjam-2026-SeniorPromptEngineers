@@ -17,6 +17,7 @@ from src.evaluation.official import (
     official_evaluate,
     starter_modules,
 )
+from src.evaluation.holdout import split_users
 from src.experiments.contracts import CandidateContext, CandidateOutput
 from src.agent.safety import validate_source
 
@@ -86,6 +87,16 @@ def validate_and_persist_output(
     if not np.all(np.isfinite(scores)):
         raise ValueError("Validation scores contain NaN or Inf.")
     metrics = official_evaluate(valid_users, valid_y, scores)
+    # `primary` stays full-validation: it is what the official baseline is measured on and what
+    # the judged delta uses. These two are reported next to it so the selection gap is visible.
+    # `report_primary` never informed early stopping, so it is the honest estimate of the two.
+    selection, reporting = split_users(valid_users)
+    for name, mask in (("select", selection), ("report", reporting)):
+        subset_users = [user for user, keep in zip(valid_users, mask) if keep]
+        if subset_users:
+            metrics[f"{name}_primary"] = official_evaluate(
+                subset_users, valid_y[mask], scores[mask]
+            )["primary"]
 
     checkpoint: dict[str, np.ndarray] = {}
     total_elements = 0
@@ -171,13 +182,21 @@ def main() -> None:
     valid_x, valid_y, valid_users = encoded["valid"]
     test_x = encoded["test"][0]
 
+    # Early stopping and any in-candidate tuning see the SELECTION half only, so the
+    # reporting half stays untouched by the choices made during training. The candidate
+    # still hands in scores for every validation row; the subset happens here, in trusted
+    # code, so no candidate can opt out of it.
+    _selection, _reporting = split_users(valid_users)
+    _select_users = [user for user, keep in zip(valid_users, _selection) if keep]
+    _select_y = valid_y[_selection]
+
     def evaluate_validation(scores: np.ndarray) -> dict[str, float]:
         scores = np.asarray(scores)
         if scores.ndim != 1 or len(scores) != len(valid_y):
             raise ValueError("Validation scores have the wrong shape.")
         if not np.all(np.isfinite(scores)):
             raise ValueError("Validation scores contain NaN or Inf.")
-        return official_evaluate(valid_users, valid_y, scores)
+        return official_evaluate(_select_users, _select_y, scores[_selection])
 
     context = CandidateContext(
         train_x=train_x,

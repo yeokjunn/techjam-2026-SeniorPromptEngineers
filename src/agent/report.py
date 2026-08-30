@@ -554,6 +554,25 @@ def _render_results_full(summary: dict | None, run_config: dict | None,
             )
             lines.append("")
 
+    select = best_metrics.get("select_primary")
+    report = best_metrics.get("report_primary")
+    if select is not None and report is not None:
+        lines.append("### Selection vs reporting half")
+        lines.append("")
+        lines.append(
+            "Validation is split by user into a selection half (early stopping and candidate "
+            "choice) and a reporting half (never consulted during training). The reporting "
+            "number is the honest estimate; a large gap between them is selection noise, not a "
+            "gain."
+        )
+        lines.append("")
+        lines.append("| Half | primary | used for |")
+        lines.append("|---|---|---|")
+        lines.append(f"| selection | {select:.4f} | early stopping, best-candidate choice |")
+        lines.append(f"| reporting | {report:.4f} | none — held out |")
+        lines.append(f"| **gap** | **{select - report:+.4f}** | selection effect |")
+        lines.append("")
+
     lines.append("## Test Submission")
     lines.append("")
     gate_status = gate.get("status", _NR)

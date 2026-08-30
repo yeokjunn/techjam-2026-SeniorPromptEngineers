@@ -1,0 +1,238 @@
+[
+  {
+    "action": "explore",
+    "artifact_path": null,
+    "candidate_dir": "generated_experiments\\20260830T141756693797Z_research\\001_group_softmax_gs01",
+    "experiment_id": "group_softmax_gs01",
+    "family": "group_softmax",
+    "hypothesis_id": "gs_01_listwise_longview",
+    "iteration": 1,
+    "metrics": null,
+    "parameters": {
+      "batch_size": 1024,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_group": 8,
+      "patience": 5,
+      "seed": 42,
+      "temperature": 1.0
+    },
+    "parent_experiment": null,
+    "replicated_from": null,
+    "status": "failed"
+  },
+  {
+    "action": "explore",
+    "artifact_path": "runs/20260830T141756693797Z_research/artifacts/002_bpr_b01/model.npz",
+    "candidate_dir": "generated_experiments\\20260830T141756693797Z_research\\002_bpr_b01",
+    "experiment_id": "bpr_b01",
+    "family": "bpr",
+    "hypothesis_id": "bpr_b01",
+    "iteration": 2,
+    "metrics": {
+      "GAUC": 0.6698340177536011,
+      "nDCG@5": 0.5367793440818787,
+      "primary": 0.6033066511154175,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_positive": 1,
+      "patience": 5,
+      "seed": 42
+    },
+    "parent_experiment": null,
+    "replicated_from": null,
+    "status": "success"
+  },
+  {
+    "action": "exploit",
+    "artifact_path": "runs/20260830T141756693797Z_research/artifacts/003_bpr_b02/model.npz",
+    "candidate_dir": "generated_experiments\\20260830T141756693797Z_research\\003_bpr_b02",
+    "experiment_id": "bpr_b02",
+    "family": "bpr",
+    "hypothesis_id": "bpr_b02",
+    "iteration": 3,
+    "metrics": {
+      "GAUC": 0.6697971224784851,
+      "nDCG@5": 0.5364272594451904,
+      "primary": 0.6031122207641602,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_positive": 2,
+      "patience": 5,
+      "seed": 42
+    },
+    "parent_experiment": "bpr_b01",
+    "replicated_from": null,
+    "status": "success"
+  },
+  {
+    "action": "exploit",
+    "artifact_path": "runs/20260830T141756693797Z_research/artifacts/004_bpr_b03/model.npz",
+    "candidate_dir": "generated_experiments\\20260830T141756693797Z_research\\004_bpr_b03",
+    "experiment_id": "bpr_b03",
+    "family": "bpr",
+    "hypothesis_id": "bpr_b03",
+    "iteration": 4,
+    "metrics": {
+      "GAUC": 0.6704111695289612,
+      "nDCG@5": 0.5368166565895081,
+      "primary": 0.6036139130592346,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0003,
+      "negatives_per_positive": 1,
+      "patience": 5,
+      "seed": 42
+    },
+    "parent_experiment": "bpr_b01",
+    "replicated_from": null,
+    "status": "success"
+  },
+  {
+    "action": "replicate",
+    "artifact_path": "runs/20260830T141756693797Z_research/artifacts/005_bpr_b03_seed1/model.npz",
+    "candidate_dir": "generated_experiments\\20260830T141756693797Z_research\\005_bpr_b03_seed1",
+    "experiment_id": "bpr_b03_seed1",
+    "family": "bpr",
+    "hypothesis_id": "bpr_b03",
+    "iteration": 5,
+    "metrics": {
+      "GAUC": 0.670089066028595,
+      "nDCG@5": 0.5369892120361328,
+      "primary": 0.6035391092300415,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0003,
+      "negatives_per_positive": 1,
+      "patience": 5,
+      "seed": 1
+    },
+    "parent_experiment": "bpr_b03",
+    "replicated_from": "bpr_b03",
+    "status": "success"
+  },
+  {
+    "action": "replicate",
+    "artifact_path": "runs/20260830T141756693797Z_research/artifacts/006_bpr_b03_seed2/model.npz",
+    "candidate_dir": "generated_experiments\\20260830T141756693797Z_research\\006_bpr_b03_seed2",
+    "experiment_id": "bpr_b03_seed2",
+    "family": "bpr",
+    "hypothesis_id": "bpr_b03",
+    "iteration": 6,
+    "metrics": {
+      "GAUC": 0.6705190539360046,
+      "nDCG@5": 0.5374909043312073,
+      "primary": 0.604004979133606,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0003,
+      "negatives_per_positive": 1,
+      "patience": 5,
+      "seed": 2
+    },
+    "parent_experiment": "bpr_b03",
+    "replicated_from": "bpr_b03",
+    "status": "success"
+  },
+  {
+    "action": "exploit",
+    "artifact_path": null,
+    "candidate_dir": null,
+    "experiment_id": "rejected_bpr_b04",
+    "family": "bpr",
+    "hypothesis_id": "bpr_b04",
+    "iteration": 7,
+    "metrics": null,
+    "parameters": {
+      "batch_size": 4096,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0003,
+      "negatives_per_positive": 1,
+      "patience": 5,
+      "seed": 3
+    },
+    "parent_experiment": "bpr_b03_seed2",
+    "replicated_from": null,
+    "status": "critic_rejected"
+  },
+  {
+    "action": "exploit",
+    "artifact_path": null,
+    "candidate_dir": null,
+    "experiment_id": "rejected_bpr_b05_seed4",
+    "family": "bpr",
+    "hypothesis_id": "bpr_b05_seed4",
+    "iteration": 8,
+    "metrics": null,
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.0003,
+      "negatives_per_positive": 1,
+      "patience": 5,
+      "seed": 4
+    },
+    "parent_experiment": "bpr_b03_seed2",
+    "replicated_from": null,
+    "status": "critic_rejected"
+  },
+  {
+    "action": "exploit",
+    "artifact_path": "runs/20260830T141756693797Z_research/artifacts/009_group_softmax_gs02/model.npz",
+    "candidate_dir": "generated_experiments\\20260830T141756693797Z_research\\009_group_softmax_gs02",
+    "experiment_id": "group_softmax_gs02",
+    "family": "group_softmax",
+    "hypothesis_id": "group_softmax_gs02",
+    "iteration": 9,
+    "metrics": {
+      "GAUC": 0.6689923405647278,
+      "nDCG@5": 0.5355299711227417,
+      "primary": 0.6022611856460571,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 512,
+      "epochs": 20,
+      "k": 16,
+      "learning_rate": 0.001,
+      "negatives_per_group": 4,
+      "patience": 5,
+      "seed": 42,
+      "temperature": 2.0
+    },
+    "parent_experiment": "group_softmax_gs01",
+    "replicated_from": null,
+    "status": "success"
+  }
+]

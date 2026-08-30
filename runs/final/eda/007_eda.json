@@ -1,0 +1,144 @@
+{
+  "feature_candidates": [
+    {
+      "description": "Discretize video duration into log-scaled bins (including a zero-duration bucket) and learn per-bin embeddings concatenated to the video embedding.",
+      "expected_impact": "Mitigates zero-duration and duration-capping confounds, likely improving ranking stability across tabs.",
+      "family": "bpr",
+      "implementation_scope": "Add a categorical feature to the video feature table using existing duration field; embed via lookup in the model's feature embedding layer.",
+      "leakage_risk": "None; duration is a static video attribute, not derived from target or temporal aggregates.",
+      "name": "log_duration_bucket_embedding"
+    },
+    {
+      "description": "Encode the tab column as a categorical feature with dedicated embeddings, capturing position-related long_view propensity.",
+      "expected_impact": "Leverages the sharp tab-specific long_view rate differences to improve within-user ordering.",
+      "family": "group_softmax",
+      "implementation_scope": "Add tab as an input feature to the group_softmax model, with an embedding matrix for the ~15 observed tab values.",
+      "leakage_risk": "Tab is a positional attribute; safe from target leakage but may overfit to tab distribution shifts if not regularized.",
+      "name": "tab_id_embedding"
+    },
+    {
+      "description": "Compute per-user, per-video historical long_view and click counts from the train split only, and use them as user-conditional item features.",
+      "expected_impact": "Models user-specific affinity to specific videos, a signal not present in global popularity and likely to raise GAUC.",
+      "family": "history_features",
+      "implementation_scope": "Precompute train-only user\u00d7video count matrices and feed normalized counts as additional input features to the model.",
+      "leakage_risk": "Safe if built exclusively from train interactions; must not incorporate validation/test history to avoid temporal leakage.",
+      "name": "user_video_affinity_history"
+    }
+  ],
+  "findings": [
+    {
+      "evidence": "DATA CARD 'Tab Breakdown (train)' rows for tabs 0,1,4 with long_view rates 4.22%, 38.61%, 48.93%.",
+      "implication": "Encoding tab id as a dedicated categorical embedding should capture position-driven ranking signal and likely improve GAUC within user sessions.",
+      "leakage_safe": true,
+      "observation": "Train tab breakdown shows long_view rates of 38.61% for tab 1, 48.93% for tab 4, but only 4.22% for tab 0, indicating large intra-user position effects.",
+      "title": "Tab position strongly modulates long_view"
+    },
+    {
+      "evidence": "DATA CARD 'Data Quality' lists 239 zero-duration videos and 24,076 affected train rows.",
+      "implication": "Adding per-video duration-bin embeddings (e.g., log-duration buckets) can help the model disentangle duration effects from content relevance.",
+      "leakage_safe": true,
+      "observation": "239 videos have zero duration, affecting 24,076 train rows, and duration capping is noted as a strong confound for long_view.",
+      "title": "Zero-duration videos are a confound for long_view"
+    },
+    {
+      "evidence": "EDA PLAN feature_hypotheses item 3 proposes user-conditional video statistics; DATA CARD confirms full user/video feature coverage.",
+      "implication": "Deriving user-conditional video affinity from train history (e.g., previous long_view count per video_id) may capture item-level user taste and boost GAUC.",
+      "leakage_safe": true,
+      "observation": "Per-user historical click/long_view counts on the same video (train-only) are hypothesized to be predictive, with no existing measurement yet.",
+      "title": "User-conditional per-video history shows affinity potential"
+    }
+  ],
+  "iteration": 7,
+  "plan": {
+    "expected_artifacts": [
+      "A train-only EDA report: per-tab long_view rate by duration bucket, and hourbin/per-day heatmaps.",
+      "A table of per-user video history counts (clicks/long_views) and their correlation with validation long_view, to guide user-conditional feature construction.",
+      "A feature correlation/importance table (e.g., mutual information or Cramer's V) for candidate features vs long_view, from train split.",
+      "A short recommendation memo specifying which features to test in the next bpr/group_softmax run, with safe feature definitions."
+    ],
+    "feature_hypotheses": [
+      "Added per-video log-duration and duration-bin embedding will improve ranking because zero-duration videos (24k rows) and duration capping are strong confounds for long_view.",
+      "Encoding tab id as a categorical feature with dedicated embeddings will capture intra-user position effects (e.g., tab 1 and tab 4 show higher long_view rates).",
+      "User-conditional video statistics (e.g., user's past long_view count per video_id, derived from train history) provide leakage-safe item-level user affinity that boosts GAUC.",
+      "Time-windowed exposure frequency (number of times a user saw the same video in recent 24h) can model fatigue and recency effects for sequential ranking."
+    ],
+    "leakage_risks": [
+      "The video statistics table is a full-platform period aggregate (ratio ~4892x logged exposures); any feature from it (e.g., total views) must be excluded or explicitly caveated and validated only on train.",
+      "Using user history derived from the same training period may cause temporal leakage, but since evaluation is within-user ranking and only uses train, it is safe if built from train only.",
+      "Tab id is a strong position signal; careful model design should avoid it dominating content relevance, and evaluation must ensure this does not become a shortcut that overfits to tab distribution shifts.",
+      "Duplicated rows (15,609) and zero-duration videos can distort aggregate statistics; masking or weighting these during feature construction is necessary to avoid biased estimates."
+    ],
+    "objective": "Plan a leakage-safe EDA pass on train+valid to identify within-user ranking signals for long_view, focusing on time, tab, duration, and per-video popularity features that can be tested by registered families (bpr, group_softmax, history_features). Avoid or caveat leaky video-statistics aggregates.",
+    "questions": [
+      "How does long_view rate vary by hourbin (hour-of-day) and day-of-week within a user's session sequence?",
+      "What is the lift in long_view from tab 1 vs tab 4 and other high-CTR tabs after controlling for video duration?",
+      "Does video duration (or log-duration) show a monotonic relationship with long_view probability across tabs?",
+      "How predictive are user-conditional video popularity features (e.g., user's historical click/long_view rate on that video_id) compared to global popularity?"
+    ],
+    "required_inputs": [
+      "Train+valid interaction rows with existing user_id, video_id, tab, hourmin, duration, long_view, and all static user/video feature tables.",
+      "User-level and video-level aggregation scripts (train-only) to compute per-user history counts and per-video global statistics without touching test.",
+      "Registered method cards for BPR and group_softmax to confirm how new features are ingested (e.g., candidate embedding concatenation).",
+      "Existing baseline configuration (bpr_b03_seed2) as reference for reproducible feature ablation."
+    ]
+  },
+  "report": {
+    "feature_candidates": [
+      {
+        "description": "Discretize video duration into log-scaled bins (including a zero-duration bucket) and learn per-bin embeddings concatenated to the video embedding.",
+        "expected_impact": "Mitigates zero-duration and duration-capping confounds, likely improving ranking stability across tabs.",
+        "family": "bpr",
+        "implementation_scope": "Add a categorical feature to the video feature table using existing duration field; embed via lookup in the model's feature embedding layer.",
+        "leakage_risk": "None; duration is a static video attribute, not derived from target or temporal aggregates.",
+        "name": "log_duration_bucket_embedding"
+      },
+      {
+        "description": "Encode the tab column as a categorical feature with dedicated embeddings, capturing position-related long_view propensity.",
+        "expected_impact": "Leverages the sharp tab-specific long_view rate differences to improve within-user ordering.",
+        "family": "group_softmax",
+        "implementation_scope": "Add tab as an input feature to the group_softmax model, with an embedding matrix for the ~15 observed tab values.",
+        "leakage_risk": "Tab is a positional attribute; safe from target leakage but may overfit to tab distribution shifts if not regularized.",
+        "name": "tab_id_embedding"
+      },
+      {
+        "description": "Compute per-user, per-video historical long_view and click counts from the train split only, and use them as user-conditional item features.",
+        "expected_impact": "Models user-specific affinity to specific videos, a signal not present in global popularity and likely to raise GAUC.",
+        "family": "history_features",
+        "implementation_scope": "Precompute train-only user\u00d7video count matrices and feed normalized counts as additional input features to the model.",
+        "leakage_risk": "Safe if built exclusively from train interactions; must not incorporate validation/test history to avoid temporal leakage.",
+        "name": "user_video_affinity_history"
+      }
+    ],
+    "findings": [
+      {
+        "evidence": "DATA CARD 'Tab Breakdown (train)' rows for tabs 0,1,4 with long_view rates 4.22%, 38.61%, 48.93%.",
+        "implication": "Encoding tab id as a dedicated categorical embedding should capture position-driven ranking signal and likely improve GAUC within user sessions.",
+        "leakage_safe": true,
+        "observation": "Train tab breakdown shows long_view rates of 38.61% for tab 1, 48.93% for tab 4, but only 4.22% for tab 0, indicating large intra-user position effects.",
+        "title": "Tab position strongly modulates long_view"
+      },
+      {
+        "evidence": "DATA CARD 'Data Quality' lists 239 zero-duration videos and 24,076 affected train rows.",
+        "implication": "Adding per-video duration-bin embeddings (e.g., log-duration buckets) can help the model disentangle duration effects from content relevance.",
+        "leakage_safe": true,
+        "observation": "239 videos have zero duration, affecting 24,076 train rows, and duration capping is noted as a strong confound for long_view.",
+        "title": "Zero-duration videos are a confound for long_view"
+      },
+      {
+        "evidence": "EDA PLAN feature_hypotheses item 3 proposes user-conditional video statistics; DATA CARD confirms full user/video feature coverage.",
+        "implication": "Deriving user-conditional video affinity from train history (e.g., previous long_view count per video_id) may capture item-level user taste and boost GAUC.",
+        "leakage_safe": true,
+        "observation": "Per-user historical click/long_view counts on the same video (train-only) are hypothesized to be predictive, with no existing measurement yet.",
+        "title": "User-conditional per-video history shows affinity potential"
+      }
+    ],
+    "recommended_next_focus": "Test duration-bin and tab embeddings in a single group_softmax experiment (e.g., gs02) while concurrently measuring user-history-affinity in bpr_b04 to isolate feature gains.",
+    "summary": "EDA identifies tab position and video duration as the strongest leakage-safe within-user ranking signals; user-conditional per-video affinity from train history is the most promising new feature family, while global video-statistics aggregates must remain excluded.",
+    "ui_notes": [
+      "Render per-tab long_view rate by duration bucket heatmap to visualize position\u00d7duration interactions.",
+      "Display hourbin (hour-of-day) long_view rate heatmap per day-of-week for a sample of users to identify temporal patterns.",
+      "Show scatter/correlation of user-level train history counts (clicks, long_views) vs validation long_view to justify history feature adoption."
+    ]
+  },
+  "status": "completed"
+}

@@ -1,0 +1,12 @@
+{
+  "artifact_path": "runs/20260830T141756693797Z_research/artifacts/006_bpr_b03_seed2/model.npz",
+  "candidate_dir": "generated_experiments\\20260830T141756693797Z_research\\006_bpr_b03_seed2",
+  "experiment_id": "bpr_b03_seed2",
+  "metrics": {
+    "GAUC": 0.6705190539360046,
+    "nDCG@5": 0.5374909043312073,
+    "primary": 0.604004979133606,
+    "rows": 124909.0,
+    "users": 22377.0
+  }
+}

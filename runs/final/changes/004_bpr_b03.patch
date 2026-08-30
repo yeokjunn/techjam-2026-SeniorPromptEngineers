@@ -1,0 +1,276 @@
+--- parent/candidate.py
++++ candidate/candidate.py
+@@ -1,103 +1,107 @@
+ import numpy as np
+-import math
+ import time
+ from src.models.fm_core import FMRanker
+ from src.models.sampling import sample_bpr_pairs
+ from src.experiments.contracts import CandidateOutput
+ 
++
++def _extract_primary(metrics):
++    if isinstance(metrics, dict):
++        if 'primary' in metrics:
++            return float(metrics['primary'])
++        for value in metrics.values():
++            if isinstance(value, (int, float, np.floating)):
++                return float(value)
++        return float('nan')
++    return float(metrics)
++
++
+ def run(context, parameters):
+-    seed = parameters['seed']
++    seed = int(parameters.get('seed', 42))
++    k = int(parameters.get('k', 16))
++    lr = float(parameters.get('learning_rate', 0.001))
++    epochs = int(parameters.get('epochs', 20))
++    batch_size = int(parameters.get('batch_size', 2048))
++    patience = int(parameters.get('patience', 5))
++    npp = int(parameters.get('negatives_per_positive', 1))
++    train_labels = np.asarray(context.train_y)
++    model = FMRanker(context.field_dimension, embedding_dim=k, learning_rate=lr, l2=1e-6, seed=seed)
+     rng = np.random.default_rng(seed)
+-    model = FMRanker(context.field_dimension, embedding_dim=parameters['k'],
+-                     learning_rate=parameters['learning_rate'], l2=1e-6, seed=seed)
+-    batch_size = parameters['batch_size']
+-    epochs = parameters['epochs']
+-    npp = parameters['negatives_per_positive']
+-    patience = parameters['patience']
++    best_primary = -np.inf
++    best_epoch = -1
++    best_state = None
++    patience_count = 0
++    training_trace = []
++    start_time = time.time()
+ 
+-    best_metric = -np.inf
+-    best_state = None
+-    patience_counter = 0
+-    training_trace = []
++    for epoch in range(1, epochs + 1):
++        positives, negatives = sample_bpr_pairs(context.train_users, train_labels, rng, npp)
++        epoch_loss_sum = 0.0
++        epoch_count = 0
++        n_pairs = len(positives)
++        if n_pairs == 0:
++            valid_scores = model.predict(context.valid_x)
++            metrics = context.evaluate_validation(valid_scores)
++            primary = _extract_primary(metrics)
++            best_primary = primary
++            best_epoch = epoch
++            best_state = {name: np.array(value, copy=True) for name, value in model.state_dict().items()}
++            training_trace.append({'epoch': epoch, 'train_loss': None, 'primary': primary})
++            break
+ 
+-    for epoch in range(epochs):
+-        epoch_start = time.time()
+-        pos_idx, neg_idx = sample_bpr_pairs(context.train_users, context.train_y, rng, npp)
+-        n_pairs = len(pos_idx)
+-        if n_pairs == 0:
+-            training_trace.append({'epoch': epoch, 'train_loss': None, 'val_primary': None})
+-            break
+-        perm = rng.permutation(n_pairs)
+-        pos_idx = pos_idx[perm]
+-        neg_idx = neg_idx[perm]
+-        total_loss = 0.0
+-        n_batches = math.ceil(n_pairs / batch_size)
+-        for b in range(n_batches):
+-            start = b * batch_size
++        for start in range(0, n_pairs, batch_size):
+             end = min(start + batch_size, n_pairs)
+-            if start >= end:
+-                continue
+-            batch_pos = pos_idx[start:end]
+-            batch_neg = neg_idx[start:end]
+-            pos_x = context.train_x[batch_pos]
+-            neg_x = context.train_x[batch_neg]
++            pos_idx = positives[start:end]
++            neg_idx = negatives[start:end]
++            pos_x = context.train_x[pos_idx]
++            neg_x = context.train_x[neg_idx]
+             pos_scores = model.logits(pos_x)[0]
+             neg_scores = model.logits(neg_x)[0]
+-            diff = pos_scores - neg_scores
+-            loss = np.logaddexp(0, -diff).mean()
+-            total_loss += loss * (end - start)
+-            grad = (1.0 / (1.0 + np.exp(-diff)) - 1.0) / (end - start)
+-            grad_v_p, grad_w_p, grad_b_p = model.gradients(pos_x, grad)
+-            grad_v_n, grad_w_n, grad_b_n = model.gradients(neg_x, -grad)
+-            model.apply_gradients(grad_v_p + grad_v_n, grad_w_p + grad_w_n, grad_b_p + grad_b_n)
+-        train_loss = total_loss / n_pairs if n_pairs > 0 else None
+-        val_scores = model.predict(context.valid_x)
+-        val_metrics = context.evaluate_validation(val_scores)
+-        if isinstance(val_metrics, dict):
+-            val_primary = val_metrics.get('primary', val_metrics)
++            delta = pos_scores - neg_scores
++            loss = np.logaddexp(0.0, -delta)
++            epoch_loss_sum += float(np.sum(loss))
++            epoch_count += len(delta)
++            grad = -1.0 / (1.0 + np.exp(np.clip(delta, -50.0, 50.0)))
++            grad = grad / float(len(delta))
++            grad_v_pos, grad_w_pos, _ = model.gradients(pos_x, grad)
++            grad_v_neg, grad_w_neg, _ = model.gradients(neg_x, -grad)
++            model.apply_gradients(grad_v_pos + grad_v_neg, grad_w_pos + grad_w_neg)
++        train_loss = epoch_loss_sum / max(1, epoch_count)
++
++        valid_scores = model.predict(context.valid_x)
++        metrics = context.evaluate_validation(valid_scores)
++        primary = _extract_primary(metrics)
++        trace_entry = {'epoch': epoch, 'train_loss': train_loss, 'primary': primary}
++        if isinstance(metrics, dict):
++            for name, value in metrics.items():
++                if isinstance(value, (int, float, np.floating)):
++                    trace_entry[name] = float(value)
++        training_trace.append(trace_entry)
++
++        if primary > best_primary + 1e-12:
++            best_primary = primary
++            best_epoch = epoch
++            best_state = {name: np.array(value, copy=True) for name, value in model.state_dict().items()}
++            patience_count = 0
+         else:
+-            val_primary = val_metrics
+-        training_trace.append({
+-            'epoch': epoch,
+-            'train_loss': train_loss,
+-            'val_primary': float(val_primary),
+-            'elapsed': time.time() - epoch_start
+-        })
+-        if val_primary > best_metric:
+-            best_metric = val_primary
+-            best_state = model.state_dict().copy()
+-            patience_counter = 0
+-        else:
+-            patience_counter += 1
+-            if patience_counter >= patience:
++            patience_count += 1
++            if patience_count >= patience:
+                 break
+ 
+-    if best_state is not None:
+-        model.load_state_dict(best_state)
+-
+-    final_val_scores = model.predict(context.valid_x)
++    elapsed = time.time() - start_time
++    diagnostics = {'best_epoch': best_epoch, 'best_primary': float(best_primary), 'elapsed_seconds': float(elapsed)}
++    if best_state is None:
++        best_state = {name: np.array(value, copy=True) for name, value in model.state_dict().items()}
++    model.load_state_dict(best_state)
++    validation_scores = np.asarray(model.predict(context.valid_x), dtype=np.float64)
+     test_scores = None
+     if context.test_x is not None:
+-        test_scores = model.predict(context.test_x)
+-
+-    final_metric = context.evaluate_validation(final_val_scores)
+-    if isinstance(final_metric, dict):
+-        final_primary = final_metric.get('primary', final_metric)
+-    else:
+-        final_primary = final_metric
+-
+-    diagnostics = {
+-        'epochs_run': len(training_trace),
+-        'final_val_primary': float(final_primary),
+-        'best_metric': float(best_metric),
+-        'model_v_shape': model.state_dict()['V'].shape,
+-        'model_w_shape': model.state_dict()['W'].shape
+-    }
+-
++        test_scores = np.asarray(model.predict(context.test_x), dtype=np.float64)
++    checkpoint_state = {name: np.array(value, copy=True) for name, value in best_state.items()}
+     return CandidateOutput(
+-        validation_scores=final_val_scores,
+-        checkpoint_state=model.state_dict(),
++        validation_scores=validation_scores,
++        checkpoint_state=checkpoint_state,
+         training_trace=training_trace,
+         diagnostics=diagnostics,
+-        test_scores=test_scores
++        test_scores=test_scores,
+     )
+
+--- parent/test_candidate.py
++++ candidate/test_candidate.py
+@@ -1,49 +1,45 @@
+ import unittest
++import types
+ import numpy as np
+-from candidate import run
++import candidate
+ from src.models.sampling import sample_bpr_pairs
++from src.experiments.contracts import CandidateOutput
+ 
+-class SampleBprTest(unittest.TestCase):
+-    def test_same_user_pairs(self):
+-        users = np.array([0,0,0,1,1,1])
+-        labels = np.array([1,0,1,0,1,0])
+-        rng = np.random.default_rng(0)
+-        pos, neg = sample_bpr_pairs(users, labels, rng, negatives_per_positive=1)
++
++class TestCandidate(unittest.TestCase):
++    def test_sample_bpr_pairs_same_user(self):
++        users = ['u1', 'u1', 'u2', 'u2', 'u3', 'u3']
++        labels = np.array([1, 0, 1, 0, 1, 0], dtype=np.int64)
++        pos, neg = sample_bpr_pairs(users, labels, np.random.default_rng(7), 2)
+         self.assertEqual(len(pos), len(neg))
+-        for p, n in zip(pos, neg):
++        self.assertTrue(np.all(pos >= 0))
++        self.assertTrue(np.all(neg >= 0))
++        for p, n in zip(pos.tolist(), neg.tolist()):
+             self.assertEqual(users[p], users[n])
+-            self.assertEqual(labels[p], 1)
+-            self.assertEqual(labels[n], 0)
++            self.assertEqual(int(labels[p]), 1)
++            self.assertEqual(int(labels[n]), 0)
+ 
+-class RunTest(unittest.TestCase):
+-    def test_run_returns_candidate(self):
+-        field_dim = 100
+-        class Ctx:
+-            def __init__(self):
+-                self.train_x = np.random.randint(0, field_dim, size=(10, 5)).astype(np.int64)
+-                self.train_y = np.array([1,0,1,0,1,0,1,0,1,0])
+-                self.train_users = np.array([0,0,0,0,0,1,1,1,1,1])
+-                self.valid_x = np.random.randint(0, field_dim, size=(4, 5)).astype(np.int64)
+-                self.valid_users = np.array([0,0,1,1])
+-                self.field_dimension = field_dim
+-                self.test_x = None
+-            def evaluate_validation(self, scores):
+-                return 0.5
+-        ctx = Ctx()
+-        params = {
+-            'seed': 42,
+-            'k': 16,
+-            'learning_rate': 0.0005,
+-            'batch_size': 2048,
+-            'epochs': 20,
+-            'negatives_per_positive': 1,
+-            'patience': 5
+-        }
+-        output = run(ctx, params)
++    def test_run_on_synthetic_context(self):
++        ctx = types.SimpleNamespace(
++            train_x=np.array([[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]], dtype=np.int64),
++            train_y=np.array([1, 0, 1, 0, 1, 0], dtype=np.float32),
++            train_users=['u1', 'u1', 'u2', 'u2', 'u3', 'u3'],
++            valid_x=np.array([[2, 3], [4, 5]], dtype=np.int64),
++            valid_users=['u1', 'u2'],
++            field_dimension=100,
++            evaluate_validation=lambda scores: {'primary': float(np.mean(np.asarray(scores, dtype=np.float64))), 'gauc': 0.5, 'nDCG@5': 0.5},
++            test_x=None,
++        )
++        params = {'seed': 0, 'k': 2, 'learning_rate': 0.001, 'epochs': 1, 'batch_size': 2, 'patience': 2, 'negatives_per_positive': 1, 'negatives_per_group': None, 'temperature': None}
++        output = candidate.run(ctx, params)
++        self.assertIsInstance(output, CandidateOutput)
+         self.assertEqual(len(output.validation_scores), len(ctx.valid_x))
++        self.assertTrue(np.all(np.isfinite(output.validation_scores)))
++        self.assertIsNotNone(output.checkpoint_state)
++        self.assertIsInstance(output.checkpoint_state, dict)
+         self.assertIsNone(output.test_scores)
+-        self.assertIsNotNone(output.checkpoint_state)
+         self.assertIsInstance(output.training_trace, list)
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

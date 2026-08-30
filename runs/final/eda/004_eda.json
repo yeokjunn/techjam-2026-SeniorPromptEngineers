@@ -1,0 +1,144 @@
+{
+  "feature_candidates": [
+    {
+      "description": "Bucket video duration into intervals with an explicit zero/NA bucket, fed as an item-side categorical embedding.",
+      "expected_impact": "Captures non-linear duration effects and stabilizes zero-duration rows; likely improves long_view ranking.",
+      "family": "bpr",
+      "implementation_scope": "Preprocess video feature table once; map duration to bucket id; add to item embedding lookup in model config.",
+      "leakage_risk": "Low; duration is a static video property, not a period aggregate.",
+      "name": "duration_bucket_na"
+    },
+    {
+      "description": "Per-video long_view/finish propensity computed only from train log exposures, normalized by duration to mitigate popularity bias.",
+      "expected_impact": "Strong item-side signal for within-user ranking if computed on train-only and carefully normalized.",
+      "family": "bpr",
+      "implementation_scope": "Compute from train interactions with deduplication; join to video table and add as scalar item feature; validate on valid only.",
+      "leakage_risk": "Low if strictly train-only; high if using the leaky full-platform statistics table.",
+      "name": "train_only_video_longview_finish_rate"
+    },
+    {
+      "description": "Train-only user past long_view rate within video category or upload type, forming a user-category affinity feature.",
+      "expected_impact": "Personalizes category preference and improves ranking for users with stable past behavior.",
+      "family": "history_features",
+      "implementation_scope": "Aggregate train log by user and video category to obtain ratio counts; use as auxiliary interaction feature outside main tab embedding.",
+      "leakage_risk": "Low if computed only from train rows and no validation-period data is used.",
+      "name": "user_history_category_longview_ratio"
+    }
+  ],
+  "findings": [
+    {
+      "evidence": "DATA CARD Tab Breakdown (train)",
+      "implication": "Tab should be a conditioning variable or used for negative sampling in BPR/group_softmax to reduce exposure bias.",
+      "leakage_safe": true,
+      "observation": "Tab 4 has long_view rate 48.93% and tab 0 has 4.22%, with tab 1 at 38.61%, so intra-user tab context is highly discriminative.",
+      "title": "Tab strongly stratifies long_view"
+    },
+    {
+      "evidence": "DATA CARD Data Quality section",
+      "implication": "Duration-derived features must include an explicit NA/zero bucket rather than imputing or dropping these rows.",
+      "leakage_safe": true,
+      "observation": "239 videos have zero duration, affecting 24,076 train rows and creating a distinct missing/zero category.",
+      "title": "Zero-duration videos distort duration features"
+    },
+    {
+      "evidence": "DATA CARD Leakage Flag section",
+      "implication": "Features derived from it may encode future signals; use only with explicit leakage caveats or rely on train-only aggregates.",
+      "leakage_safe": false,
+      "observation": "The video statistics table reflects full-platform aggregates over periods beyond the log span, with exposure ratio about 4,892:1 vs logged data.",
+      "title": "Video statistics table is leaky period aggregate"
+    }
+  ],
+  "iteration": 4,
+  "plan": {
+    "expected_artifacts": [
+      "Correlation matrix of candidate features vs long_view within user groups.",
+      "Tab-stratified long_view rate by video duration bins.",
+      "Train-only user history feature summary (mean long_view per user, per video category).",
+      "EDA report listing top 10 feature hypotheses for BPR/group_softmax experiments."
+    ],
+    "feature_hypotheses": [
+      "Video duration buckets and normalized play progress signals from the statistics table improve long_view ranking beyond static fields.",
+      "Per-video long_view propensity (e.g., duration-weighted finish rate) adds a strong item-side feature for BPR.",
+      "User past long_view ratio on similar video categories improves within-user ranking.",
+      "Negative sampling based on tab and time-of-day buckets reduces group_softmax bias."
+    ],
+    "leakage_risks": [
+      "Video statistics table is full-platform period aggregate; features from it may leak future exposure signals.",
+      "Zero-duration videos (24k train rows) may distort duration-derived features if not handled with explicit NA buckets.",
+      "User history features may leak if computed over the validation period or full log rather than train-only.",
+      "Exact duplicate rows (15.6k) could inflate correlation if not deduplicated in EDA."
+    ],
+    "objective": "Plan one leakage-safe EDA pass to identify within-user long_view ranking signals that can be exploited by BPR or group_softmax families.",
+    "questions": [
+      "Which video-side statistics (e.g., duration, play rate, finish rate) show the largest intra-user variance and correlate with long_view conditional on tab?",
+      "How does long_view rate vary by video duration buckets, especially for zero-duration videos?",
+      "Does the user's interaction history (likes, comments, follows) on the video's creator predict long_view?",
+      "Are there tab-specific video popularity thresholds that improve group_softmax negatives sampling?"
+    ],
+    "required_inputs": [
+      "Train and valid interaction logs with user_id, video_id, tab, hourmin, long_view labels.",
+      "Video feature table (duration, type, upload_type) and video statistics table (view counts, play duration aggregates).",
+      "User profile table (user_active_degree, followed_creator flags).",
+      "Experiment history metrics for bpr_b01 and bpr_b02 as baselines."
+    ]
+  },
+  "report": {
+    "feature_candidates": [
+      {
+        "description": "Bucket video duration into intervals with an explicit zero/NA bucket, fed as an item-side categorical embedding.",
+        "expected_impact": "Captures non-linear duration effects and stabilizes zero-duration rows; likely improves long_view ranking.",
+        "family": "bpr",
+        "implementation_scope": "Preprocess video feature table once; map duration to bucket id; add to item embedding lookup in model config.",
+        "leakage_risk": "Low; duration is a static video property, not a period aggregate.",
+        "name": "duration_bucket_na"
+      },
+      {
+        "description": "Per-video long_view/finish propensity computed only from train log exposures, normalized by duration to mitigate popularity bias.",
+        "expected_impact": "Strong item-side signal for within-user ranking if computed on train-only and carefully normalized.",
+        "family": "bpr",
+        "implementation_scope": "Compute from train interactions with deduplication; join to video table and add as scalar item feature; validate on valid only.",
+        "leakage_risk": "Low if strictly train-only; high if using the leaky full-platform statistics table.",
+        "name": "train_only_video_longview_finish_rate"
+      },
+      {
+        "description": "Train-only user past long_view rate within video category or upload type, forming a user-category affinity feature.",
+        "expected_impact": "Personalizes category preference and improves ranking for users with stable past behavior.",
+        "family": "history_features",
+        "implementation_scope": "Aggregate train log by user and video category to obtain ratio counts; use as auxiliary interaction feature outside main tab embedding.",
+        "leakage_risk": "Low if computed only from train rows and no validation-period data is used.",
+        "name": "user_history_category_longview_ratio"
+      }
+    ],
+    "findings": [
+      {
+        "evidence": "DATA CARD Tab Breakdown (train)",
+        "implication": "Tab should be a conditioning variable or used for negative sampling in BPR/group_softmax to reduce exposure bias.",
+        "leakage_safe": true,
+        "observation": "Tab 4 has long_view rate 48.93% and tab 0 has 4.22%, with tab 1 at 38.61%, so intra-user tab context is highly discriminative.",
+        "title": "Tab strongly stratifies long_view"
+      },
+      {
+        "evidence": "DATA CARD Data Quality section",
+        "implication": "Duration-derived features must include an explicit NA/zero bucket rather than imputing or dropping these rows.",
+        "leakage_safe": true,
+        "observation": "239 videos have zero duration, affecting 24,076 train rows and creating a distinct missing/zero category.",
+        "title": "Zero-duration videos distort duration features"
+      },
+      {
+        "evidence": "DATA CARD Leakage Flag section",
+        "implication": "Features derived from it may encode future signals; use only with explicit leakage caveats or rely on train-only aggregates.",
+        "leakage_safe": false,
+        "observation": "The video statistics table reflects full-platform aggregates over periods beyond the log span, with exposure ratio about 4,892:1 vs logged data.",
+        "title": "Video statistics table is leaky period aggregate"
+      }
+    ],
+    "recommended_next_focus": "Run a BPR/group_softmax ablation adding duration bucket plus train-only user-history category affinity, conditioning negatives by tab, while keeping all statistics features train-only.",
+    "summary": "EDA plan focuses on tab-stratified long_view by duration, zero-duration NA handling, train-only user-history propensities, and caveated video-stats features. BPR/group_softmax families should condition on tab and use deduplicated train rows.",
+    "ui_notes": [
+      "Plot long_view rate vs duration bins separately for main tabs using train-only data.",
+      "Do not mix valid-period rows into EDA plots; 15.6k duplicated log rows should be deduplicated first.",
+      "Show bpr_b01 baseline primary 0.6033 (GAUC 0.6698, nDCG@5 0.5368) against the plan's target improvements."
+    ]
+  },
+  "status": "completed"
+}

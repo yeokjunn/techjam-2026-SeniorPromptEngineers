@@ -1,0 +1,13 @@
+{
+  "best": {
+    "artifact_path": null,
+    "candidate_dir": null,
+    "experiment_id": "official_fm_seed0",
+    "metrics": {
+      "primary": 0.6016
+    }
+  },
+  "run_id": "official_cached_baseline",
+  "status": "completed",
+  "summary_path": "official://kuairand-pure/validation-baseline"
+}

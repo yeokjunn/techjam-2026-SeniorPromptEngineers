@@ -1,0 +1,10 @@
+{
+  "error": "OpenAI response 8d6bbbed-356f-4b05-a70b-fd7307b17d8d was incomplete or contained no output text; details=IncompleteDetails(reason='max_output_tokens').",
+  "error_type": "IncompleteResponse",
+  "feature_candidates": [],
+  "findings": [],
+  "iteration": 3,
+  "plan": null,
+  "report": null,
+  "status": "failed"
+}

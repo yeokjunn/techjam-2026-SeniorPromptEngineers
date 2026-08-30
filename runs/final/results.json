@@ -1,0 +1,119 @@
+[
+  {
+    "action": "explore",
+    "delta_vs_baseline": null,
+    "experiment_id": "group_softmax_gs01",
+    "family": "group_softmax",
+    "iteration": 1,
+    "metrics": null,
+    "status": "failed"
+  },
+  {
+    "action": "explore",
+    "delta_vs_baseline": 0.0017066511154174568,
+    "experiment_id": "bpr_b01",
+    "family": "bpr",
+    "iteration": 2,
+    "metrics": {
+      "GAUC": 0.6698340177536011,
+      "nDCG@5": 0.5367793440818787,
+      "primary": 0.6033066511154175,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "status": "success"
+  },
+  {
+    "action": "exploit",
+    "delta_vs_baseline": 0.0015122207641601326,
+    "experiment_id": "bpr_b02",
+    "family": "bpr",
+    "iteration": 3,
+    "metrics": {
+      "GAUC": 0.6697971224784851,
+      "nDCG@5": 0.5364272594451904,
+      "primary": 0.6031122207641602,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "status": "success"
+  },
+  {
+    "action": "exploit",
+    "delta_vs_baseline": 0.0020139130592345955,
+    "experiment_id": "bpr_b03",
+    "family": "bpr",
+    "iteration": 4,
+    "metrics": {
+      "GAUC": 0.6704111695289612,
+      "nDCG@5": 0.5368166565895081,
+      "primary": 0.6036139130592346,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "status": "success"
+  },
+  {
+    "action": "replicate",
+    "delta_vs_baseline": 0.0019391092300414803,
+    "experiment_id": "bpr_b03_seed1",
+    "family": "bpr",
+    "iteration": 5,
+    "metrics": {
+      "GAUC": 0.670089066028595,
+      "nDCG@5": 0.5369892120361328,
+      "primary": 0.6035391092300415,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "status": "success"
+  },
+  {
+    "action": "replicate",
+    "delta_vs_baseline": 0.0024049791336059334,
+    "experiment_id": "bpr_b03_seed2",
+    "family": "bpr",
+    "iteration": 6,
+    "metrics": {
+      "GAUC": 0.6705190539360046,
+      "nDCG@5": 0.5374909043312073,
+      "primary": 0.604004979133606,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "status": "success"
+  },
+  {
+    "action": "exploit",
+    "delta_vs_baseline": null,
+    "experiment_id": "rejected_bpr_b04",
+    "family": "bpr",
+    "iteration": 7,
+    "metrics": null,
+    "status": "critic_rejected"
+  },
+  {
+    "action": "exploit",
+    "delta_vs_baseline": null,
+    "experiment_id": "rejected_bpr_b05_seed4",
+    "family": "bpr",
+    "iteration": 8,
+    "metrics": null,
+    "status": "critic_rejected"
+  },
+  {
+    "action": "exploit",
+    "delta_vs_baseline": 0.0006611856460571053,
+    "experiment_id": "group_softmax_gs02",
+    "family": "group_softmax",
+    "iteration": 9,
+    "metrics": {
+      "GAUC": 0.6689923405647278,
+      "nDCG@5": 0.5355299711227417,
+      "primary": 0.6022611856460571,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "status": "success"
+  }
+]

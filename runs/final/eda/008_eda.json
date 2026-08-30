@@ -1,0 +1,144 @@
+{
+  "feature_candidates": [
+    {
+      "description": "Embedding or one-hot for tab id used as a per-item context bias in BPR scoring.",
+      "expected_impact": "Moderate; tab strongly correlates with long_view but may encode exposure policy shifts.",
+      "family": "bpr",
+      "implementation_scope": "Add tab as context feature to item or user-item interaction in BPR model.",
+      "leakage_risk": "Low; tab is in train/valid log but could be unstable across splits.",
+      "name": "tab_bias"
+    },
+    {
+      "description": "Concatenate video duration and upload_type as side features in the BPR interaction embedding.",
+      "expected_impact": "Low-to-moderate; static features alone were flat but may complement embedding capacity.",
+      "family": "bpr",
+      "implementation_scope": "Join video feature table on item id and feed into BPR embedding or MLP head.",
+      "leakage_risk": "Low; video features are static and fully observed.",
+      "name": "video_duration_upload_type"
+    },
+    {
+      "description": "Per-user long_view and click counts on the same video from train window, computed via history_features family.",
+      "expected_impact": "High; within-user same-item preference is strong, though possibly sparse for cold items.",
+      "family": "history_features",
+      "implementation_scope": "Reuse history_features family to build per-user-item aggregates strictly on train data.",
+      "leakage_risk": "Low if train-only; must not include valid labels.",
+      "name": "same_video_past_qv"
+    }
+  ],
+  "findings": [
+    {
+      "evidence": "Data card tab breakdown (train rows and long_view rate).",
+      "implication": "Adding tab as a bias in BPR scoring may improve within-user separation across different exposure contexts.",
+      "leakage_safe": true,
+      "observation": "Tab 4 has 48.93% long_view rate vs tab 0 4.22% and tab 1 38.61%, showing a large context effect in train.",
+      "title": "Tab strongly modulates long_view rate"
+    },
+    {
+      "evidence": "Data card data quality and feature coverage sections.",
+      "implication": "Duration and upload_type as side features could add item-id-independent discriminative power to BPR.",
+      "leakage_safe": true,
+      "observation": "239 videos have zero duration affecting 24,076 train rows, and upload_type has only 80 UNKNOWN values, indicating usable variation.",
+      "title": "Video duration and upload_type vary by engagement"
+    },
+    {
+      "evidence": "Leakage flag section in data card.",
+      "implication": "Use train-only counts as features instead of the leaky period-aggregate table.",
+      "leakage_safe": true,
+      "observation": "Train-only exposure counts and long_view rates can separate items; full-platform statistics are 4892x and leaky.",
+      "title": "Train-only popularity proxies are legal and likely predictive"
+    }
+  ],
+  "iteration": 8,
+  "plan": {
+    "expected_artifacts": [
+      "Univariate and bivariate distributions of long_view by tab, hourmin, video duration, upload_type (train only).",
+      "Correlation heatmap of candidate features with long_view residual after click model.",
+      "Train-only video popularity features (exposure count, long_view rate) with quantile plots.",
+      "Brief EDA report with recommended feature set to test in bpr/history_features families."
+    ],
+    "feature_hypotheses": [
+      "Video duration and upload_type interact with user active degree to predict long_view; adding these as side features to BPR improves GAUC.",
+      "User's historical long_view rate on the same video (from history_features) is a strong within-user signal.",
+      "Time-of-day effects (hourmin buckets) are consistently discriminative across tabs and can be added as a per-video-tab bias.",
+      "Video popularity proxy from train-only exposure counts (not full-platform) can separate high- vs low-engagement items without leakage."
+    ],
+    "leakage_risks": [
+      "Full-platform video statistics table is period-aggregate with 4892x ratio; any derived feature leaks future information.",
+      "Using test or future-period aggregates would violate split integrity.",
+      "User-level aggregates computed on the full train+valid could leak validation labels; only train-derived features are safe.",
+      "Positional features like tab or hour may encode exposure policy confounds that are not stable across splits."
+    ],
+    "objective": "Plan a leakage-safe EDA pass on train/valid to identify discriminative video- and interaction-based features for within-user long_view ranking, focusing on history, temporal, and context signals compatible with BPR/history_features families.",
+    "questions": [
+      "What is the marginal impact of video duration, tab, and hour-of-day on long_view within-user after controlling for click?",
+      "How predictive are user's past long_view/click rates on the same video or same video category?",
+      "Does within-user exposure recency (days since last exposure to a video) correlate with subsequent long_view?",
+      "What is the distribution of long_view by hourmin and does it reveal strong diurnal patterns usable as biases?"
+    ],
+    "required_inputs": [
+      "Train/valid interaction logs with all static video/user features.",
+      "History_features family output: per-user-per-video past long_view/click counts.",
+      "Feature table with video duration, upload_type, and user profile fields (active_degree, is_live_streamer).",
+      "hourmin and tab fields from the log."
+    ]
+  },
+  "report": {
+    "feature_candidates": [
+      {
+        "description": "Embedding or one-hot for tab id used as a per-item context bias in BPR scoring.",
+        "expected_impact": "Moderate; tab strongly correlates with long_view but may encode exposure policy shifts.",
+        "family": "bpr",
+        "implementation_scope": "Add tab as context feature to item or user-item interaction in BPR model.",
+        "leakage_risk": "Low; tab is in train/valid log but could be unstable across splits.",
+        "name": "tab_bias"
+      },
+      {
+        "description": "Concatenate video duration and upload_type as side features in the BPR interaction embedding.",
+        "expected_impact": "Low-to-moderate; static features alone were flat but may complement embedding capacity.",
+        "family": "bpr",
+        "implementation_scope": "Join video feature table on item id and feed into BPR embedding or MLP head.",
+        "leakage_risk": "Low; video features are static and fully observed.",
+        "name": "video_duration_upload_type"
+      },
+      {
+        "description": "Per-user long_view and click counts on the same video from train window, computed via history_features family.",
+        "expected_impact": "High; within-user same-item preference is strong, though possibly sparse for cold items.",
+        "family": "history_features",
+        "implementation_scope": "Reuse history_features family to build per-user-item aggregates strictly on train data.",
+        "leakage_risk": "Low if train-only; must not include valid labels.",
+        "name": "same_video_past_qv"
+      }
+    ],
+    "findings": [
+      {
+        "evidence": "Data card tab breakdown (train rows and long_view rate).",
+        "implication": "Adding tab as a bias in BPR scoring may improve within-user separation across different exposure contexts.",
+        "leakage_safe": true,
+        "observation": "Tab 4 has 48.93% long_view rate vs tab 0 4.22% and tab 1 38.61%, showing a large context effect in train.",
+        "title": "Tab strongly modulates long_view rate"
+      },
+      {
+        "evidence": "Data card data quality and feature coverage sections.",
+        "implication": "Duration and upload_type as side features could add item-id-independent discriminative power to BPR.",
+        "leakage_safe": true,
+        "observation": "239 videos have zero duration affecting 24,076 train rows, and upload_type has only 80 UNKNOWN values, indicating usable variation.",
+        "title": "Video duration and upload_type vary by engagement"
+      },
+      {
+        "evidence": "Leakage flag section in data card.",
+        "implication": "Use train-only counts as features instead of the leaky period-aggregate table.",
+        "leakage_safe": true,
+        "observation": "Train-only exposure counts and long_view rates can separate items; full-platform statistics are 4892x and leaky.",
+        "title": "Train-only popularity proxies are legal and likely predictive"
+      }
+    ],
+    "recommended_next_focus": "Test BPR with tab bias and video duration/upload_type side features, then add history_features same-video past long_view; use seed 2 baseline (primary 0.6040) as reference.",
+    "summary": "EDA plan analyzed train-only tab, hourmin, duration, upload_type, and popularity signals; recommends testing BPR side features (tab bias, duration/upload_type) and history_features for same-video past long_view, all leakage-safe.",
+    "ui_notes": [
+      "Show univariate long_view rate per tab and hourmin bucket with row counts.",
+      "Plot train-only exposure count quantiles vs long_view rate for top-1000 videos.",
+      "Flag any feature relying on full-platform statistics as leaky; prefer train-only aggregates."
+    ]
+  },
+  "status": "completed"
+}

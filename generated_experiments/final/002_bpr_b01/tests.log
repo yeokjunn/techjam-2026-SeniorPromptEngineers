@@ -1,0 +1,8 @@
+
+test_run_returns_candidate (test_candidate.RunTest.test_run_returns_candidate) ... ok
+test_same_user_pairs (test_candidate.SampleBprTest.test_same_user_pairs) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.066s
+
+OK

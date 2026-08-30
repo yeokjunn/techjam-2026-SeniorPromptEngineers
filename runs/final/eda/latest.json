@@ -1,0 +1,144 @@
+{
+  "feature_candidates": [
+    {
+      "description": "Inverse or log-transformed rank of the video within the user's impression request, added as an input feature.",
+      "expected_impact": "Captures exposure-order bias; earlier positions likely have higher long_view probability, improving ranking within each user.",
+      "family": "bpr",
+      "implementation_scope": "Extract position from impression log order or request_id; add as scalar embedding or bias term in model input.",
+      "leakage_risk": "Low if position is independent of label; verify with train-only analysis that ordering is not by relevance.",
+      "name": "position_rank_decay"
+    },
+    {
+      "description": "Learnable per-tab bias scalar added to the scoring function, applied uniformly within a user's impressions.",
+      "expected_impact": "Normalizes strong tab-level long_view rate differences, allowing ranking across heterogeneous tabs.",
+      "family": "multi_task",
+      "implementation_scope": "Map tab integer to a trainable embedding or bias vector; add to logit before final score.",
+      "leakage_risk": "Low; tab is an observed context, but must be validated on train-only to avoid overfitting to distribution shifts.",
+      "name": "tab_bias_term"
+    },
+    {
+      "description": "Per-user historical count of long_view or click on each video_id, computed strictly from the training period.",
+      "expected_impact": "Captures repeat-view tendency and familiarity, which static features cannot represent.",
+      "family": "history_features",
+      "implementation_scope": "Aggregate train-log rows by (user, video) before any validation; feed as an extra numeric feature.",
+      "leakage_risk": "High if computed on train+valid; must use train-only history and strict temporal split to avoid validation label leakage.",
+      "name": "user_video_interaction_count"
+    }
+  ],
+  "findings": [
+    {
+      "evidence": "DATA CARD Tab Breakdown: tab 0 rate 4.22%, tab 4 rate 48.93%, tab 1 rate 38.61%.",
+      "implication": "Within-user ranking may need tab-specific bias terms or conditional normalization to avoid overfitting to tab distribution shifts.",
+      "leakage_safe": true,
+      "observation": "Long_view rate ranges from 4.22% (tab 0) to 48.93% (tab 4) versus 38.61% for tab 1; tab 0 holds 13.15% of rows.",
+      "title": "Tab dominates long_view rate variation"
+    },
+    {
+      "evidence": "DATA CARD Leakage Flag section.",
+      "implication": "Any popularity feature derived from them must be treated as leaky and only used for hypothesis testing, not as a production feature.",
+      "leakage_safe": false,
+      "observation": "Video statistics aggregate full-platform traffic (12.83B shows vs 2.62M logged, ratio ~4892:1) and span periods 45-181 days beyond the log.",
+      "title": "Video statistics are heavily leakage-prone"
+    },
+    {
+      "evidence": "EXPERIMENT history shows bpr_b03 with primary 0.6040; no history_features or position inputs were used.",
+      "implication": "Position-aware bias and train-only user-video counts (history_features family) could capture repeat-view tendency and exposure-order effects.",
+      "leakage_safe": true,
+      "observation": "Current BPR experiments only use static features and user/item IDs; no position or per-user interaction counts are tested.",
+      "title": "Position and user-video history are underrepresented"
+    }
+  ],
+  "iteration": 9,
+  "plan": {
+    "expected_artifacts": [
+      "A correlation/conditional-rate table: long_view rate by tab, hour window, and position percentile (train-only).",
+      "A user-video interaction count feature test (train-only) compared against baseline bpr in a single experiment.",
+      "A monotonic gain plot showing how long_view rate changes with log video-statistic counts, split by tab.",
+      "A short EDA report listing the top 3 feature hypotheses prioritized for the next model experiment."
+    ],
+    "feature_hypotheses": [
+      "Position-aware bias: add the rank of the video within the user's impression request (or derived inverse position) as an input feature, since earlier positions often have higher long_view probability.",
+      "Tab-specific conditional bias: include tab as an input bias term that scales a learned per-tab baseline, potentially improving ranking within dominated tabs.",
+      "User-video interaction counts: compute per-user historical long_view or click counts on each video_id (train-period only) and feed as a history_features family input, capturing repeat-view tendency.",
+      "Video popularity monotonic features: convert leaky video statistics into monotonic buckets or log-transformed counts and test them under history_features as a low-risk feature family, with explicit leakage caveat."
+    ],
+    "leakage_risks": [
+      "Video statistics are period aggregates over full-platform traffic (12.83B shows vs 2.62M logged), so they leak future and unrelated exposure information; must be caveated and only used to test hypotheses, never to guide production.",
+      "Computing per-user historical counts on train+valid combined would leak validation labels into training; use train-only history or ensure a strict temporal split.",
+      "Position features may directly encode label leakage if the log already sorts by relevance or if position is derived from ranking; verify position is independent of the label.",
+      "Tab is a strong confound with label rate (tab 4: 48.9% long_view vs tab 0: 4.2%), so any tab-derived bias must be validated only on train to avoid overfitting to tab distribution shifts."
+    ],
+    "objective": "Run a leakage-safe EDA pass on train+valid KuaiRand-Pure logs to identify reusable, registered-family feature hypotheses that can improve within-user long_view ranking (GAUC, nDCG@5) beyond the current best primary 0.6040.",
+    "questions": [
+      "Within each user's tab and request context, how does the position (rank) of a video in the impression list correlate with long_view, after controlling for tab and hour?",
+      "Which tab subgroups have the highest long_view lift relative to tab-1 baseline, and does ranking within those tabs need separate normalization or bias terms?",
+      "What is the per-user distribution of video type / upload_type / author_id interactions, and are there user groups with systematic long_view preference differences over these categorical video features?",
+      "Do count-based video statistics (e.g., play_cnt, like_cnt) exhibit a monotonically increasing relationship with long_view within a user's impressions, and is that relationship stable across tabs and hours?"
+    ],
+    "required_inputs": [
+      "Train and validation interaction logs (user, item, tab, position/request_id, timestamp, and all label columns).",
+      "User profile table and video feature table (100% coverage).",
+      "Video statistics table (period aggregate) with clear leakage flag.",
+      "Existing feature extraction pipeline or method card for bpr, group_softmax, history_features, multi_task families."
+    ]
+  },
+  "report": {
+    "feature_candidates": [
+      {
+        "description": "Inverse or log-transformed rank of the video within the user's impression request, added as an input feature.",
+        "expected_impact": "Captures exposure-order bias; earlier positions likely have higher long_view probability, improving ranking within each user.",
+        "family": "bpr",
+        "implementation_scope": "Extract position from impression log order or request_id; add as scalar embedding or bias term in model input.",
+        "leakage_risk": "Low if position is independent of label; verify with train-only analysis that ordering is not by relevance.",
+        "name": "position_rank_decay"
+      },
+      {
+        "description": "Learnable per-tab bias scalar added to the scoring function, applied uniformly within a user's impressions.",
+        "expected_impact": "Normalizes strong tab-level long_view rate differences, allowing ranking across heterogeneous tabs.",
+        "family": "multi_task",
+        "implementation_scope": "Map tab integer to a trainable embedding or bias vector; add to logit before final score.",
+        "leakage_risk": "Low; tab is an observed context, but must be validated on train-only to avoid overfitting to distribution shifts.",
+        "name": "tab_bias_term"
+      },
+      {
+        "description": "Per-user historical count of long_view or click on each video_id, computed strictly from the training period.",
+        "expected_impact": "Captures repeat-view tendency and familiarity, which static features cannot represent.",
+        "family": "history_features",
+        "implementation_scope": "Aggregate train-log rows by (user, video) before any validation; feed as an extra numeric feature.",
+        "leakage_risk": "High if computed on train+valid; must use train-only history and strict temporal split to avoid validation label leakage.",
+        "name": "user_video_interaction_count"
+      }
+    ],
+    "findings": [
+      {
+        "evidence": "DATA CARD Tab Breakdown: tab 0 rate 4.22%, tab 4 rate 48.93%, tab 1 rate 38.61%.",
+        "implication": "Within-user ranking may need tab-specific bias terms or conditional normalization to avoid overfitting to tab distribution shifts.",
+        "leakage_safe": true,
+        "observation": "Long_view rate ranges from 4.22% (tab 0) to 48.93% (tab 4) versus 38.61% for tab 1; tab 0 holds 13.15% of rows.",
+        "title": "Tab dominates long_view rate variation"
+      },
+      {
+        "evidence": "DATA CARD Leakage Flag section.",
+        "implication": "Any popularity feature derived from them must be treated as leaky and only used for hypothesis testing, not as a production feature.",
+        "leakage_safe": false,
+        "observation": "Video statistics aggregate full-platform traffic (12.83B shows vs 2.62M logged, ratio ~4892:1) and span periods 45-181 days beyond the log.",
+        "title": "Video statistics are heavily leakage-prone"
+      },
+      {
+        "evidence": "EXPERIMENT history shows bpr_b03 with primary 0.6040; no history_features or position inputs were used.",
+        "implication": "Position-aware bias and train-only user-video counts (history_features family) could capture repeat-view tendency and exposure-order effects.",
+        "leakage_safe": true,
+        "observation": "Current BPR experiments only use static features and user/item IDs; no position or per-user interaction counts are tested.",
+        "title": "Position and user-video history are underrepresented"
+      }
+    ],
+    "recommended_next_focus": "Run a train-only EDA to measure conditional long_view rate by position percentile and tab; then add the position_rank_decay and tab_bias_term features to BPR in a single experiment to test their combined uplift.",
+    "summary": "EDA passes on the KuaiRand-Pure log identify tab, position, and train-only user-video history as the highest-priority feature families for improving within-user long_view ranking. Tab shows strong label-rate variation (38.6% tab1 vs 4.2% tab0), and the leaky video-statistics table is unsuitable for production features. Recommended experiment: add position and tab bias terms under bpr, then test train-only interaction counts.",
+    "ui_notes": [
+      "Show tab conditional rates as a bar chart to highlight distribution shifts.",
+      "Mark video-statistics-derived features with a 'leaky' tag and exclude from production views.",
+      "Display per-user interaction-count histogram only from train data to avoid validation leakage."
+    ]
+  },
+  "status": "completed"
+}

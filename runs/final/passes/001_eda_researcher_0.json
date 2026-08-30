@@ -1,0 +1,53 @@
+{
+  "prompt": "You are one role in an autonomous ML research agent for KuaiRand-Pure.\nThe immutable task is within-user ranking of long_view using validation GAUC and nDCG@5.\nUse train and validation only. Never request or infer hidden-test information. Do not change\nthe official evaluator, split, label, budgets, or reference files. Return only the requested\nstructured output. Evidence must be attributable to a supplied method card or primary source.\nEvery role response is parsed as JSON; never return Markdown, commentary, or text outside the\nsingle requested JSON object.\n\nEDA roles produce compact planning/report artifacts only. They do not generate candidate.py,\nmodify raw data, change evaluators, or inspect hidden-test data. Prefer train-only evidence\nand leakage-safe feature hypotheses compatible with registered families: bpr, group_softmax, history_features, multi_task.\n\nDATA CARD:\n# Dataset Profile\n\n## Splits\n\n| Split | Rows | Users | Videos |\n|---|---|---|---|\n| train | 1,141,112 | 26,210 | 7,538 |\n| valid | 124,909 | 22,377 | 5,951 |\n| test | 170,588 | \u2014 | \u2014 |\n\n## Label Rates\n\n| Label | Train Rate | Valid Rate |\n|---|---|---|\n| long_view | 33.6620 % | 31.3284 % |\n| is_click | 46.3447 % | 44.3827 % |\n| is_like | 1.8677 % | 1.7973 % |\n| is_follow | 0.1007 % | 0.1305 % |\n| is_comment | 0.2568 % | 0.2330 % |\n| is_forward | 0.0996 % | 0.0777 % |\n| is_hate | 0.0421 % | 0.0624 % |\n| is_profile_enter | 2.5391 % | 1.9454 % |\n\n## Tab Breakdown (train)\n\n| Tab | Rows | Share | Click Rate | Long View Rate |\n|---|---|---|---|---|\n| 1 | 834,876 | 73.16 % | 52.97 % | 38.61 % |\n| 0 | 150,013 | 13.15 % | 9.20 % | 4.22 % |\n| 4 | 75,524 | 6.62 % | 61.96 % | 48.93 % |\n| 2 | 39,291 | 3.44 % | 48.00 % | 38.05 % |\n| 6 | 29,671 | 2.60 % | 18.08 % | 8.70 % |\n| 3 | 3,574 | 0.31 % | 2.24 % | 0.42 % |\n| 5 | 3,402 | 0.30 % | 28.57 % | 16.99 % |\n| 8 | 2,551 | 0.22 % | 4.16 % | 1.76 % |\n| 12 | 834 | 0.07 % | 14.27 % | 9.59 % |\n| 11 | 417 | 0.04 % | 0.00 % | 11.51 % |\n| 7 | 333 | 0.03 % | 40.84 % | 21.32 % |\n| 13 | 283 | 0.02 % | 22.61 % | 18.02 % |\n| 9 | 252 | 0.02 % | 99.60 % | 16.67 % |\n| 10 | 80 | 0.01 % | 100.00 % | 61.25 % |\n| 14 | 11 | 0.00 % | 0.00 % | 0.00 % |\n\n## Rows per User (train + valid)\n\n| Percentile | Count |\n|---|---|\n| p25 | 15 |\n| p50 | 34 |\n| p75 | 65 |\n| p90 | 105 |\n| p95 | 137 |\n| p99 | 219 |\n| max | 853 |\n\n## Data Quality\n\n- 239 videos with zero duration (24,076 train rows affected)\n- 15,609 exact duplicate rows in the training-period log\n- Sentinel: is_live_streamer = -124 on 21,127 of 27,285 user rows\n- UNKNOWN values: user_active_degree (6), video_type (1), upload_type (80)\n- Constant columns: is_lowactive_period, visible_status, is_rand\n- hourmin encodes hour times 100 in UTC+8\n- The training-period log begins on 20220409, not 20220408\n\n## Feature Coverage\n\n- Video features: 100.000 % of train+valid video IDs found in the feature table\n- User features: 100.000 % of train+valid user IDs found in the profile table\n\n## Leakage Flag\n\nThe video statistics table is a period aggregate over full-platform traffic.\nImplied total shows: 12.83 B vs 2.62 M logged\nexposures (ratio approximately 4,892 to one). Observation periods per video\nrange 45 to 181, exceeding the interaction log span.\nLegal for use, but any feature derived from it must be caveated as leaky.\n\n## Metric Conventions\n\n- Task: within-user ranking (each user's impressions ranked against each other)\n- nDCG@5: sorts by score with a stable sort (ties fall back to row order)\n- AUC: averages ranks over ties (Mann-Whitney U)\n- GAUC: per-user AUC, only users with 0 < positives < impressions,\n  weighted by positive count\n- Zero-positive users: nDCG recorded as 0.0 and included in the average\n- Primary score = mean(GAUC, nDCG@5)\n\n## Measured Dead Ends\n\n- Adding all 13 static feature fields: primary 0.5940 vs 0.5950 for the default 5\n- Embedding dimension k = 8 / 16 / 32: primary 0.5895 / 0.5902 / 0.5887 (flat)\n- The bottleneck is not features or capacity\n- First-order user-only terms contribute exactly 0 to within-user ranking\n  (any term constant within a user does not change intra-group ordering)\n\n\nROLE: EDA Researcher\nPlan one compact, leakage-safe EDA pass that can inform the next ranking experiment.\nUse the DATA CARD, current experiment history, and known KuaiRand-Pure task constraints.\nPrioritize feature engineering ideas that can be tested by registered families.\nDo not request hidden-test information, raw-data mutation, evaluator changes, or broad repository rewrites.\nReturn concise JSON: at most 4 questions, 4 feature hypotheses, 4 risks, and 4 artifacts.\n\nRESEARCH STATE:\n{\n  \"baseline_primary\": 0.6016,\n  \"best_metrics\": {\n    \"primary\": 0.6016\n  },\n  \"experiments\": [],\n  \"stagnant_iterations\": 0\n}\n",
+  "recorded_at": "2026-08-30T14:18:32.522615+00:00",
+  "result": {
+    "data": {
+      "expected_artifacts": [
+        "EDA report: long_view rate vs hourmin bucket and tab, per-user stability tables.",
+        "Rank correlation matrix for candidate features (including leaky stats) on train-only.",
+        "A candidate feature list mapped to registered families with leakage-safe transformation notes.",
+        "A short recommendation on which features to test in the next experiment (e.g., hourmin bucket, user-tab propensity)."
+      ],
+      "feature_hypotheses": [
+        "Time-of-day bucket (hourmin_quantized) as a categorical feature improves ranking by capturing user-specific viewing rhythm.",
+        "User-tab interaction derived from train long_view rates (e.g., tab-specific user bias) adds discriminative signal over static tab dummies.",
+        "A decayed recency feature (minutes since last exposure to same video/category) predicts long_view and is tunable under history_features.",
+        "Excluding leaky video stats will not hurt if temporal and interaction features absorb the signal; including them adds risk."
+      ],
+      "leakage_risks": [
+        "Video statistics table is a full-platform period aggregate; any derived feature risks hidden leakage and overfit.",
+        "Duplicate rows (15,609) and zero-duration videos (239) may distort user-exposure counts.",
+        "Sentinel is_live_streamer=-124 and UNKNOWN values could inject spurious correlations if not handled.",
+        "Within-user temporal source (hourmin) may be reordered across sessions; avoid leaky ordering that peeks at future user behavior."
+      ],
+      "objective": "Identify leakage-safe, within-user discriminating features for long_view ranking to raise primary (GAUC+nDCG@5) beyond 0.6016, using only train/valid evidence and registered families.",
+      "questions": [
+        "How does long_view rate vary by hourmin bucket (e.g., 0-6, 6-12, 12-18, 18-24) within users, and is the interaction with user stable?",
+        "Does per-tab long_view propensity (computed from user's train history) rank videos better than a single global tab bias?",
+        "What is the effect of video exposure recency/frequency (within user) on long_view, and can it be synthesized from the logged sequence?",
+        "Which video stats (e.g., avg_watch_ratio, like_rate) show the strongest within-user rank correlation despite being a period leak?"
+      ],
+      "required_inputs": [
+        "Method card listing registered feature families (bpr, group_softmax, history_features, multi_task).",
+        "Data card (provided) with split, label, and tab tables.",
+        "Baseline config (default 5 features) and latest training/validation logs.",
+        "Feature schema and column definitions for user and video tables."
+      ]
+    },
+    "latency_seconds": 14.29700000000048,
+    "model": "deepseek-v4-flash",
+    "response_id": "172dd4fb-126e-43ec-8689-06578b802d15",
+    "retries": 0,
+    "role": "eda_researcher",
+    "sources": [],
+    "tool_calls": [],
+    "usage": {
+      "cached_tokens": 0,
+      "input_tokens": 1925,
+      "output_tokens": 1010,
+      "total_tokens": 2935,
+      "web_search_calls": 0
+    }
+  }
+}

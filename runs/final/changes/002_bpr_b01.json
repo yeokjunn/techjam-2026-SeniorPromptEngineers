@@ -1,0 +1,21 @@
+{
+  "candidate_id": "bpr_b01",
+  "files": [
+    {
+      "lines_added": 103,
+      "lines_deleted": 0,
+      "path": "candidate.py",
+      "status": "added"
+    },
+    {
+      "lines_added": 49,
+      "lines_deleted": 0,
+      "path": "test_candidate.py",
+      "status": "added"
+    }
+  ],
+  "iteration": 2,
+  "lines_added": 152,
+  "lines_deleted": 0,
+  "patch_path": "changes/002_bpr_b01.patch"
+}

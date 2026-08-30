@@ -1,0 +1,21 @@
+{
+  "candidate_id": "group_softmax_gs02",
+  "files": [
+    {
+      "lines_added": 96,
+      "lines_deleted": 75,
+      "path": "candidate.py",
+      "status": "modified"
+    },
+    {
+      "lines_added": 54,
+      "lines_deleted": 53,
+      "path": "test_candidate.py",
+      "status": "modified"
+    }
+  ],
+  "iteration": 9,
+  "lines_added": 150,
+  "lines_deleted": 128,
+  "patch_path": "changes/009_group_softmax_gs02.patch"
+}

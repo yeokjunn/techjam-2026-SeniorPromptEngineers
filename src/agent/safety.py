@@ -37,7 +37,7 @@ ALLOWED_IMPORTS = {
     "src.models.sampling",
     "src.experiments.contracts",
 }
-TEST_ONLY_IMPORTS = {"unittest", "candidate", "types"}
+TEST_ONLY_IMPORTS = {"unittest", "candidate"}
 # ``__name__`` is the one dunder a candidate legitimately reads: without it every generated test
 # carrying ``if __name__ == "__main__":`` would be rejected.
 ALLOWED_DUNDER_NAMES = {"__name__"}
@@ -256,8 +256,15 @@ def validate_family_contract(source: str, family: str) -> None:
         if any(name in called for name in group):
             continue
         if len(group) == 1:
+            # Keep the original wording for the samplers (it is what the Debugger is fed back
+            # and what tests pin); name other trusted helpers for what they are.
+            kind = (
+                "same-user sampler"
+                if group[0].startswith("sample_")
+                else "helper"
+            )
             raise SafetyViolation(
-                f"{family} candidate must call the trusted same-user sampler {group[0]}()."
+                f"{family} candidate must call the trusted {kind} {group[0]}()."
             )
         rendered = ", ".join(f"{name}()" for name in group)
         raise SafetyViolation(

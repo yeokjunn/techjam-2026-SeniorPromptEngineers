@@ -1,25 +1,14 @@
 from __future__ import annotations
 
-import difflib
 import json
 import os
+import difflib
 import time
 from pathlib import Path
 from typing import Any
 
 from .activity import ActivityHandle, redact_text, safe_value, utc_now
 from .llm import LLMCallResult
-
-
-def _replace_atomic(temporary: Path, path: Path) -> None:
-    for attempt in range(5):
-        try:
-            os.replace(temporary, path)
-            return
-        except PermissionError:
-            if attempt == 4:
-                raise
-            time.sleep(0.005 * (2 ** attempt))
 
 
 class ResearchAudit:
@@ -30,18 +19,42 @@ class ResearchAudit:
         self.passes_dir.mkdir(exist_ok=True)
 
     @staticmethod
+    def _replace_with_retry(temporary: Path, path: Path, attempts: int = 10) -> None:
+        """``os.replace``, retried while a reader holds the destination open.
+
+        POSIX replaces an open file happily; Windows raises ``PermissionError`` (WinError 5)
+        because Python's ``open()`` does not request ``FILE_SHARE_DELETE``. The read-only
+        dashboard polls ``activity.json`` every ``active_refresh_seconds`` (``app.py`` runs the
+        fragment every 5 s), so following the documented two-terminal workflow in
+        ``docs/UI_QUICKSTART.md`` makes writer and reader collide by design. An observed
+        production run lost 2 of 7 iterations to exactly this, classified as harness_error.
+
+        The reader holds the file only for the length of one small read, so a short backoff
+        clears it; the final attempt is allowed to raise so a genuine permission fault is
+        still reported rather than silently swallowed.
+        """
+        for attempt in range(attempts):
+            try:
+                os.replace(temporary, path)
+                return
+            except PermissionError:
+                if attempt == attempts - 1:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+
+    @staticmethod
     def write_json_atomic(path: Path, value: Any) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        _replace_atomic(temporary, path)
+        ResearchAudit._replace_with_retry(temporary, path)
 
     @staticmethod
     def write_text_atomic(path: Path, value: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(value, encoding="utf-8")
-        _replace_atomic(temporary, path)
+        ResearchAudit._replace_with_retry(temporary, path)
 
     @staticmethod
     def append_jsonl(path: Path, value: Any) -> None:

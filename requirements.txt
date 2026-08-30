@@ -2,3 +2,7 @@ numpy>=1.23
 openai>=1.68.0,<4
 python-dotenv>=1.0,<2
 streamlit
+# Deep-learning backbone for the 'din' family (target-conditional sequence
+# attention). CPU/MPS torch; imported ONLY inside the trusted
+# src.models.din_trainer primitive, never by LLM-generated candidate code.
+torch>=2.2

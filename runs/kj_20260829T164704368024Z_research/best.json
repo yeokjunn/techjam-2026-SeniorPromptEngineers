@@ -1,0 +1,12 @@
+{
+  "artifact_path": "runs/kj_20260829T164704368024Z_research/artifacts/003_group-softmax-k4-t1-dim16-v1-builder/model.npz",
+  "candidate_dir": "generated_experiments/kj_20260829T164704368024Z_research/003_group-softmax-k4-t1-dim16-v1-builder",
+  "experiment_id": "group-softmax-k4-t1-dim16-v1-builder",
+  "metrics": {
+    "GAUC": 0.6703860759735107,
+    "nDCG@5": 0.5369408130645752,
+    "primary": 0.603663444519043,
+    "rows": 124909.0,
+    "users": 22377.0
+  }
+}

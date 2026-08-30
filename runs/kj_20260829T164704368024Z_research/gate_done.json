@@ -1,0 +1,11 @@
+{
+  "status": "ok",
+  "submission_path": "runs/kj_20260829T164704368024Z_research/submission.csv",
+  "details": {
+    "rows": 170588,
+    "sha256": "65edc02e4386af920faa944736d3b04772e5176bf01390c209aca97faa31af6b",
+    "check_stdout": "\u2713 \u683c\u5f0f\u4e0e\u5bf9\u9f50\u6821\u9a8c\u901a\u8fc7\uff1a170,588 \u884c\uff0csplit=test\n",
+    "checked_with": "/Users/nathanpua/Desktop/tt_techjam/.venv/bin/python",
+    "scored": false
+  }
+}

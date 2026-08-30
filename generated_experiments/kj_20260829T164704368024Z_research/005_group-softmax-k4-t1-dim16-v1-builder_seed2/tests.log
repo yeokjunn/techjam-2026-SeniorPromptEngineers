@@ -1,0 +1,11 @@
+
+test_dedupe_negatives_noop_when_clean (test_candidate.TestGroupSoftmax.test_dedupe_negatives_noop_when_clean) ... ok
+test_dedupe_negatives_removes_pos_and_intra_group_dups (test_candidate.TestGroupSoftmax.test_dedupe_negatives_removes_pos_and_intra_group_dups) ... ok
+test_end_to_end (test_candidate.TestGroupSoftmax.test_end_to_end) ... ok
+test_sample_softmax_groups_shapes (test_candidate.TestGroupSoftmax.test_sample_softmax_groups_shapes) ... ok
+test_test_scores_none_when_test_x_none (test_candidate.TestGroupSoftmax.test_test_scores_none_when_test_x_none) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.032s
+
+OK

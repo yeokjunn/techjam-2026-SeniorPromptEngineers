@@ -1,0 +1,397 @@
+--- parent/candidate.py
++++ candidate/candidate.py
+@@ -1,150 +1,118 @@
+ import time
+ import numpy as np
+ from src.models.fm_core import FMRanker
+-from src.models.sampling import sample_bpr_pairs, sample_softmax_groups
++from src.models.sampling import sample_softmax_groups
+ from src.experiments.contracts import CandidateOutput
+ 
+ 
+-def _pick(metrics, keys):
+-    for key in keys:
+-        if key in metrics:
+-            return float(metrics[key])
+-    return None
+-
+-
+ def _primary(metrics):
+-    gauc = _pick(metrics, ("gauc", "GAUC", "gauc_score"))
+-    ndcg = _pick(metrics, ("ndcg@5", "nDCG@5", "ndcg_at_5", "ndcg5"))
+-    if gauc is not None and ndcg is not None:
+-        return 0.5 * (gauc + ndcg)
+-    if gauc is not None:
+-        return gauc
+-    if ndcg is not None:
+-        return ndcg
+-    vals = [float(v) for v in metrics.values() if isinstance(v, (int, float))]
+-    return float(np.mean(vals)) if vals else 0.0
+-
+-
+-def _dedupe_negatives(users, pos_idx, neg_groups, rng):
+-    k = neg_groups.shape[1]
+-    # dup[g, j] is True when negative j of group g duplicates the positive
+-    # or duplicates another negative in the same group. Both members of a
+-    # mutually-equal pair are flagged so both are resampled.
+-    dup = neg_groups == pos_idx[:, None]
+-    for a in range(k):
+-        for b in range(a + 1, k):
+-            eq = neg_groups[:, a] == neg_groups[:, b]
+-            # Flag ONLY the two members of the equal pair; broadcasting the
+-            # (n,) vector across all columns would wrongly flag clean
+-            # negatives in any group containing a duplicate.
+-            dup[:, a] |= eq
+-            dup[:, b] |= eq
+-    n_dup = int(dup.sum())
+-    if n_dup == 0:
+-        return neg_groups, 0
+-    order = np.argsort(users, kind="stable")
+-    su = users[order]
+-    fixed = neg_groups.copy()
+-    for g in np.nonzero(dup.any(axis=1))[0]:
+-        u = users[pos_idx[g]]
+-        lo = int(np.searchsorted(su, u, "left"))
+-        hi = int(np.searchsorted(su, u, "right"))
+-        pool = order[lo:hi]
+-        pool = pool[pool != pos_idx[g]]
+-        if len(pool) == 0:
+-            continue
+-        used = set(fixed[g].tolist())
+-        used.add(int(pos_idx[g]))
+-        for j in np.nonzero(dup[g])[0]:
+-            cand = int(rng.choice(pool))
+-            tries = 0
+-            while cand in used and tries < 10 and len(pool) > 1:
+-                cand = int(rng.choice(pool))
+-                tries += 1
+-            fixed[g, j] = cand
+-            used.add(cand)
+-    return fixed, n_dup
+-
+-
+-def _step(model, train_x, pos_batch, neg_batch, temperature):
+-    n_fields = train_x.shape[1]
+-    pos_x = train_x[pos_batch]
+-    neg_x = train_x[neg_batch.reshape(-1)].reshape(neg_batch.shape[0], neg_batch.shape[1], n_fields)
+-    pos_s = np.asarray(model.predict(pos_x), dtype=np.float64)
+-    neg_s = np.asarray(model.predict(neg_x.reshape(-1, n_fields)), dtype=np.float64).reshape(neg_batch.shape)
+-    logits = np.concatenate([pos_s[:, None], neg_s], axis=1) / temperature
+-    logits -= logits.max(axis=1, keepdims=True)
+-    e = np.exp(logits)
+-    p = e / e.sum(axis=1, keepdims=True)
+-    loss = float(-np.mean(np.log(p[:, 0] + 1e-12)))
+-    g_pos = (p[:, 0] - 1.0) / temperature
+-    g_neg = p[:, 1:] / temperature
+-    gv, gw, gb = model.gradients(pos_x, g_pos)
+-    gv2, gw2, gb2 = model.gradients(neg_x.reshape(-1, n_fields), g_neg.reshape(-1))
+-    model.apply_gradients(gv + gv2, gw + gw2, gb + gb2)
+-    return loss
++    if isinstance(metrics, dict):
++        if 'primary' in metrics:
++            return float(metrics['primary'])
++        vals = [float(v) for v in metrics.values()]
++        return float(np.mean(vals)) if vals else 0.0
++    return float(metrics)
+ 
+ 
+ def run(context, parameters):
+-    seed = int(parameters["seed"])
++    t0 = time.time()
++    seed = int(parameters['seed'])
++    epochs = int(parameters['epochs'])
++    patience = int(parameters['patience'])
++    k_neg = int(parameters['negatives_per_group'])
++    temperature = float(parameters['temperature'])
++    batch_size = int(parameters['batch_size'])
++
++    model = FMRanker(int(context.field_dimension),
++                     embedding_dim=int(parameters['k']),
++                     learning_rate=float(parameters['learning_rate']),
++                     seed=seed)
++    train_x = context.train_x
++    train_y = context.train_y
++    users = context.train_users
++    valid_x = context.valid_x
++    test_x = context.test_x
+     rng = np.random.default_rng(seed)
+-    model = FMRanker(int(context.field_dimension), embedding_dim=int(parameters["k"]),
+-                     learning_rate=float(parameters["learning_rate"]), seed=seed)
+-    train_x = context.train_x
+-    train_y = np.asarray(context.train_y, dtype=np.float64)
+-    train_users = np.asarray(context.train_users)
+-    epochs = int(parameters["epochs"])
+-    batch_size = int(parameters["batch_size"])
+-    k_neg = int(parameters["negatives_per_group"])
+-    temp = float(parameters["temperature"])
+-    patience = int(parameters["patience"])
++
++    pos_idx, neg_groups = sample_softmax_groups(
++        users, train_y, rng, negatives_per_group=k_neg)
++    n_groups = int(pos_idx.shape[0])
++    steps_per_epoch = int(np.ceil(n_groups / batch_size)) if n_groups else 0
++
++    def score_all():
++        v = model.predict(valid_x)
++        t = None if test_x is None else model.predict(test_x)
++        return v, t
++
++    best_primary = -np.inf
++    best_valid = None
++    best_test = None
++    best_epoch = -1
++    no_improve = 0
++    epochs_run = 0
+     trace = []
+-    best = {"primary": -1.0, "scores": None, "epoch": -1}
+-    stale = 0
+-    n_groups_last = 0
+-    dup_total = 0
++
+     for epoch in range(epochs):
+-        t0 = time.time()
+-        pos_idx, neg_groups = sample_softmax_groups(train_users, train_y, rng, negatives_per_group=k_neg)
+-        neg_groups, n_dup = _dedupe_negatives(train_users, pos_idx, neg_groups, rng)
+-        dup_total += n_dup
+-        n_groups_last = int(len(pos_idx))
+-        perm = rng.permutation(n_groups_last)
+-        losses = []
+-        for start in range(0, n_groups_last, batch_size):
+-            b = perm[start:start + batch_size]
+-            losses.append(_step(model, train_x, pos_idx[b], neg_groups[b], temp))
+-        scores = np.asarray(model.predict(context.valid_x), dtype=np.float64)
+-        metrics = context.evaluate_validation(scores)
+-        primary = _primary(metrics)
+-        trace.append({"epoch": epoch, "loss": float(np.mean(losses)) if losses else 0.0,
+-                      "primary": primary, "metrics": {key: float(v) for key, v in metrics.items()},
+-                      "groups": n_groups_last, "seconds": time.time() - t0})
+-        if primary > best["primary"] + 1e-9:
+-            best = {"primary": primary, "scores": scores, "epoch": epoch}
+-            stale = 0
++        epochs_run = epoch + 1
++        order = rng.permutation(n_groups)
++        for s in range(steps_per_epoch):
++            b = order[s * batch_size:(s + 1) * batch_size]
++            pf = train_x[pos_idx[b]]
++            nf = train_x[neg_groups[b]]
++            B = pf.shape[0]
++            nff = nf.reshape(B * k_neg, -1)
++            ps = model.predict(pf)
++            ns = model.predict(nff).reshape(B, k_neg)
++            logits = np.concatenate([ps[:, None], ns], axis=1) / temperature
++            logits -= logits.max(axis=1, keepdims=True)
++            e = np.exp(logits)
++            p = e / e.sum(axis=1, keepdims=True)
++            g = p / temperature
++            g[:, 0] -= 1.0 / temperature
++            gp = np.ascontiguousarray(g[:, 0])
++            gn = np.ascontiguousarray(g[:, 1:].reshape(B * k_neg))
++            gv, gw, gb = model.gradients(pf, gp)
++            gv2, gw2, gb2 = model.gradients(nff, gn)
++            model.apply_gradients(gv + gv2, gw + gw2, gb + gb2)
++
++        valid_scores, test_scores = score_all()
++        primary = _primary(context.evaluate_validation(valid_scores))
++        trace.append({'epoch': int(epoch + 1), 'primary': float(primary)})
++        if primary > best_primary:
++            best_primary = primary
++            best_valid = valid_scores.copy()
++            best_test = None if test_scores is None else test_scores.copy()
++            best_epoch = epoch + 1
++            no_improve = 0
+         else:
+-            stale += 1
+-            if stale >= patience:
++            no_improve += 1
++            if no_improve >= patience:
+                 break
+-    valid_scores = best["scores"] if best["scores"] is not None else np.asarray(model.predict(context.valid_x), dtype=np.float64)
+-    test_scores = None
+-    if context.test_x is not None:
+-        test_scores = np.asarray(model.predict(context.test_x), dtype=np.float64)
+-    checkpoint_state = {
+-        "validation_scores": np.asarray(valid_scores, dtype=np.float64),
+-        "test_scores": np.asarray(test_scores, dtype=np.float64) if test_scores is not None else np.zeros(0),
+-        "best_epoch": np.array(best["epoch"]),
+-        "best_primary": np.array(best["primary"]),
+-        "seed": np.array(seed),
++
++    if best_valid is None:
++        best_valid, best_test = score_all()
++        best_epoch = epochs_run
++        best_primary = _primary(context.evaluate_validation(best_valid))
++
++    diagnostics = {
++        'negatives_per_group': int(k_neg),
++        'groups_per_epoch': n_groups,
++        'steps_per_epoch': steps_per_epoch,
++        'epochs_run': int(epochs_run),
++        'best_epoch': int(best_epoch),
++        'best_primary': float(best_primary),
++        'temperature': float(temperature),
++        'batch_size': int(batch_size),
++        'embedding_dim': int(parameters['k']),
++        'compute_note': 'K=8 doubles rows scored per step vs K=4 at fixed batch_size',
++        'train_seconds': float(time.time() - t0),
+     }
+-    diagnostics = {
+-        "family": "group_softmax", "parameters": dict(parameters),
+-        "negatives_per_group": k_neg, "temperature": temp, "batch_size": batch_size,
+-        "learning_rate": float(parameters["learning_rate"]), "embedding_dim": int(parameters["k"]),
+-        "groups_per_epoch": n_groups_last, "duplicate_negatives_resampled": dup_total,
+-        "epochs_run": len(trace), "best_epoch": best["epoch"],
+-        "best_primary": best["primary"], "early_stopped": len(trace) < epochs,
+-        "valid_rows": int(np.asarray(valid_scores).shape[0]),
++    checkpoint = {
++        'best_valid_scores': np.asarray(best_valid, dtype=np.float64),
++        'best_primary': np.array(float(best_primary)),
++        'best_epoch': np.array(int(best_epoch)),
+     }
+-    return CandidateOutput(valid_scores, checkpoint_state, trace, diagnostics, test_scores)
++    if best_test is not None:
++        checkpoint['best_test_scores'] = np.asarray(best_test, dtype=np.float64)
++    return CandidateOutput(np.asarray(best_valid, dtype=np.float64),
++                           checkpoint, trace, diagnostics, best_test)
+
+--- parent/test_candidate.py
++++ candidate/test_candidate.py
+@@ -1,91 +1,61 @@
+ import unittest
+ import numpy as np
+-from candidate import run, _dedupe_negatives
+ from src.models.sampling import sample_softmax_groups
++from candidate import run
+ 
+ 
+ class FakeContext:
+-    def __init__(self, with_test=True, seed=0):
+-        rng = np.random.default_rng(seed)
+-        n_rows, n_users, n_fields, field_dim = 300, 20, 5, 60
+-        self.field_dimension = field_dim
+-        self.train_x = rng.integers(0, field_dim, size=(n_rows, n_fields))
+-        self.train_y = rng.integers(0, 2, size=n_rows).astype(float)
+-        self.train_users = rng.integers(0, n_users, size=n_rows)
+-        for u in range(n_users):
+-            rows = np.nonzero(self.train_users == u)[0]
+-            if len(rows) >= 2:
+-                self.train_y[rows[0]] = 1.0
+-                self.train_y[rows[1]] = 0.0
+-        self.valid_x = rng.integers(0, field_dim, size=(80, n_fields))
+-        self.valid_users = rng.integers(0, n_users, size=80)
+-        self.test_x = rng.integers(0, field_dim, size=(50, n_fields)) if with_test else None
++    def __init__(self):
++        rng = np.random.default_rng(0)
++        self.field_dimension = 20
++        n = 200
++        self.train_x = rng.integers(0, self.field_dimension, size=(n, 5))
++        self.valid_x = rng.integers(0, self.field_dimension, size=(n, 5))
++        self.train_users = np.repeat(np.arange(20), 10)
++        self.valid_users = np.repeat(np.arange(20), 10)
++        self.train_y = (rng.random(n) < 0.5).astype(np.int64)
++        for u in range(20):
++            idx = np.where(self.train_users == u)[0]
++            self.train_y[idx[0]] = 1
++            self.train_y[idx[1]] = 0
++        self.valid_y = (rng.random(n) < 0.4).astype(np.int64)
++        self.test_x = None
+ 
+     def evaluate_validation(self, scores):
+-        scores = np.asarray(scores, dtype=float)
+-        return {"gauc": 0.5 + 0.001 * float(scores.mean()), "ndcg@5": 0.5}
++        return {'primary': float(np.mean(scores)), 'gauc': 0.5, 'ndcg5': 0.5}
+ 
+ 
+-class TestGroupSoftmax(unittest.TestCase):
+-    def _params(self):
+-        return {"batch_size": 512, "epochs": 2, "k": 16, "learning_rate": 0.0005,
+-                "negatives_per_group": 4, "patience": 2, "seed": 0, "temperature": 1.0}
+-
+-    def test_end_to_end(self):
+-        ctx = FakeContext()
+-        out = run(ctx, self._params())
+-        self.assertIsInstance(out.validation_scores, np.ndarray)
+-        self.assertEqual(out.validation_scores.shape[0], 80)
+-        self.assertTrue(np.all(np.isfinite(out.validation_scores)))
+-        self.assertIsNotNone(out.test_scores)
+-        self.assertEqual(out.test_scores.shape[0], 50)
+-        self.assertTrue(np.all(np.isfinite(out.test_scores)))
+-        self.assertGreaterEqual(len(out.training_trace), 1)
+-        for arr in out.checkpoint_state.values():
+-            self.assertIsInstance(arr, np.ndarray)
+-        self.assertIn("groups_per_epoch", out.diagnostics)
+-        self.assertIn("duplicate_negatives_resampled", out.diagnostics)
+-
+-    def test_test_scores_none_when_test_x_none(self):
+-        ctx = FakeContext(with_test=False)
+-        out = run(ctx, self._params())
+-        self.assertIsNone(out.test_scores)
+-
+-    def test_dedupe_negatives_removes_pos_and_intra_group_dups(self):
+-        rng = np.random.default_rng(1)
+-        users = np.array([0] * 8 + [1] * 8)
+-        pos = np.array([0, 8])
+-        neg = np.array([[0, 0, 1, 2], [8, 9, 9, 10]])
+-        fixed, n_dup = _dedupe_negatives(users, pos, neg, rng)
+-        # Row 0: columns 0 and 1 equal the positive (2 flags).
+-        # Row 1: column 0 equals the positive; columns 1 and 2 equal each
+-        # other and both are flagged (3 flags). Total = 5 flagged entries.
+-        self.assertEqual(n_dup, 5)
+-        # Clean negatives must not be resampled when a sibling is a duplicate:
+-        # row 0 keeps its clean columns 2 and 3 unchanged.
+-        self.assertEqual(int(fixed[0, 2]), 1)
+-        self.assertEqual(int(fixed[0, 3]), 2)
+-        for row in range(fixed.shape[0]):
+-            self.assertNotIn(int(pos[row]), fixed[row].tolist())
+-            self.assertEqual(len(set(fixed[row].tolist())), fixed.shape[1])
+-
+-    def test_dedupe_negatives_noop_when_clean(self):
+-        rng = np.random.default_rng(2)
+-        users = np.array([0] * 8 + [1] * 8)
+-        pos = np.array([0, 8])
+-        neg = np.array([[1, 2, 3, 4], [9, 10, 11, 12]])
+-        fixed, n_dup = _dedupe_negatives(users, pos, neg, rng)
+-        self.assertEqual(n_dup, 0)
+-        self.assertTrue(np.array_equal(fixed, neg))
+-
+-    def test_sample_softmax_groups_shapes(self):
+-        rng = np.random.default_rng(3)
+-        users = np.arange(40) % 8
+-        labels = np.tile(np.array([1.0, 0.0, 1.0, 0.0, 1.0]), 8)
+-        pos, neg = sample_softmax_groups(users, labels, rng, negatives_per_group=4)
+-        self.assertEqual(neg.shape[1], 4)
+-        self.assertTrue(np.all(labels[np.asarray(pos, dtype=int)] > 0))
++PARAMS = {'batch_size': 512, 'epochs': 2, 'k': 16, 'learning_rate': 0.0003,
++          'negatives_per_group': 4, 'patience': 1, 'seed': 0, 'temperature': 1.0}
+ 
+ 
+-if __name__ == "__main__":
++class TestSamplingGroups(unittest.TestCase):
++    def test_same_user_group_construction(self):
++        ctx = FakeContext()
++        rng = np.random.default_rng(7)
++        pos_idx, neg_groups = sample_softmax_groups(
++            ctx.train_users, ctx.train_y, rng, negatives_per_group=4)
++        self.assertEqual(neg_groups.ndim, 2)
++        self.assertEqual(neg_groups.shape[1], 4)
++        self.assertEqual(pos_idx.shape[0], neg_groups.shape[0])
++        self.assertTrue(np.all(ctx.train_y[pos_idx] == 1))
++        self.assertTrue(np.all(ctx.train_y[neg_groups.reshape(-1)] == 0))
++        self.assertTrue(np.all(
++            ctx.train_users[pos_idx][:, None] == ctx.train_users[neg_groups]))
++
++
++class TestRun(unittest.TestCase):
++    def test_run_returns_outputs(self):
++        ctx = FakeContext()
++        out = run(ctx, dict(PARAMS, negatives_per_group=8))
++        self.assertEqual(out.validation_scores.shape[0], ctx.valid_x.shape[0])
++        self.assertTrue(np.all(np.isfinite(out.validation_scores)))
++        self.assertIsNone(out.test_scores)
++        self.assertIn('best_valid_scores', out.checkpoint_state)
++        self.assertTrue(len(out.training_trace) >= 1)
++        self.assertEqual(out.diagnostics['negatives_per_group'], 8)
++        self.assertEqual(out.diagnostics['steps_per_epoch'], 1)
++
++
++if __name__ == '__main__':
+     unittest.main()

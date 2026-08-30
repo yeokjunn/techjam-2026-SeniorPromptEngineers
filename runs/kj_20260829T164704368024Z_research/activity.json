@@ -1,0 +1,28 @@
+{
+  "agent_note": {
+    "best_experiment": "group-softmax-k4-t1-dim16-v1-builder",
+    "decision": "Research run completed.",
+    "stop_reason": "converged"
+  },
+  "attempt": 1,
+  "change_summary": null,
+  "completed_at": "2026-08-29T17:07:02.339951+00:00",
+  "error": null,
+  "event_id": "8977946250de498a8f7767e314dd8099",
+  "experiment_id": "group-softmax-k4-t1-dim16-v1-builder",
+  "iteration": 6,
+  "metrics": {
+    "GAUC": 0.6703860759735107,
+    "nDCG@5": 0.5369408130645752,
+    "primary": 0.603663444519043,
+    "rows": 124909.0,
+    "users": 22377.0
+  },
+  "objective": "Mark the research run complete and expose its stop reason.",
+  "repair": null,
+  "role": null,
+  "stage": "completed",
+  "started_at": "2026-08-29T17:07:02.339543+00:00",
+  "status": "completed",
+  "updated_at": "2026-08-29T17:07:02.339951+00:00"
+}

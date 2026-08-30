@@ -1,0 +1,10 @@
+
+test_pairs_are_same_user_and_label_aligned (test_candidate.TestBprPairs.test_pairs_are_same_user_and_label_aligned) ... ok
+test_run_basic_contract (test_candidate.TestRun.test_run_basic_contract) ... ok
+test_run_two_negatives (test_candidate.TestRun.test_run_two_negatives) ... ok
+test_run_with_test_scores (test_candidate.TestRun.test_run_with_test_scores) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.034s
+
+OK

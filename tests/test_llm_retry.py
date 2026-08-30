@@ -9,7 +9,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import httpx
+try:
+    import httpx
+except ModuleNotFoundError:  # openai>=3 depends on the httpx2 fork instead
+    import httpx2 as httpx
 import numpy as np
 import pytest
 from openai import APIStatusError, RateLimitError
@@ -25,7 +28,10 @@ from src.agent.errors import (
 from src.agent.llm import (
     OpenAIResponsesProvider,
     ScriptedProvider,
+    _normalize_schema_output,
+    _parse_structured_output,
     build_provider,
+    schema_fields_note,
 )
 from src.agent.research_controller import ResearchLoop
 from src.agent.roles import ResearchRoles
@@ -109,6 +115,194 @@ def _openai_provider(outcomes, *, max_retries: int = 5):
     responses = FakeResponses(outcomes)
     provider.client = SimpleNamespace(responses=responses)
     return provider, responses
+
+
+class StructuredOutputParsingTests(unittest.TestCase):
+    def test_bare_json_parses(self):
+        self.assertEqual(_parse_structured_output('{"ok": true}', "r1"), {"ok": True})
+
+    def test_json_fenced_output_is_unwrapped(self):
+        text = "```json\n{\"ok\": true}\n```"
+        self.assertEqual(_parse_structured_output(text, "r2"), {"ok": True})
+
+    def test_bare_fence_is_unwrapped(self):
+        self.assertEqual(_parse_structured_output("```\n{\"ok\": 1}\n```", "r3"), {"ok": 1})
+
+    def test_invalid_json_raises_role_output_invalid(self):
+        with self.assertRaises(RoleOutputInvalid):
+            _parse_structured_output("not json at all", "r4")
+
+    def test_prose_wrapped_fenced_json_is_rescued(self):
+        # Live evidence (5/5 role probes, glm-5.3-flash): prose- and fence-wrapped
+        # JSON is this provider's normal output shape, so the parser rescues it.
+        text = "Here you go:\n```json\n{\"ok\": 1}\n```"
+        self.assertEqual(_parse_structured_output(text, "r5"), {"ok": 1})
+
+
+class ParserRescueTests(unittest.TestCase):
+    """Live drift: GLM wraps JSON in fences, prefixes/suffixes prose, or emits YAML."""
+
+    def test_prose_wrapped_json_is_brace_sliced(self):
+        text = 'Here is my decision:\n```json\n{"approved": true}\n```\nHope this helps.'
+        self.assertEqual(_parse_structured_output(text, "r1"), {"approved": True})
+
+    def test_plain_prose_then_json_without_fence(self):
+        text = 'Analysis follows. {"ok": 1} End of analysis.'
+        self.assertEqual(_parse_structured_output(text, "r2"), {"ok": 1})
+
+    def test_yaml_document_raises_with_raw_snippet(self):
+        text = "```yaml\nCriticDecision:\n  decision: APPROVE\n```"
+        with self.assertRaises(RoleOutputInvalid) as ctx:
+            _parse_structured_output(text, "r3")
+        self.assertIn("head=", str(ctx.exception))
+        self.assertIn("tail=", str(ctx.exception))
+
+    def test_truncated_json_raises_with_snippet(self):
+        with self.assertRaises(RoleOutputInvalid) as ctx:
+            _parse_structured_output('{"code": "def run(): pass", "tests": "trunca', "r4")
+        self.assertIn("r4", str(ctx.exception))
+
+
+class SchemaNoteTests(unittest.TestCase):
+    def test_critic_note_lists_every_required_field(self):
+        note = schema_fields_note("critic_decision")
+        for field in ("approved", "decision", "rationale", "concerns", "next_focus"):
+            self.assertIn(field, note)
+        self.assertIn("raw JSON object", note)
+        self.assertIn("no YAML", note)
+
+    def test_research_note_lists_parameter_keys_and_evidence_keys(self):
+        note = schema_fields_note("research_decision")
+        for key in ("seed", "k", "learning_rate", "epochs", "batch_size", "patience",
+                    "negatives_per_positive", "negatives_per_group", "temperature"):
+            self.assertIn(key, note)
+        for key in ("title", "url", "method_card_id"):
+            self.assertIn(key, note)
+        self.assertIn("hypothesis_id", note)
+
+    def test_manifest_note_bounds_code_size(self):
+        note = schema_fields_note("candidate_manifest")
+        self.assertIn("120 lines", note)
+        self.assertIn("60 lines", note)
+        self.assertIn("from src.models.sampling import sample_bpr_pairs", note)
+        self.assertIn("Never write 'from src.models import", note)
+        self.assertIn("getattr", note)
+        self.assertIn("FMRanker(dimension, embedding_dim=16", note)
+        self.assertIn("rng is the THIRD argument", note)
+        self.assertIn("unittest.TestCase", note)
+        self.assertIn("checkpoint_state", note)
+        self.assertIn("integer index matrices", note)
+
+
+class SchemaNormalizationTests(unittest.TestCase):
+    """Regressions for the live GLM drift observed in kjsmoke_20260829T1541*."""
+
+    def test_action_synonym_mapped_and_extras_dropped(self):
+        data = _normalize_schema_output(
+            "research_decision",
+            {
+                "action": "propose_experiment",
+                "control": "the FM baseline",
+                "decision_basis": {"why_bpr": "..."},
+                "hypothesis_id": "bpr-v1",
+                "family": "bpr",
+                "hypothesis": "h",
+                "rationale": "r",
+                "parameters": {},
+                "evidence": [],
+                "needs_web_search": False,
+                "parent_experiment": None,
+            },
+        )
+        self.assertEqual(data["action"], "explore")
+        self.assertNotIn("control", data)
+        self.assertNotIn("decision_basis", data)
+
+    def test_missing_action_derived_from_parent_linkage(self):
+        base = {
+            "hypothesis_id": "bpr-v1",
+            "family": "bpr",
+            "hypothesis": "h",
+            "rationale": "r",
+            "parameters": {},
+            "evidence": [],
+            "needs_web_search": False,
+        }
+        orphan = _normalize_schema_output("research_decision", {**base, "parent_experiment": None})
+        child = _normalize_schema_output("research_decision", {**base, "parent_experiment": "bpr-v1"})
+        self.assertEqual(orphan["action"], "explore")
+        self.assertEqual(child["action"], "exploit")
+
+    def test_unknown_action_left_for_reprompt(self):
+        data = _normalize_schema_output(
+            "research_decision", {"action": "invent_new_physics"}
+        )
+        self.assertEqual(data["action"], "invent_new_physics")
+
+    def test_family_case_and_spacing_normalized(self):
+        data = _normalize_schema_output("research_decision", {"family": "Group Softmax"})
+        self.assertEqual(data["family"], "group_softmax")
+        unknown = _normalize_schema_output("research_decision", {"family": "transformers"})
+        self.assertEqual(unknown["family"], "transformers")
+
+    def test_boolean_strings_coerced(self):
+        data = _normalize_schema_output("critic_decision", {"approved": "yes"})
+        self.assertIs(data["approved"], True)
+        data = _normalize_schema_output("debug_decision", {"preserve_hypothesis": "false"})
+        self.assertIs(data["preserve_hypothesis"], False)
+        untouched = _normalize_schema_output("critic_decision", {"approved": "maybe"})
+        self.assertEqual(untouched["approved"], "maybe")
+
+    def test_evidence_claim_source_keys_remapped(self):
+        data = _normalize_schema_output(
+            "research_decision",
+            {"evidence": [{"claim": "BPR aligns loss with GAUC", "source": "https://arxiv.org/abs/1205.2618"}]},
+        )
+        item = data["evidence"][0]
+        self.assertEqual(item["title"], "BPR aligns loss with GAUC")
+        self.assertEqual(item["url"], "https://arxiv.org/abs/1205.2618")
+        self.assertNotIn("claim", item)
+
+    def test_parameter_keys_aliased_and_undeclared_dropped(self):
+        data = _normalize_schema_output(
+            "research_decision",
+            {"parameters": {"embedding_dim": 16, "lr": 0.001, "aux_heads": ["click"], "epochs": 5}},
+        )
+        # ``embedding_dim`` is now its own DIN knob (no longer aliased to ``k``),
+        # and ``aux_heads`` is hallucinated junk not in any family grid -> dropped.
+        self.assertEqual(
+            data["parameters"],
+            {"embedding_dim": 16, "learning_rate": 0.001, "epochs": 5},
+        )
+
+    def test_family_grid_keys_are_preserved_through_normalization(self):
+        # Family-specific grid keys (smoothing/scheme/use_*/aux_weight/seq_len/...)
+        # must survive the normalization pass so sanitize_parameters sees the
+        # Researcher's chosen value rather than the default. This is the fix for
+        # the parameter-channel bug that kept history_features/multi_task from
+        # ever running.
+        data = _normalize_schema_output(
+            "research_decision",
+            {"parameters": {"smoothing": 100.0, "scheme": "prior_days", "seq_len": 50,
+                            "aux_weight": 0.3, "use_is_click": True, "epochs": 5}},
+        )
+        for key in ("smoothing", "scheme", "seq_len", "aux_weight", "use_is_click", "epochs"):
+            self.assertIn(key, data["parameters"], f"{key} was stripped")
+        self.assertEqual(data["parameters"]["smoothing"], 100.0)
+        self.assertEqual(data["parameters"]["seq_len"], 50)
+        self.assertIs(data["parameters"]["use_is_click"], True)
+
+    def test_missing_hypothesis_id_derived_deterministically(self):
+        payload = {
+            "family": "bpr", "action": "explore", "hypothesis": "pairwise loss beats BCE",
+            "rationale": "r", "parameters": {}, "evidence": [],
+        }
+        first = _normalize_schema_output("research_decision", dict(payload))
+        second = _normalize_schema_output("research_decision", dict(payload))
+        self.assertTrue(first["hypothesis_id"].startswith("bpr-auto-"))
+        self.assertEqual(first["hypothesis_id"], second["hypothesis_id"])
+        manifest = _normalize_schema_output("candidate_manifest", {"code": "def run(): pass"})
+        self.assertTrue(manifest["hypothesis_id"].startswith("exp-auto-"))
 
 
 class OfflineSmokeTests(unittest.TestCase):
@@ -285,11 +479,26 @@ class RetryPolicyTests(unittest.TestCase):
         self.assertIsInstance(caught.exception, LLMError)
         self.assertEqual(responses.calls, 2)
 
-    def test_unparseable_output_text_raises_role_output_invalid(self):
-        provider, responses = _openai_provider([_valid_response("not-json")])
-        with self.assertRaises(RoleOutputInvalid):
+    def test_unparseable_output_text_is_retried_then_raises(self):
+        provider, responses = _openai_provider(
+            [_valid_response("not-json") for _ in range(5)]
+        )
+        with patch("src.agent.llm.time.sleep"), self.assertRaises(RoleOutputInvalid):
             self._complete(provider)
-        self.assertEqual(responses.calls, 1)
+        self.assertEqual(responses.calls, 5)
+
+    def test_unparseable_then_valid_output_recovers(self):
+        provider, responses = _openai_provider(
+            [
+                _valid_response("```yaml\nnope: true\n```"),
+                _valid_response('{"approved": true, "decision": "approve", "rationale": "r"}'),
+            ]
+        )
+        with patch("src.agent.llm.time.sleep"):
+            result = self._complete(provider)
+        self.assertTrue(result.data["approved"])
+        self.assertEqual(result.retries, 1)
+        self.assertEqual(responses.calls, 2)
 
     def test_token_budget_uses_a_typed_exception(self):
         with tempfile.TemporaryDirectory() as directory:

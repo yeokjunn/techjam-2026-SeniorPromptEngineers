@@ -1,0 +1,8 @@
+
+test_run_returns_outputs (test_candidate.TestRun.test_run_returns_outputs) ... ok
+test_same_user_group_construction (test_candidate.TestSamplingGroups.test_same_user_group_construction) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.020s
+
+OK

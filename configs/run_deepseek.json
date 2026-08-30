@@ -1,0 +1,41 @@
+{
+  "mode": "research",
+  "name": "kj-deepseek-research",
+  "data_dir": "data/KuaiRand-Pure/data",
+  "run_root": "runs",
+  "generated_root": "generated_experiments",
+  "method_catalog": "research/methods",
+  "official_validation_baseline": 0.6016,
+  "baseline_config": "configs/baseline.json",
+  "data_card_path": null,
+  "llm": {
+    "provider": "openrouter",
+    "model": "deepseek/deepseek-v4-flash-0731",
+    "base_url": "https://openrouter.ai/api/v1",
+    "json_mode": "object",
+    "max_output_tokens": 65536,
+    "max_total_tokens": 5000000,
+    "request_timeout_seconds": 600,
+    "max_retries": 3
+  },
+  "budgets": {
+    "max_iterations": 50,
+    "max_training_attempts": 50,
+    "max_proposals": 100,
+    "max_wall_clock_seconds": 21600,
+    "experiment_timeout_seconds": 900,
+    "test_timeout_seconds": 60,
+    "max_debug_repairs": 2,
+    "max_consecutive_harness_errors": 3,
+    "max_role_reprompts": 2
+  },
+  "convergence": {
+    "epsilon": 0.002,
+    "patience": 3
+  },
+  "replication_seeds": [
+    1,
+    2
+  ],
+  "run_id_prefix": "kods_"
+}

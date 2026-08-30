@@ -36,6 +36,7 @@ from .policy import (
 from .report import render_reports
 from .roles import ResearchRoles
 from .types import (
+    summarize_epoch_trace,
     CandidateManifest,
     CriticDecision,
     EDAReport,
@@ -1084,6 +1085,9 @@ class ResearchLoop:
             candidate_dir=candidate_dir,
             parent_experiment=decision.parent_experiment,
             replicated_from=replicated_from,
+            # ``outcome`` is None when the candidate never reached training (repairs exhausted,
+            # tests never passed) -- see the guard above.
+            trace_summary=summarize_epoch_trace(outcome.epoch_trace if outcome else None),
         )
         self.state.nodes.append(node)
         self.discovery_store.record_outcome(

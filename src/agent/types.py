@@ -310,6 +310,10 @@ class ExperimentNode:
     candidate_dir: str | None = None
     parent_experiment: str | None = None
     replicated_from: str | None = None
+    #: Compact shape of the training curve -- see ``summarize_epoch_trace``. The Researcher only
+    #: ever saw the final metrics, so it could not observe that candidates peak around epoch 3-5
+    #: and then decay below the baseline; that fact was sitting unused in the epoch trace.
+    trace_summary: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExperimentNode":
@@ -317,6 +321,35 @@ class ExperimentNode:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def summarize_epoch_trace(trace: list[dict] | None) -> dict[str, Any] | None:
+    """Reduce a per-epoch trace to the shape the Researcher needs to see.
+
+    Deliberately a summary rather than the raw trace: the state summary sits in the *volatile*
+    half of the prompt, so it is re-sent uncached on every role call and grows with the run. A
+    full trace costs roughly 350 tokens per node (3k+ per call by iteration nine, worse as the
+    run approaches the 50-iteration cap); this costs about 20 and carries the same finding --
+    where the run peaked and how much it gave back afterwards.
+
+    Returns ``None`` when the trace has no usable primary scores, so a failed or trace-less
+    candidate simply omits the field rather than reporting zeros.
+    """
+    primaries = [
+        float(entry["primary"])
+        for entry in (trace or [])
+        if isinstance(entry, dict) and isinstance(entry.get("primary"), (int, float))
+    ]
+    if not primaries:
+        return None
+    peak = max(primaries)
+    return {
+        "epochs_ran": len(primaries),
+        "peak_epoch": primaries.index(peak),
+        "peak": round(peak, 5),
+        "final": round(primaries[-1], 5),
+        "declined_after_peak": round(peak - primaries[-1], 5),
+    }
 
 
 @dataclass

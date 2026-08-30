@@ -238,6 +238,10 @@ and leakage-safe feature hypotheses compatible with registered families: {', '.j
                 "parameters": node.parameters,
                 "status": node.status,
                 "metrics": node.metrics,
+                # Where on the training curve this score came from: a candidate that peaked at
+                # epoch 4 and gave back 0.003 by epoch 8 is a different result from one that
+                # was still improving when it stopped.
+                "trace_summary": node.trace_summary,
             }
             for node in state.nodes
         ]

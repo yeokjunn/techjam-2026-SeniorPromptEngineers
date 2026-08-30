@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+import difflib
 import json
 import os
-import difflib
+import time
 from pathlib import Path
 from typing import Any
 
 from .activity import ActivityHandle, redact_text, safe_value, utc_now
 from .llm import LLMCallResult
+
+
+def _replace_atomic(temporary: Path, path: Path) -> None:
+    for attempt in range(5):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.005 * (2 ** attempt))
 
 
 class ResearchAudit:
@@ -22,14 +34,14 @@ class ResearchAudit:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(temporary, path)
+        _replace_atomic(temporary, path)
 
     @staticmethod
     def write_text_atomic(path: Path, value: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(value, encoding="utf-8")
-        os.replace(temporary, path)
+        _replace_atomic(temporary, path)
 
     @staticmethod
     def append_jsonl(path: Path, value: Any) -> None:

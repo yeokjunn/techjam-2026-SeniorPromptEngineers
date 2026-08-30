@@ -89,6 +89,7 @@ def wired_loop():
             "run_root": str(root / "runs"),
             "generated_root": str(root / "generated"),
             "method_catalog": str(REPO_ROOT / "research" / "methods"),
+            "discovery_store": str(root / "discoveries.json"),
             "official_validation_baseline": 0.6016,
             "llm": {"max_total_tokens": 1000},
             "budgets": {
@@ -307,21 +308,19 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
         # a family the registry genuinely does not hold.
         self.assertNotIn("nope_family", families.family_names())
         with self.assertRaises(ValueError) as unknown:
-            policy.sanitize_parameters("nope_family", BPR_RAW)
-        self.assertEqual(str(unknown.exception), "Unsupported family: nope_family")
+            policy.sanitize_parameters("unregistered_family", BPR_RAW)
+        self.assertEqual(str(unknown.exception), "Unsupported family: unregistered_family")
         # The lookup comes first, so the family — not an incidental bound — is
         # what the re-prompt is told about. The old `if/elif/else` chain reached
         # its `else` only after the shared checks, so this said "epochs must be
         # between 1 and 40." for a family that does not exist.
         with self.assertRaises(ValueError) as unknown_first:
-            policy.sanitize_parameters("nope_family", {**BPR_RAW, "epochs": 99})
-        self.assertEqual(str(unknown_first.exception), "Unsupported family: nope_family")
+            policy.sanitize_parameters("unregistered_family", {**BPR_RAW, "epochs": 99})
+        self.assertEqual(str(unknown_first.exception), "Unsupported family: unregistered_family")
 
-        # --- a shipped family is rejected on its own registered grid ---------
-        # E's `bpr` entry now names each of these keys (`families.py:73-74`), so
-        # the grid supersedes the hard-coded bound and the message is E's. The
-        # re-prompt only needs to be told *which* key is off-grid, so that is
-        # what is pinned rather than E's exact wording.
+        # --- with no grid on the entry, today's bounds are the live path ------
+        # `Family` has no `grid` field yet, so this is what actually runs until
+        # E ships: the hard-coded checks, unchanged, messages included.
         shipped = policy.sanitize_parameters("bpr", BPR_RAW)
         self.assertEqual(shipped["batch_size"], 2048)
         self.assertEqual(shipped["negatives_per_positive"], 1)
@@ -473,21 +472,23 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
         def third_family_does_not_break_the_stop_rule(source: str) -> None:
             """A family E registers must leave `should_stop` satisfiable."""
             with self.subTest(coverage_source=source):
-                with patch.dict(families.FAMILIES, {"history_features": third}, clear=False):
-                    # A *strict* superset of the coverage pair is the premise:
-                    # E has since registered `multi_task` too, so the set is no
-                    # longer pinned by literal — only that it holds the extra
-                    # family and more than the stop rule requires.
-                    self.assertIn("history_features", families.family_names())
-                    self.assertLess(
-                        policy._coverage_families(), families.family_names()
+                with patch.dict(
+                    families.FAMILIES,
+                    {
+                        "bpr": families.FAMILIES["bpr"],
+                        "group_softmax": families.FAMILIES["group_softmax"],
+                        "history_features": third,
+                    },
+                    clear=True,
+                ):
+                    self.assertEqual(
+                        sorted(families.family_names()),
+                        ["bpr", "group_softmax", "history_features"],
                     )
                     covered = successful_state("bpr", "group_softmax")
                     self.assertTrue(policy.coverage_complete(covered))
                     self.assertIsNone(policy.required_family(covered))
-                    self.assertEqual(
-                        policy.required_family(successful_state("bpr")), "group_softmax"
-                    )
+                    self.assertIsNone(policy.required_family(successful_state("bpr")))
                     # The stop rule itself, which is what the run hangs on: with
                     # coverage read off `family_names()` this is False forever and
                     # the run can only end on a budget, never `converged`.
@@ -563,6 +564,7 @@ def card_config(
         "run_root": str(run_root),
         "generated_root": str(root / "generated"),
         "method_catalog": str(REPO_ROOT / "research" / "methods"),
+        "discovery_store": str(root / "discoveries.json"),
         "official_validation_baseline": 0.6016,
         "llm": {"max_total_tokens": 1000},
         "budgets": {
@@ -933,6 +935,7 @@ def training_failure_loop(*outcomes: ExperimentOutcome):
             "run_root": str(root / "runs"),
             "generated_root": str(root / "generated"),
             "method_catalog": str(REPO_ROOT / "research" / "methods"),
+            "discovery_store": str(root / "discoveries.json"),
             "official_validation_baseline": 0.6016,
             "llm": {"max_total_tokens": 1000},
             "budgets": {

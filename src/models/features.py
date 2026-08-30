@@ -60,7 +60,7 @@ UNKNOWN_SLOT = SLOTS_PER_GROUP - 1
 
 #: Auxiliary training targets for the ``multi_task`` family (review I8, spec appendix A idea 9).
 #: is_click covers 44% of rows and is strongly linked to long_view.
-AUX_HEADS = ("is_click", "is_like", "play_time")
+AUX_HEADS = ("is_click", "is_like", "is_follow", "is_comment", "is_forward", "play_time")
 AUX_SOURCES = (
     "log_standard_4_08_to_4_21_pure.csv",
     "log_standard_4_22_to_5_08_pure.csv",
@@ -428,9 +428,9 @@ def aux_dimension(spec: dict) -> int:
 
 @lru_cache(maxsize=1)
 def _cached_aux_columns(data_dir: str) -> dict[str, np.ndarray]:
-    """``is_click`` / ``is_like`` / ``play_time_ms`` for TRAIN dates only.
+    """``is_click`` / ``is_like`` / ``is_follow`` / ``is_comment`` / ``is_forward`` / ``play_time_ms`` for TRAIN dates only.
 
-    A separate reader because ``load_train_valid``'s 7-tuple drops these three columns. Same
+    A separate reader because ``load_train_valid``'s 7-tuple drops these columns. Same
     discipline as ``official.py``: the date is checked *before* any other column is touched, so
     no auxiliary signal is ever read from a valid or test row. Rows come out in
     ``load_train_valid``'s train order -- the two loaders read the same files in the same order
@@ -438,6 +438,9 @@ def _cached_aux_columns(data_dir: str) -> dict[str, np.ndarray]:
     """
     clicks: list[float] = []
     likes: list[float] = []
+    follows: list[float] = []
+    comments: list[float] = []
+    forwards: list[float] = []
     plays: list[float] = []
     for filename in AUX_SOURCES:
         with (Path(data_dir) / filename).open(encoding="utf-8", newline="") as handle:
@@ -447,10 +450,16 @@ def _cached_aux_columns(data_dir: str) -> dict[str, np.ndarray]:
                     continue
                 clicks.append(1.0 if row["is_click"] != "0" else 0.0)
                 likes.append(1.0 if row["is_like"] != "0" else 0.0)
+                follows.append(1.0 if row["is_follow"] != "0" else 0.0)
+                comments.append(1.0 if row["is_comment"] != "0" else 0.0)
+                forwards.append(1.0 if row["is_forward"] != "0" else 0.0)
                 plays.append(float(row["play_time_ms"]))
     return {
         "is_click": np.asarray(clicks, dtype=np.float64),
         "is_like": np.asarray(likes, dtype=np.float64),
+        "is_follow": np.asarray(follows, dtype=np.float64),
+        "is_comment": np.asarray(comments, dtype=np.float64),
+        "is_forward": np.asarray(forwards, dtype=np.float64),
         "play_time": np.asarray(plays, dtype=np.float64),
     }
 
@@ -458,12 +467,25 @@ def _cached_aux_columns(data_dir: str) -> dict[str, np.ndarray]:
 def _aux_columns(spec: dict) -> dict[str, np.ndarray]:
     override = spec.get("aux_rows")
     if override is not None:
-        # Documented test override: (is_click, is_like, play_time_ms) per train row.
-        triples = [tuple(item) for item in override]
+        # Documented test override: (is_click, is_like, is_follow, is_comment, is_forward, play_time_ms) or 3-tuple fallback per train row.
+        rows = [tuple(item) for item in override]
+        if rows and len(rows[0]) >= 6:
+            return {
+                "is_click": np.asarray([r[0] for r in rows], dtype=np.float64),
+                "is_like": np.asarray([r[1] for r in rows], dtype=np.float64),
+                "is_follow": np.asarray([r[2] for r in rows], dtype=np.float64),
+                "is_comment": np.asarray([r[3] for r in rows], dtype=np.float64),
+                "is_forward": np.asarray([r[4] for r in rows], dtype=np.float64),
+                "play_time": np.asarray([r[5] for r in rows], dtype=np.float64),
+            }
+        # Fallback for 3-tuple legacy test overrides
         return {
-            "is_click": np.asarray([t[0] for t in triples], dtype=np.float64),
-            "is_like": np.asarray([t[1] for t in triples], dtype=np.float64),
-            "play_time": np.asarray([t[2] for t in triples], dtype=np.float64),
+            "is_click": np.asarray([r[0] for r in rows], dtype=np.float64),
+            "is_like": np.asarray([r[1] for r in rows], dtype=np.float64),
+            "is_follow": np.zeros(len(rows), dtype=np.float64),
+            "is_comment": np.zeros(len(rows), dtype=np.float64),
+            "is_forward": np.zeros(len(rows), dtype=np.float64),
+            "play_time": np.asarray([r[2] for r in rows], dtype=np.float64),
         }
     try:
         return _cached_aux_columns(str(_resolve_data_dir(spec)))

@@ -6,8 +6,10 @@ import unittest
 from src.agent.convergence import ConvergenceTracker, official_converged
 from src.agent.policy import (
     SearchPolicy,
+    exploit_family,
     family_experiment_score,
     next_family_hint,
+    required_family,
     scored_primaries,
 )
 from src.agent.proposer import ConfigProposer
@@ -87,6 +89,98 @@ class PolicyTests(unittest.TestCase):
             nodes=[],
         )
         self.assertEqual(next_family_hint(state), "bpr")
+
+    def test_promising_best_family_is_exploited_before_coverage(self):
+        state = RunState(
+            run_id="demo",
+            status="running",
+            started_at="2026-01-01T00:00:00Z",
+            baseline_primary=0.6016,
+        )
+        best = ExperimentNode(
+            iteration=1,
+            experiment_id="cand_hf_tabcross_prior_days_v1",
+            hypothesis_id="hf_tabcross_prior_days_v1",
+            family="history_features",
+            action="explore",
+            parameters={},
+            status="success",
+            metrics={"GAUC": 0.6695, "nDCG@5": 0.5366, "primary": 0.603063},
+        )
+        state.nodes.append(best)
+        state.best_experiment_id = best.experiment_id
+        state.best_metrics = dict(best.metrics or {})
+
+        self.assertEqual(exploit_family(state), "history_features")
+        self.assertEqual(required_family(state), "history_features")
+        self.assertEqual(next_family_hint(state), "history_features")
+
+    def test_bad_new_family_falls_back_to_best_family(self):
+        state = RunState(
+            run_id="demo",
+            status="running",
+            started_at="2026-01-01T00:00:00Z",
+            baseline_primary=0.6016,
+        )
+        best = ExperimentNode(
+            iteration=1,
+            experiment_id="cand_hf_tabcross_prior_days_v1",
+            hypothesis_id="hf_tabcross_prior_days_v1",
+            family="history_features",
+            action="explore",
+            parameters={},
+            status="success",
+            metrics={"GAUC": 0.6695, "nDCG@5": 0.5366, "primary": 0.603063},
+        )
+        bpr = ExperimentNode(
+            iteration=2,
+            experiment_id="cand_bpr_sameuser_v3",
+            hypothesis_id="cand_bpr_sameuser_v3",
+            family="bpr",
+            action="explore",
+            parameters={},
+            status="success",
+            metrics={"GAUC": 0.6553, "nDCG@5": 0.5306, "primary": 0.592949},
+        )
+        state.nodes.extend([best, bpr])
+        state.best_experiment_id = best.experiment_id
+        state.best_metrics = dict(best.metrics or {})
+
+        self.assertEqual(exploit_family(state), "history_features")
+        self.assertEqual(required_family(state), "history_features")
+
+    def test_convergence_waits_for_best_family_followups(self):
+        state = RunState(
+            run_id="demo",
+            status="running",
+            started_at="2026-01-01T00:00:00Z",
+            baseline_primary=0.6016,
+            stagnant_iterations=3,
+        )
+        best = ExperimentNode(
+            iteration=1,
+            experiment_id="cand_hf_tabcross_prior_days_v1",
+            hypothesis_id="hf_tabcross_prior_days_v1",
+            family="history_features",
+            action="explore",
+            parameters={},
+            status="success",
+            metrics={"GAUC": 0.6695, "nDCG@5": 0.5366, "primary": 0.603063},
+        )
+        state.nodes.append(best)
+        state.best_experiment_id = best.experiment_id
+        state.best_metrics = dict(best.metrics or {})
+        policy = SearchPolicy(0.002, 3, [])
+
+        self.assertFalse(policy.should_stop(state))
+
+        state.nodes.extend(
+            [
+                ExperimentNode(2, "hf_ablate_1", "h", "history_features", "exploit", {}, "success", {"primary": 0.6020}),
+                ExperimentNode(3, "hf_ablate_2", "h", "history_features", "exploit", {}, "success", {"primary": 0.6019}),
+            ]
+        )
+        self.assertTrue(policy.should_stop(state))
 
 
 class OfficialConvergenceTests(unittest.TestCase):

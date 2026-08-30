@@ -11,6 +11,8 @@ from typing import Any, BinaryIO, TextIO
 from .models import (
     ChangeSummary,
     DashboardConfig,
+    DebuggerEvent,
+    EDAArtifact,
     IterationSnapshot,
     RolePass,
     RunSnapshot,
@@ -22,13 +24,16 @@ from .models import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 ROLE_EXECUTION_ORDER = {
-    "researcher": 0,
-    "researcher_web": 1,
-    "critic_preflight": 2,
-    "builder": 3,
-    "debugger": 4,
-    "critic_postflight": 5,
+    "eda_researcher": 0,
+    "eda_builder": 1,
+    "researcher": 2,
+    "researcher_web": 3,
+    "critic_preflight": 4,
+    "builder": 5,
+    "debugger": 6,
+    "critic_postflight": 7,
 }
+
 
 
 def _resolve(value: str | Path, base: Path = REPO_ROOT) -> Path:
@@ -286,7 +291,11 @@ def _iteration(
         or value.get("experiment_id")
         or f"iteration_{value.get('iteration', 0)}"
     )
-    parameters = proposal.get("parameters") or value.get("configuration") or {}
+    parameters = proposal.get("parameters")
+    if not isinstance(parameters, dict):
+        parameters = value.get("configuration")
+    if not isinstance(parameters, dict):
+        parameters = {}
     hypothesis = proposal.get("hypothesis") or value.get("hypothesis") or ""
     family = proposal.get("family") or value.get("kind") or ""
     parent = proposal.get("parent_experiment") or value.get("parent_experiment")
@@ -366,6 +375,142 @@ def load_patch_text(run_dir: Path, relative_path: str | None) -> str:
         return ""
 
 
+def load_live_eda_latest(run_dir: Path) -> EDAArtifact | None:
+    eda_dir = _inside(run_dir / "eda", run_dir)
+    if not eda_dir.is_dir():
+        return None
+    latest_path = eda_dir / "latest.json"
+    if not latest_path.is_file():
+        return None
+    value = _read_json(latest_path, {}) or {}
+    if not isinstance(value, dict):
+        return None
+    report = value.get("report") if isinstance(value.get("report"), dict) else {}
+    plan = value.get("plan") if isinstance(value.get("plan"), dict) else {}
+    try:
+        iteration = int(value.get("iteration", 0))
+    except (TypeError, ValueError):
+        iteration = 0
+    raw_findings = (
+        value.get("findings")
+        if isinstance(value.get("findings"), (list, tuple))
+        else (report.get("findings") if isinstance(report.get("findings"), (list, tuple)) else [])
+    )
+    raw_features = (
+        value.get("feature_candidates")
+        if isinstance(value.get("feature_candidates"), (list, tuple))
+        else (report.get("feature_candidates") if isinstance(report.get("feature_candidates"), (list, tuple)) else [])
+    )
+    summary = str(report.get("summary", "")) if isinstance(report, dict) else ""
+    if not summary and plan:
+        summary = str(plan.get("objective", ""))
+    return EDAArtifact(
+        iteration=iteration,
+        path=latest_path,
+        status=str(value.get("status", "completed")),
+        summary=summary,
+        error=value.get("error"),
+        plan=plan,
+        report=report,
+        findings=tuple(dict(item) for item in raw_findings if isinstance(item, dict)),
+        feature_candidates=tuple(
+            dict(item) for item in raw_features if isinstance(item, dict)
+        ),
+        raw=value,
+    )
+
+
+def load_eda_artifacts(run_dir: Path) -> tuple[EDAArtifact, ...]:
+    eda_dir = _inside(run_dir / "eda", run_dir)
+    if not eda_dir.is_dir():
+        return ()
+    artifacts: list[EDAArtifact] = []
+    for path in sorted(tuple(eda_dir.glob("*_eda.json")) + tuple(eda_dir.glob("*_eda_failed.json"))):
+        value = _read_json(path, {}) or {}
+        if not isinstance(value, dict):
+            continue
+        report = value.get("report") if isinstance(value.get("report"), dict) else {}
+        plan = value.get("plan") if isinstance(value.get("plan"), dict) else {}
+        try:
+            iteration = int(value.get("iteration", 0))
+        except (TypeError, ValueError):
+            iteration = 0
+        raw_findings = (
+            value.get("findings")
+            if isinstance(value.get("findings"), (list, tuple))
+            else (report.get("findings") if isinstance(report.get("findings"), (list, tuple)) else [])
+        )
+        raw_features = (
+            value.get("feature_candidates")
+            if isinstance(value.get("feature_candidates"), (list, tuple))
+            else (report.get("feature_candidates") if isinstance(report.get("feature_candidates"), (list, tuple)) else [])
+        )
+        summary = str(report.get("summary", "")) if isinstance(report, dict) else ""
+        if not summary and plan:
+            summary = str(plan.get("objective", ""))
+        artifacts.append(
+            EDAArtifact(
+                iteration=iteration,
+                path=path,
+                status=str(value.get("status", "completed")),
+                summary=summary,
+                error=value.get("error"),
+                plan=plan,
+                report=report,
+                findings=tuple(dict(item) for item in raw_findings if isinstance(item, dict)),
+                feature_candidates=tuple(
+                    dict(item) for item in raw_features if isinstance(item, dict)
+                ),
+                raw=value,
+            )
+        )
+    return tuple(artifacts)
+
+
+
+def load_debugger_events(run_dir: Path) -> tuple[DebuggerEvent, ...]:
+    run_dir = run_dir.resolve()
+    _reject_judge_path(run_dir)
+    events: list[DebuggerEvent] = []
+
+    dbg_path = run_dir / "debugger_memory.jsonl"
+    if dbg_path.is_file():
+        records, _ = _read_jsonl(dbg_path)
+        for rec in records:
+            events.append(
+                DebuggerEvent(
+                    iteration=int(rec.get("iteration", 0)),
+                    stage=str(rec.get("stage", "debugger")),
+                    candidate_id=rec.get("candidate_id"),
+                    error_type=rec.get("error_type"),
+                    error=str(rec.get("error", "")),
+                    lesson=str(rec.get("lesson", "")),
+                    event_type=str(rec.get("type", "debugger_memory")),
+                )
+            )
+
+    rm_path = run_dir / "research_memory.jsonl"
+    if rm_path.is_file():
+        records, _ = _read_jsonl(rm_path)
+        for rec in records:
+            rec_type = str(rec.get("type", ""))
+            if rec_type in {"role_retry", "eda_error", "controller_error"}:
+                events.append(
+                    DebuggerEvent(
+                        iteration=int(rec.get("iteration", 0)),
+                        stage=str(rec.get("label") or rec.get("stage") or rec_type),
+                        candidate_id=rec.get("candidate_id"),
+                        error_type=rec.get("error_type"),
+                        error=str(rec.get("error", "")),
+                        lesson=f"Re-prompt #{rec.get('reprompt', 1)}: {rec.get('error', '')}"
+                        if rec_type == "role_retry"
+                        else str(rec.get("error", "")),
+                        event_type=rec_type,
+                    )
+                )
+    return tuple(events)
+
+
 def load_run_snapshot(
     run_dir: Path,
     official_baseline: float = 0.6016,
@@ -379,7 +524,15 @@ def load_run_snapshot(
     if include_details:
         resources = _read_json(run_dir / "resources.json", {}) or {}
         run_config = _read_json(run_dir / "run_config.json", {}) or {}
-        records, iteration_warnings = _read_jsonl(run_dir / "iterations.jsonl")
+        raw_records, iteration_warnings = _read_jsonl(run_dir / "iterations.jsonl")
+        deduped: dict[int, dict[str, Any]] = {}
+        for item in raw_records:
+            it = item.get("iteration")
+            if it is not None:
+                deduped[it] = item
+            else:
+                deduped[len(deduped)] = item
+        records = list(deduped.values())
         timeline, activity_warnings = load_activity_timeline(run_dir)
     else:
         resources = {}
@@ -408,6 +561,17 @@ def load_run_snapshot(
     journal_md, results_md = (
         load_journal_reports(run_dir) if include_details else (None, None)
     )
+    eda_artifacts = load_eda_artifacts(run_dir) if include_details else ()
+    live_eda = load_live_eda_latest(run_dir) if include_details else None
+    debugger_events = load_debugger_events(run_dir) if include_details else ()
+
+    current_iter = (
+        current.iteration
+        if current is not None
+        else (max((int(item.get("iteration", 0)) for item in records), default=0) if records else 1)
+    )
+    live_passes = load_role_passes(run_dir, current_iter) if include_details else ()
+
     iterations = tuple(
         _iteration(item, _candidate_dir_for_iteration(item, nodes)) for item in records
     )
@@ -430,7 +594,12 @@ def load_run_snapshot(
         journal_markdown=journal_md,
         results_markdown=results_md,
         run_config=dict(run_config),
+        eda_artifacts=eda_artifacts,
+        live_role_passes=live_passes,
+        live_eda=live_eda,
+        debugger_events=debugger_events,
     )
+
 
 
 def discover_runs(run_root: Path, official_baseline: float = 0.6016) -> list[RunSnapshot]:
@@ -438,7 +607,23 @@ def discover_runs(run_root: Path, official_baseline: float = 0.6016) -> list[Run
     _reject_judge_path(run_root)
     if not run_root.is_dir():
         return []
-    directories = [path for path in run_root.iterdir() if path.is_dir()]
+    directories: list[Path] = []
+    for path in run_root.iterdir():
+        if not path.is_dir():
+            continue
+        run_config = _read_json(path / "run_config.json", {}) or {}
+        configured_mode = (
+            str(run_config.get("mode", "")).lower()
+            if isinstance(run_config, dict)
+            else ""
+        )
+        is_research = (
+            configured_mode == "research"
+            if configured_mode
+            else path.name.endswith("_research") or (path / "state.json").is_file()
+        )
+        if is_research:
+            directories.append(path)
     directories.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     return [
         load_run_snapshot(path, official_baseline, include_details=False)

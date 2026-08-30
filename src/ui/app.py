@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,13 +29,21 @@ from src.ui.loaders import (
     load_run_snapshot,
     validate_submission,
 )
-from src.ui.models import RolePass, RunSnapshot, StageTransition
+from src.ui.models import (
+    DebuggerEvent,
+    EDAArtifact,
+    RolePass,
+    RunSnapshot,
+    StageTransition,
+)
 
 
 CONFIG_PATH = REPO_ROOT / "configs" / "ui.json"
 
 STAGE_LABELS = {
     "initializing": "Initialize",
+    "eda_researcher": "EDA plan",
+    "eda_builder": "EDA report",
     "researcher": "Research",
     "critic_preflight": "Preflight",
     "builder": "Build",
@@ -85,6 +94,7 @@ def _parse_time(value: str) -> datetime | None:
         return result.replace(tzinfo=result.tzinfo or timezone.utc)
     except (TypeError, ValueError):
         return None
+
 
 
 def _elapsed_label(activity: StageTransition) -> str:
@@ -154,6 +164,126 @@ def _render_note(note: dict[str, Any]) -> None:
             st.markdown(f"**{labels.get(key, key.replace('_', ' ').title())}:** {value}")
 
 
+def _render_live_role_stream(snapshot: RunSnapshot) -> None:
+    if not snapshot.live_role_passes:
+        return
+    current_iter = (
+        snapshot.activity.iteration
+        if snapshot.activity
+        else (max((item.iteration for item in snapshot.iterations), default=0) if snapshot.iterations else 1)
+    )
+    with st.expander(
+        f"⚡ Live Sub-Iteration Agent Stream (Iteration {current_iter:03d} · {len(snapshot.live_role_passes)} passes)",
+        expanded=True,
+    ):
+        for rp in snapshot.live_role_passes:
+            role_label = STAGE_LABELS.get(rp.role, rp.role.replace("_", " ").title())
+            st.markdown(
+                f"**Pass {rp.sequence + 1}: {role_label}** (`{rp.model}` · `{rp.latency_seconds:.2f}s` · `{rp.usage.get('total_tokens', 0)} tokens`)"
+            )
+            if rp.role == "eda_researcher":
+                st.caption(f"**Objective:** {rp.data.get('objective', 'Plan EDA pass')}")
+                if rp.data.get("questions"):
+                    st.markdown("*Research Questions:*")
+                    for q in rp.data["questions"]:
+                        st.markdown(f"- {q}")
+                if rp.data.get("feature_hypotheses"):
+                    st.markdown("*Feature Hypotheses:*")
+                    for h in rp.data["feature_hypotheses"]:
+                        st.markdown(f"- {h}")
+                if rp.data.get("leakage_risks"):
+                    st.markdown("*Leakage Guardrails:*")
+                    for r in rp.data["leakage_risks"]:
+                        st.markdown(f"- ⚠️ {r}")
+            elif rp.role == "eda_builder":
+                if rp.data.get("summary"):
+                    st.info(f"**EDA Summary:** {rp.data['summary']}")
+                if rp.data.get("findings"):
+                    st.markdown("*Empirical Findings:*")
+                    st.dataframe(rp.data["findings"], width="stretch", hide_index=True)
+                if rp.data.get("feature_candidates"):
+                    st.markdown("*Feature Proposals:*")
+                    st.dataframe(rp.data["feature_candidates"], width="stretch", hide_index=True)
+                if rp.data.get("recommended_next_focus"):
+                    st.success(f"**Recommended Focus:** {rp.data['recommended_next_focus']}")
+            elif rp.role == "researcher":
+                st.markdown(f"**Hypothesis:** {rp.data.get('hypothesis', '')}")
+                st.caption(f"**Family:** `{rp.data.get('family', '')}` · **Action:** `{rp.data.get('action', '')}`")
+                if rp.data.get("rationale"):
+                    st.caption(f"**Rationale:** {rp.data['rationale']}")
+                if rp.data.get("parameters"):
+                    st.json(rp.data["parameters"], expanded=False)
+            elif rp.role == "critic_preflight":
+                approved = rp.data.get("approved", False)
+                decision = rp.data.get("decision", "approve" if approved else "reject")
+                badge = "✅ Approved" if approved else f"❌ {decision}"
+                st.markdown(f"**Preflight Decision:** {badge}")
+                if rp.data.get("rationale"):
+                    st.caption(f"**Rationale:** {rp.data['rationale']}")
+                if rp.data.get("concerns"):
+                    st.markdown("*Concerns / Risks:*")
+                    for c in rp.data["concerns"]:
+                        st.markdown(f"- {c}")
+                if rp.data.get("next_focus"):
+                    st.caption(f"**Next Focus:** {rp.data['next_focus']}")
+            elif rp.role == "builder":
+                st.markdown(f"**Candidate Generated:** `{rp.data.get('candidate_id', '')}`")
+                if rp.data.get("code"):
+                    with st.expander("Candidate Implementation Code", expanded=False):
+                        st.code(rp.data["code"], language="python", line_numbers=True)
+            elif rp.role == "debugger":
+                st.warning(f"**Debugger Diagnosis:** {rp.data.get('diagnosis', '')}")
+                if rp.data.get("replacement_code"):
+                    with st.expander("Debugger Repaired Code", expanded=False):
+                        st.code(rp.data["replacement_code"], language="python", line_numbers=True)
+            elif rp.role == "critic_postflight":
+                st.markdown(f"**Postflight Reflection:** {rp.data.get('reflection', '')}")
+                st.markdown(f"**Next Focus:** {rp.data.get('next_focus', '')}")
+            else:
+                _render_note(rp.data)
+            st.divider()
+
+
+def _render_live_diagnostics(snapshot: RunSnapshot) -> None:
+    activity = snapshot.activity
+    current_iter = (
+        activity.iteration
+        if activity is not None
+        else (max((item.iteration for item in snapshot.iterations), default=0) if snapshot.iterations else 1)
+    )
+    iter_events = [e for e in snapshot.debugger_events if e.iteration == current_iter]
+    has_activity_issue = bool(
+        activity and (activity.error or activity.repair or activity.attempt > 1 or activity.stage in {"debugger", "safety_tests"})
+    )
+    if not has_activity_issue and not iter_events:
+        return
+
+    st.markdown("### 🛠️ Diagnostics & Re-attempt Engine")
+    if activity and activity.attempt > 1:
+        st.warning(
+            f"**Active Re-attempt in Progress:** Iteration {activity.iteration} · Attempt {activity.attempt} "
+            f"for Stage `{STAGE_LABELS.get(activity.stage, activity.stage)}`"
+        )
+    if activity and activity.error:
+        st.error(f"**Trigger / Failure Output:**\n\n```text\n{activity.error}\n```")
+    if activity and activity.repair:
+        st.info(f"**Repair / Recovery Strategy:**\n\n{activity.repair}")
+
+    if iter_events:
+        with st.expander(f"WHY Re-attempt & Debugger Journal ({len(iter_events)} events)", expanded=True):
+            for event in iter_events:
+                st.markdown(f"**Stage:** `{event.stage}` · **Event:** `{event.event_type}`")
+                if event.error_type:
+                    st.caption(f"**Classification:** `{event.error_type}`")
+                if event.candidate_id:
+                    st.caption(f"**Candidate:** `{event.candidate_id}`")
+                if event.error:
+                    st.code(event.error, language="text")
+                if event.lesson:
+                    st.success(f"**Diagnosis / Corrective Action:** {event.lesson}")
+                st.divider()
+
+
 def _render_live_overlay(snapshot: RunSnapshot, stale_after: int) -> None:
     activity = snapshot.activity
     if activity is None:
@@ -186,26 +316,13 @@ def _render_live_overlay(snapshot: RunSnapshot, stale_after: int) -> None:
             f"No activity transition has been written for more than {stale_after // 60} minutes. "
             "The process may still be in a long blocking stage or may have been interrupted."
         )
+
+    _render_live_role_stream(snapshot)
+    _render_live_diagnostics(snapshot)
+
     with st.expander("Agent Notes — structured decision trace", expanded=True):
         _render_note(activity.agent_note)
         st.caption("Summarized decisions only; raw hidden reasoning and full prompts are not displayed.")
-    with st.expander("Changes", expanded=bool(activity.change_summary)):
-        changes = activity.change_summary
-        if changes is None:
-            st.caption("No finalized candidate change is attached to this stage yet.")
-        else:
-            st.write(f"**+{changes.lines_added} / −{changes.lines_deleted} lines**")
-            st.dataframe(list(changes.files), width="stretch", hide_index=True)
-            patch = load_patch_text(snapshot.path, changes.patch_path)
-            if patch:
-                st.code(patch, language="diff", line_numbers=True)
-    with st.expander("Errors & repairs", expanded=bool(activity.error)):
-        if activity.error:
-            st.error(activity.error)
-        if activity.repair:
-            st.info(activity.repair)
-        if not activity.error and not activity.repair:
-            st.caption("No error or repair is attached to the current stage.")
     with st.expander("Recent timeline"):
         recent = list(snapshot.transitions)[-10:][::-1]
         st.dataframe(
@@ -252,24 +369,22 @@ def _resource_metrics(snapshot: RunSnapshot) -> dict[str, Any]:
     }
 
 
+
 def _render_budget_gauges(snapshot: RunSnapshot) -> None:
     config = snapshot.run_config or {}
     budgets = config.get("budgets") or {}
-    llm = config.get("llm") or {}
-    if not budgets or "max_total_tokens" not in llm:
+    if not budgets:
         return
     max_iters = budgets.get("max_iterations")
-    max_training_attempts = budgets.get("max_training_attempts", max_iters)
     max_seconds = budgets.get("max_wall_clock_seconds")
-    max_tokens = llm.get("max_total_tokens")
 
     usage = _resource_metrics(snapshot)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Iterations Budget", f"{usage['iteration_count']} / {max_iters}")
-    c2.metric("Training Attempts", f"{usage['training_attempts']} / {max_training_attempts}")
+    c2.metric("Training Attempts", f"{usage['training_attempts']}")
     c3.metric("Wall Clock Time", f"{usage['wall_clock_seconds']:.1f}s / {max_seconds}s")
-    c4.metric("LLM Token Budget", f"{usage['total_tokens']:,} / {max_tokens:,}")
+    c4.metric("LLM Tokens Used", f"{usage['total_tokens']:,}")
 
 
 def _dot_escape(value: Any) -> str:
@@ -280,6 +395,16 @@ def _dot_escape(value: Any) -> str:
         .replace("\r", " ")
         .replace("\n", "\\n")
     )
+
+
+def _make_diffs_collapsible(markdown_text: str | None) -> str | None:
+    if not markdown_text:
+        return markdown_text
+    pattern = r"(```diff\n.*?\n```)"
+    def replacer(match: Any) -> str:
+        diff_block = match.group(1)
+        return f"<details>\n<summary>🔍 View Code Changes</summary>\n\n{diff_block}\n</details>"
+    return re.sub(pattern, replacer, markdown_text, flags=re.DOTALL)
 
 
 def _experiment_dag_dot(
@@ -364,7 +489,69 @@ def _pipeline(snapshot: RunSnapshot, stale_after: int, official: float) -> None:
         st.caption("This run does not contain a research experiment tree.")
 
 
-def _eda(config) -> None:
+def _eda(config, snapshot: RunSnapshot) -> None:
+    st.subheader("Run EDA reports")
+    if snapshot.live_eda:
+        live = snapshot.live_eda
+        st.markdown("### ⚡ Live Active EDA (Current Run)")
+        st.caption(f"Status: **{live.status}**")
+        if live.plan:
+            with st.expander(f"Active EDA Plan (Iteration {live.iteration:03d})", expanded=True):
+                st.markdown(f"**Objective:** {live.plan.get('objective', '')}")
+                if live.plan.get("questions"):
+                    st.markdown("*Questions:*")
+                    for q in live.plan["questions"]:
+                        st.markdown(f"- {q}")
+                if live.plan.get("feature_hypotheses"):
+                    st.markdown("*Feature Hypotheses:*")
+                    for h in live.plan["feature_hypotheses"]:
+                        st.markdown(f"- {h}")
+                if live.plan.get("leakage_risks"):
+                    st.markdown("*Leakage Risks:*")
+                    for r in live.plan["leakage_risks"]:
+                        st.markdown(f"- ⚠️ {r}")
+        if live.report:
+            with st.expander(f"Active EDA Report Findings (Iteration {live.iteration:03d})", expanded=True):
+                if live.report.get("summary"):
+                    st.info(live.report["summary"])
+                if live.report.get("findings"):
+                    st.markdown("#### Empirical Findings")
+                    st.dataframe(list(live.report["findings"]), width="stretch", hide_index=True)
+                if live.report.get("feature_candidates"):
+                    st.markdown("#### Proposed Features")
+                    st.dataframe(list(live.report["feature_candidates"]), width="stretch", hide_index=True)
+                if live.report.get("recommended_next_focus"):
+                    st.success(f"**Recommended Focus:** {live.report['recommended_next_focus']}")
+        st.divider()
+
+    if snapshot.eda_artifacts:
+        latest = snapshot.eda_artifacts[-1]
+        st.caption(f"Latest finalized EDA artifact: `{latest.path.relative_to(snapshot.path)}`")
+        if latest.status != "completed":
+            st.warning(f"EDA artifact status: {latest.status}")
+        if latest.error:
+            st.error(latest.error)
+        if latest.summary:
+            st.write(latest.summary)
+        if latest.findings:
+            st.markdown("#### Findings")
+            st.dataframe(list(latest.findings), width="stretch", hide_index=True)
+        if latest.feature_candidates:
+            st.markdown("#### Feature candidates")
+            st.dataframe(list(latest.feature_candidates), width="stretch", hide_index=True)
+        with st.expander("All EDA artifacts", expanded=False):
+            for artifact in snapshot.eda_artifacts:
+                st.markdown(f"**Iteration {artifact.iteration:03d}**")
+                if artifact.summary:
+                    st.caption(artifact.summary)
+                st.json(artifact.raw, expanded=False)
+    elif not snapshot.live_eda:
+        st.markdown(
+            '<div class="empty-panel">No autonomous EDA artifacts recorded for this run yet.</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
     st.subheader("Trusted train/validation profile")
     if not config.eda_profile_path.is_file():
         st.markdown(
@@ -421,8 +608,23 @@ def _eda(config) -> None:
             st.bar_chart(df_dur.set_index("seconds")["rows"])
 
 
-def _feature_lab() -> None:
+def _feature_lab(snapshot: RunSnapshot) -> None:
     st.subheader("Leakage-Safe Feature Lineage & Catalog")
+
+    live_proposals = []
+    if snapshot.live_eda and snapshot.live_eda.feature_candidates:
+        for f in snapshot.live_eda.feature_candidates:
+            live_proposals.append({"source": f"⚡ Live EDA (Iter {snapshot.live_eda.iteration:03d})", **f})
+    for rp in snapshot.live_role_passes:
+        if rp.role == "eda_builder" and rp.data.get("feature_candidates"):
+            for f in rp.data["feature_candidates"]:
+                live_proposals.append({"source": f"⚡ Live Builder Pass {rp.sequence + 1}", **f})
+
+    if live_proposals:
+        st.markdown("### ⚡ Live Feature Proposals")
+        st.dataframe(live_proposals, width="stretch", hide_index=True)
+        st.divider()
+
     fields = [
         ("user_id", "interaction log", "train-fitted vocabulary", "train only", "Categorical ID", "FM, BPR, group-softmax"),
         ("video_id", "interaction log", "train-fitted vocabulary", "train only", "Categorical ID", "FM, BPR, group-softmax"),
@@ -446,7 +648,16 @@ def _feature_lab() -> None:
         hide_index=True,
     )
 
-    st.info("Future feature families appear here only after trusted run metadata logs them.")
+    generated = []
+    for artifact in snapshot.eda_artifacts:
+        for feature in artifact.feature_candidates:
+            generated.append({"iteration": artifact.iteration, **feature})
+    if generated:
+        st.markdown("#### EDA-generated feature candidates")
+        st.dataframe(generated, width="stretch", hide_index=True)
+    elif not live_proposals:
+        st.info("Future feature families appear here only after trusted run metadata logs them.")
+
 
 
 def _render_role_passes(role_passes: tuple[RolePass, ...]) -> None:
@@ -617,7 +828,10 @@ def _results(snapshot: RunSnapshot, official: float) -> None:
         st.subheader("Autonomous Research Journal")
         with st.expander("View journal.md", expanded=bool(snapshot.journal_markdown)):
             if snapshot.journal_markdown:
-                st.markdown(snapshot.journal_markdown)
+                st.markdown(
+                    _make_diffs_collapsible(snapshot.journal_markdown),
+                    unsafe_allow_html=True,
+                )
             else:
                 st.caption("journal.md not rendered yet.")
         with st.expander("View results.md", expanded=False):
@@ -663,8 +877,9 @@ def main() -> None:
     st.sidebar.caption("The dashboard never launches, resumes, cancels, or changes an experiment.")
     tabs = st.tabs(["Pipeline", "EDA", "Feature Lab", "Iterations", "Results"])
     initial = load_run_snapshot(selected_path, config.official_baseline)
-    with tabs[0]:
-        if initial.status == "running":
+
+    if initial.status == "running":
+        with tabs[0]:
             @st.fragment(run_every=f"{config.active_refresh_seconds}s")
             def live_pipeline() -> None:
                 _pipeline(
@@ -673,19 +888,43 @@ def main() -> None:
                     config.official_baseline,
                 )
             live_pipeline()
-        else:
+
+        with tabs[1]:
+            @st.fragment(run_every=f"{config.active_refresh_seconds}s")
+            def live_eda() -> None:
+                _eda(config, load_run_snapshot(selected_path, config.official_baseline))
+            live_eda()
+
+        with tabs[2]:
+            @st.fragment(run_every=f"{config.active_refresh_seconds}s")
+            def live_feature_lab() -> None:
+                _feature_lab(load_run_snapshot(selected_path, config.official_baseline))
+            live_feature_lab()
+
+        with tabs[3]:
+            @st.fragment(run_every=f"{config.active_refresh_seconds}s")
+            def live_iterations() -> None:
+                _iterations(load_run_snapshot(selected_path, config.official_baseline))
+            live_iterations()
+
+        with tabs[4]:
+            @st.fragment(run_every=f"{config.active_refresh_seconds}s")
+            def live_results() -> None:
+                _results(load_run_snapshot(selected_path, config.official_baseline), config.official_baseline)
+            live_results()
+    else:
+        with tabs[0]:
             _pipeline(initial, config.stale_after_seconds, config.official_baseline)
-    snapshot = initial
-    with tabs[1]:
-        _eda(config)
-    with tabs[2]:
-        _feature_lab()
-    with tabs[3]:
-        _iterations(snapshot)
-    with tabs[4]:
-        _results(snapshot, config.official_baseline)
+        with tabs[1]:
+            _eda(config, initial)
+        with tabs[2]:
+            _feature_lab(initial)
+        with tabs[3]:
+            _iterations(initial)
+        with tabs[4]:
+            _results(initial, config.official_baseline)
+
 
 
 if __name__ == "__main__":
     main()
-

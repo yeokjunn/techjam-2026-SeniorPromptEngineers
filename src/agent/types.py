@@ -106,6 +106,7 @@ class ResearchDecision:
     evidence: tuple[EvidenceSource, ...]
     needs_web_search: bool = False
     parent_experiment: str | None = None
+    web_searched: bool = False
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ResearchDecision":
@@ -126,6 +127,106 @@ class ResearchDecision:
             evidence=tuple(EvidenceSource.from_dict(item) for item in evidence_raw),
             needs_web_search=bool(value.get("needs_web_search", False)),
             parent_experiment=value.get("parent_experiment"),
+            web_searched=bool(value.get("web_searched", False)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class EDAResearchPlan:
+    objective: str
+    questions: tuple[str, ...]
+    feature_hypotheses: tuple[str, ...]
+    required_inputs: tuple[str, ...]
+    leakage_risks: tuple[str, ...]
+    expected_artifacts: tuple[str, ...]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "EDAResearchPlan":
+        return cls(
+            objective=str(_required(value, "objective", str)),
+            questions=tuple(str(item) for item in _required(value, "questions", list)),
+            feature_hypotheses=tuple(
+                str(item) for item in _required(value, "feature_hypotheses", list)
+            ),
+            required_inputs=tuple(
+                str(item) for item in _required(value, "required_inputs", list)
+            ),
+            leakage_risks=tuple(
+                str(item) for item in _required(value, "leakage_risks", list)
+            ),
+            expected_artifacts=tuple(
+                str(item) for item in _required(value, "expected_artifacts", list)
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class EDAFinding:
+    title: str
+    observation: str
+    implication: str
+    evidence: str
+    leakage_safe: bool = True
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "EDAFinding":
+        return cls(
+            title=str(_required(value, "title", str)),
+            observation=str(_required(value, "observation", str)),
+            implication=str(_required(value, "implication", str)),
+            evidence=str(_required(value, "evidence", str)),
+            leakage_safe=bool(value.get("leakage_safe", True)),
+        )
+
+
+@dataclass(frozen=True)
+class FeatureCandidate:
+    name: str
+    description: str
+    family: str
+    expected_impact: str
+    implementation_scope: str
+    leakage_risk: str
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "FeatureCandidate":
+        return cls(
+            name=str(_required(value, "name", str)),
+            description=str(_required(value, "description", str)),
+            family=str(_required(value, "family", str)),
+            expected_impact=str(_required(value, "expected_impact", str)),
+            implementation_scope=str(_required(value, "implementation_scope", str)),
+            leakage_risk=str(_required(value, "leakage_risk", str)),
+        )
+
+
+@dataclass(frozen=True)
+class EDAReport:
+    summary: str
+    findings: tuple[EDAFinding, ...]
+    feature_candidates: tuple[FeatureCandidate, ...]
+    recommended_next_focus: str
+    ui_notes: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "EDAReport":
+        return cls(
+            summary=str(_required(value, "summary", str)),
+            findings=tuple(
+                EDAFinding.from_dict(item) for item in _required(value, "findings", list)
+            ),
+            feature_candidates=tuple(
+                FeatureCandidate.from_dict(item)
+                for item in _required(value, "feature_candidates", list)
+            ),
+            recommended_next_focus=str(_required(value, "recommended_next_focus", str)),
+            ui_notes=tuple(str(item) for item in value.get("ui_notes", [])),
         )
 
     def to_dict(self) -> dict[str, Any]:

@@ -17,8 +17,8 @@ The repository provides an end-to-end autonomous research harness:
   global budget enforcement
 - a single role-based autonomous research loop using Researcher, Critic, Builder,
   and Debugger passes over shared persisted memory
-- OpenAI Responses API structured outputs, optional primary-source web-search
-  fallback, retry handling, and exact token accounting
+- OpenAI Responses API and OpenAI-compatible Chat Completions adapters, including
+  GLM, with structured outputs, retry handling, and token accounting
 - restricted agent-generated candidates with trusted metric computation
 - BPR and same-user group-softmax research cards and audited sampling utilities
 - coarse live-stage observability, structured agent decision notes, and immutable
@@ -121,13 +121,56 @@ set in PowerShell or CI takes precedence over the file.
 
 The research run uses `gpt-5.5` with medium reasoning and low verbosity by
 default. Edit `configs/ranking_losses.json` to use a model available to your
-OpenAI project. It has an explicit 150,000-token research budget, 50 training
-attempts, two debugger repairs per candidate, and the official six-hour ceiling.
+OpenAI project. Full benchmark configs use the official 50-iteration and
+six-hour caps. Per-iteration execution is capped at 432 seconds so 50 iterations
+sum to six hours. LLM tokens, training attempts, GPU-hours, and proposal counts
+are recorded for feasibility and debugging; they are not official benchmark stop
+conditions unless a config explicitly sets an engineering guard.
+
+### Use GLM or another OpenAI-compatible endpoint
+
+GLM uses an OpenAI-compatible **Chat Completions** endpoint rather than the
+Responses API used by the default GPT configuration. A ready-to-edit GLM config
+is provided at `configs/ranking_losses_glm.json`:
+
+```bash
+# Put the provider key in .env; never put it in the JSON config.
+ZAI_API_KEY=your-provider-key
+python -m src.agent.controller --config configs/ranking_losses_glm.json
+```
+
+The adapter also accepts `provider: "openai_compatible"` for other compatible
+services. Configure `model` plus either `base_url`/`endpoint` in JSON or
+`OPENAI_MODEL` plus `OPENAI_BASE_URL` in the environment. The API-key variable is
+selected by `api_key_env` and defaults to `OPENAI_API_KEY`, so a generic setup can
+look like:
+
+```json
+{
+  "llm": {
+    "provider": "openai_compatible",
+    "model": "your-model-name",
+    "api_key_env": "OPENAI_API_KEY",
+    "endpoint": "https://provider.example/v1/chat/completions"
+  }
+}
+```
+
+The key must be issued by the service behind that endpoint; an OpenAI-issued key
+does not authenticate to GLM. Provider-specific reasoning and search are opt-in
+through `thinking` and `web_search_tool`. If the endpoint does not implement
+those extensions, omit them. JSON responses are validated locally against the
+same role schemas used by the GPT path. The example uses Z.AI's global API URL;
+accounts on the mainland China platform should replace it with the base URL shown
+for their account.
 
 The run first reuses a passing official-FM run; if none exists it automatically
-reproduces the baseline gate. It must execute at least one BPR and one
-group-softmax candidate before convergence is allowed. An improvement greater
-than `0.002` queues exact seed-1 and seed-2 replications.
+reproduces the baseline gate. A promising family is now given a short controlled
+follow-up window before broad exploration, and a failed or clearly regressed new
+family falls back to the current validation-best family. Family coverage is
+reported for auditability, but it is not a hard lock that overrides attribution
+of the best lead. An improvement greater than `0.002` queues exact seed-1 and
+seed-2 replications.
 
 Resume an interrupted research run with:
 
@@ -247,27 +290,29 @@ The research loop tracks three distinct counts:
 **Iteration** (`max_iterations`, cap 50)
 : One scored candidate experiment. The loop increments the iteration count once a candidate has run to completion and been evaluated on validation data. Stop reason `candidate_budget_reached` fires when iteration count reaches `max_iterations`.
 
-**Training attempt** (`max_training_attempts`)
+**Training attempt** (`max_training_attempts`, optional engineering guard)
 : One executor subprocess call to train a candidate model. Repairs may create
-multiple attempts for one candidate. `training_attempt_budget_reached` fires at
-`max_training_attempts`.
+multiple attempts for one candidate. By default this is telemetry only; if a
+config explicitly sets `max_training_attempts`, `training_attempt_budget_reached`
+fires at that engineering guard.
 
 **Proposal** (`max_proposals`, default `max_iterations × 2`)
 : One research→build cycle, including rejected candidates. The Critic may reject a candidate's preflight check; rejected proposals increment the proposal counter but do not run training. Stop reason `proposal_budget_reached` fires when proposal count reaches `max_proposals`.
 
-**Convergence** uses ε = **0.002** and patience **3**: after the meaningful best
-is established, three successful scored candidates without an improvement greater
-than ε stop the harness with `stop_reason: "converged"`. Both required families
-must be covered first. The current summary does not yet publish a separate
-`converged_official` verdict; this is a reporting limitation.
+**Convergence** uses ε = **0.002** and patience **3** over successful validation
+scores only. Failed experiments do not count as convergence evidence because
+they have no validation score. The run summary reports the official convergence
+verdict separately from the harness `stop_reason`; the harness may spend an
+extra pass on queued replications or best-family follow-ups before stopping.
 
 ## First research agenda
 
-The initial approved method catalog contains pairwise BPR and same-user
-group-softmax. The Researcher chooses the order and parameters, the Critic checks
-evidence and leakage, and the Builder generates each implementation. After both
-families have coverage, the deterministic policy permits exploitation,
-replication, or convergence.
+The approved method catalog currently contains pairwise BPR, same-user
+group-softmax, leakage-safe history features, and multi-task auxiliary feedback.
+The Researcher chooses the order and parameters, the Critic checks evidence and
+leakage, and the Builder generates each implementation. The deterministic policy
+prioritizes exploiting and attributing the current validation-best lead before
+moving into broader family exploration.
 
 ## Latest verified baseline
 
@@ -287,8 +332,30 @@ and 32.02 seconds wall-clock. Source:
 
 ## Latest verified autonomous integration run
 
-Committed run `20260829T060130480764Z_research` executed the real BPR trainer and
-the label-free submission gate:
+Latest local live run `20260830T070229778050Z_research` completed four iterations
+and preserved the best validation checkpoint from the first history-features
+candidate:
+
+| Iteration | Candidate | Family | Status | Primary | Notes |
+|---:|---|---|---|---:|---|
+| 1 | `cand_hf_tabcross_prior_days_v1` | `history_features` | success | **0.6031** | Best result; all six history feature groups enabled. |
+| 2 | `cand_bpr_sameuser_v1` | `bpr` | failed by controller timeout | — | `result.json` existed with primary `0.6023`, but the controller finalized it as failed after the timeout; previous best was preserved. |
+| 3 | `cand_bpr_sameuser_v2` | `bpr` | failed | — | Candidate bug: treated the validation metrics dict as a float. |
+| 4 | `cand_bpr_sameuser_v3` | `bpr` | success | 0.5929 | Pure BPR regressed; next policy should fall back to history-feature ablations. |
+
+Best validation metrics from that run:
+
+| GAUC | nDCG@5 | Primary | Delta vs official 0.6016 |
+|---:|---:|---:|---:|
+| 0.6695 | 0.5366 | **0.6031** | **+0.0015** |
+
+It used 4 iterations, 4 training attempts, 111,450 reported LLM tokens,
+1,879.65 seconds wall-clock, 0 GPU-hours, and 0 manual interventions. It stopped
+on the global wall-clock budget, not convergence. The run artifacts remain
+generated outputs under `runs/` and are intentionally not committed in this PR.
+
+Previously committed integration run `20260829T060130480764Z_research` executed
+the real BPR trainer and the label-free submission gate:
 
 | GAUC | nDCG@5 | Primary | Delta vs official 0.6016 |
 |---:|---:|---:|---:|

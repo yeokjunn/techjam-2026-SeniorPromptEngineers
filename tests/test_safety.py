@@ -13,6 +13,7 @@ from src.agent.families import (
     coverage_families,
     family_names,
 )
+from src.agent.runtime_contracts import runtime_contract_prompt
 from src.agent.policy import sanitize_parameters
 from src.agent.safety import (
     ALLOWED_IMPORTS,
@@ -248,7 +249,10 @@ def run(context, parameters):
                         self.assertEqual(parameters[key], value)
 
     def test_coverage_families_is_the_minimum_set_not_every_family(self):
-        self.assertEqual(coverage_families(), frozenset({"bpr", "group_softmax"}))
+        self.assertEqual(
+            coverage_families(),
+            frozenset({"bpr", "group_softmax", "history_features", "multi_task"}),
+        )
         self.assertTrue(coverage_families().issubset(family_names()))
 
     def test_family_entries_stay_hashable_despite_grid_dicts(self):
@@ -257,10 +261,20 @@ def run(context, parameters):
 
     def test_builder_brief_names_the_mandatory_calls_and_the_grid(self):
         brief = builder_brief("bpr")
-        self.assertIn("src.models.sampling.sample_bpr_pairs()", brief)
+        self.assertIn(
+            "src.models.sampling.sample_bpr_pairs(users, labels, rng, negatives_per_positive)",
+            brief,
+        )
         self.assertIn("learning_rate: 0.0003, 0.0005, 0.001", brief)
         self.assertIn("seed: 0-999", brief)
         self.assertIn("negatives_per_positive: 1, 2", brief)
+
+    def test_feature_runtime_contracts_forbid_raw_data_access(self):
+        for family in ("history_features", "multi_task"):
+            with self.subTest(family=family):
+                prompt = runtime_contract_prompt(family)
+                self.assertIn("read raw CSVs", prompt)
+                self.assertIn("dataset files directly", prompt)
 
 
 if __name__ == "__main__":

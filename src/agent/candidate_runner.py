@@ -241,6 +241,7 @@ class CandidateExecutor:
                 stderr_path=_repo_relative(stderr_path, self.repo_root),
                 command=command,
                 test_scores_path=payload.get("test_scores_path"),
+                validation_scores_path=payload.get("validation_scores_path"),
             )
         except subprocess.TimeoutExpired:
             return ExperimentOutcome(

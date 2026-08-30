@@ -266,6 +266,7 @@ class PromptStructureTests(unittest.TestCase):
         self.assertIn("Return `test_scores`", BASE_CANDIDATE_CONTRACT)
 
     def test_builder_prompt_matches_sandbox_and_unittest_runner(self):
+        self.assertIn("src.models.features", BASE_CANDIDATE_CONTRACT)
         self.assertIn("Never call getattr", BASE_CANDIDATE_CONTRACT)
         self.assertIn("never import from parent packages", BASE_CANDIDATE_CONTRACT)
         self.assertIn("python -m unittest -v test_candidate.py", BASE_CANDIDATE_CONTRACT)

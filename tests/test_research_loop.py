@@ -57,6 +57,16 @@ def critic() -> dict:
     }
 
 
+def rejected_critic() -> dict:
+    return {
+        "approved": False,
+        "decision": "reject",
+        "rationale": "implementation mechanism is underspecified",
+        "concerns": ["missing concrete trusted-helper usage"],
+        "next_focus": "revise with the exact helper and leakage-safe split semantics",
+    }
+
+
 def code(family: str) -> str:
     sampler = "sample_bpr_pairs" if family == "bpr" else "sample_softmax_groups"
     final_argument = "1" if family == "bpr" else "4"
@@ -186,6 +196,69 @@ class ResearchLoopTests(unittest.TestCase):
                 self.assertIn("completed", statuses, stage)
             self.assertTrue((run_dir / "changes" / "001_candidate_bpr.patch").is_file())
             self.assertEqual(len(provider.calls), 8)
+
+    def test_critic_rejection_reprompts_researcher_without_burning_iteration(self):
+        first = research("bpr")
+        first["hypothesis_id"] = "h_bpr_rejected"
+        second = research("bpr")
+        second["hypothesis_id"] = "h_bpr"
+        responses = [
+            first,
+            rejected_critic(),
+            second,
+            critic(),
+            manifest("bpr"),
+            critic(),
+        ]
+        provider = ScriptedProvider(responses)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, config_path = research_config(
+                root,
+                max_iterations=1,
+                max_proposals=2,
+                max_role_reprompts=1,
+            )
+            loop = ResearchLoop(
+                config,
+                config_path,
+                provider=provider,
+                baseline_summary=BASELINE_SUMMARY,
+            )
+            loop.executor = FakeExecutor()
+            run_dir = loop.run()
+            summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+            records = [
+                json.loads(line)
+                for line in (run_dir / "iterations.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            memory = [
+                json.loads(line)
+                for line in (run_dir / "research_memory.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+            self.assertEqual(summary["iterations"], 1)
+            self.assertEqual(summary["training_attempts"], 1)
+            self.assertEqual(loop.state.proposal_attempts, 2)
+            self.assertEqual(records[0]["status"], "success")
+            self.assertEqual(records[0]["proposal"]["hypothesis_id"], "h_bpr")
+            self.assertEqual(
+                [call["role"] for call in provider.calls],
+                [
+                    "researcher",
+                    "critic_preflight",
+                    "researcher",
+                    "critic_preflight",
+                    "builder",
+                    "critic_postflight",
+                ],
+            )
+            self.assertIn("PREVIOUS ATTEMPT REJECTED", provider.calls[2]["prompt"])
+            self.assertIn("implementation mechanism is underspecified", provider.calls[2]["prompt"])
+            self.assertEqual(
+                [item["type"] for item in memory if item.get("type") == "critic_preflight_rejection"],
+                ["critic_preflight_rejection"],
+            )
 
     def test_debugger_repairs_are_capped_at_two(self):
         invalid_manifest = manifest("bpr")

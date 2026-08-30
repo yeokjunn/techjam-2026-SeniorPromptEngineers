@@ -51,6 +51,7 @@ class ExperimentOutcome:
     diagnostics: dict[str, Any] = field(default_factory=dict)
     failure_class: str | None = None
     test_scores_path: str | None = None
+    validation_scores_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -102,6 +102,8 @@ def validate_and_persist_output(
     artifact_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = artifact_dir / "model.npz"
     np.savez_compressed(checkpoint_path, **checkpoint)
+    valid_scores_path = artifact_dir / "validation_scores.npy"
+    np.save(valid_scores_path, scores)
 
     # Test scores are validated, never trusted from candidate diagnostics, and
     # never raise: a bad or absent array is reported so the runner can classify
@@ -139,6 +141,7 @@ def validate_and_persist_output(
         "training_trace": _json_safe(output.training_trace),
         "diagnostics": diagnostics,
         "artifact_path": checkpoint_path.as_posix(),
+        "validation_scores_path": _repo_relative(valid_scores_path),
         "test_scores_status": test_scores_status,
         "test_scores_path": (
             _repo_relative(test_scores_path) if test_scores_path is not None else None

@@ -13,6 +13,7 @@ from typing import Any
 from ..evaluation.datacard import render_data_card
 from ..evaluation.gate import run_gate
 from ..evaluation.official import BASELINE_TOLERANCE, within_baseline_tolerance
+from ..models.ensemble import try_blend_candidates
 from .audit import ResearchAudit
 from .candidate_runner import CandidateExecutor, CandidateWorkspace, repaired_manifest
 from .catalog import MethodCatalog
@@ -414,17 +415,10 @@ class ResearchLoop:
                 },
             )
             self.audit.write_text_atomic(self.run_dir / "interventions.jsonl", "")
-            # I-4: the data card the Researcher's prompt prefix carries. Owner
-            # D renders it, Owner C reads it back off ``state.data_card_path``
-            # (``roles.py:58-71``, appended at ``:85-86``), and the run start is
-            # where the two meet. An operator who named a card in the config
-            # gets that path verbatim: naming one is not a request to make one,
-            # and C's reader already tolerates a file that is not there
-            # (``roles.py:66-69``), so checking it here would only lose the run
-            # earlier. An empty card — no dataset on disk — leaves no file and
-            # no path, so the prompt gains no heading with nothing under it and
-            # the operator gets no line to misread as an error. New runs only:
-            # a resume already carries the path in ``state.json``.
+            # The EDA and proposal roles must be grounded in the configured
+            # KuaiRand-Pure data directory. Generate the card from the same
+            # directory candidates will train against, and fail early if it
+            # cannot be produced.
             configured_card = config.get("data_card_path")
             if isinstance(configured_card, str) and configured_card:
                 self.state.data_card_path = configured_card
@@ -647,6 +641,8 @@ class ResearchLoop:
         record = {
             "status": "completed",
             "iteration": iteration,
+            "data_dir": _repo_relative(self.data_dir),
+            "data_card_path": self.state.data_card_path,
             "plan": plan.to_dict(),
             "report": report.to_dict(),
             "feature_candidates": [asdict(item) for item in report.feature_candidates],
@@ -666,6 +662,8 @@ class ResearchLoop:
         record = {
             "status": "failed",
             "iteration": iteration,
+            "data_dir": _repo_relative(self.data_dir),
+            "data_card_path": self.state.data_card_path,
             "plan": None if plan is None else plan.to_dict(),
             "report": None,
             "feature_candidates": [],
@@ -1417,11 +1415,26 @@ class ResearchLoop:
         # ``summary.json`` is the one file the organizers read, and its survival
         # must not depend on another module keeping that promise. Keyword
         # arguments so a signature change cannot silently reorder the four paths.
-        node_dir = (
-            _resolve_repo_path(self.state.best_candidate_dir)
-            if self.state.best_candidate_dir
-            else self.run_dir
+        # Automated Ensembling & Blending (MLE-STAR style)
+        ensemble_result = try_blend_candidates(
+            run_dir=self.run_dir,
+            state=self.state,
+            data_dir=self.data_dir,
+            generated_root=self.generated_root,
         )
+        summary["ensemble"] = ensemble_result.to_dict()
+
+        if ensemble_result.status == "ok" and ensemble_result.ensemble_node_dir:
+            node_dir = _resolve_repo_path(ensemble_result.ensemble_node_dir)
+            summary["best"]["ensemble_blended"] = True
+            summary["best"]["ensemble_metrics"] = ensemble_result.metrics
+            summary["best"]["ensemble_weights"] = ensemble_result.weights
+        else:
+            node_dir = (
+                _resolve_repo_path(self.state.best_candidate_dir)
+                if self.state.best_candidate_dir
+                else self.run_dir
+            )
         try:
             gate_result = run_gate(
                 run_dir=self.run_dir,

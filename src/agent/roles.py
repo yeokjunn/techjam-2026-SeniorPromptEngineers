@@ -62,7 +62,7 @@ specifically justifies repeating it."""
 
 BASE_CANDIDATE_CONTRACT = """candidate.py must define `run(context, parameters) -> CandidateOutput`.
 Use only numpy, collections, math, time, src.models.fm_core.FMRanker, src.models.sampling,
-and src.experiments.contracts.CandidateOutput. The context provides train_x, train_y, train_users,
+src.models.features, and src.experiments.contracts.CandidateOutput. The context provides train_x, train_y, train_users,
 valid_x, valid_users, field_dimension, evaluate_validation(scores), and test_x (which may be None).
 Build the model with src.models.fm_core.FMRanker. Do NOT re-implement the factorization machine:
 it gathers sparse field indices, so a dense one-hot formulation over ~40k fields overflows to NaN
@@ -127,6 +127,21 @@ and build_features(context.test_x, test_spec) when test_x is not None. Use featu
 for the added FM index width, not train_extra.shape[1]."""
 
 
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+SKILLS_DIR = REPO_ROOT / "research" / "skills"
+
+
+def _load_skill(name: str) -> str:
+    path = SKILLS_DIR / f"{name}.md"
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8").strip()
+
+
+DATA_SCIENTIST_SKILL = _load_skill("data-scientist")
+ML_ENGINEER_SKILL = _load_skill("ml-engineer")
+
+
 class ResearchRoles:
     def __init__(
         self,
@@ -180,9 +195,12 @@ class ResearchRoles:
 
 {SEARCH_SPACE_GUIDANCE}
 
-{BASE_CANDIDATE_CONTRACT}
-
-{method_cards}"""
+{BASE_CANDIDATE_CONTRACT}"""
+        if DATA_SCIENTIST_SKILL:
+            prefix += f"\n\n{DATA_SCIENTIST_SKILL}"
+        if ML_ENGINEER_SKILL:
+            prefix += f"\n\n{ML_ENGINEER_SKILL}"
+        prefix += f"\n\n{method_cards}"""
         if data_card:
             prefix += f"\n\nDATA CARD:\n{data_card}"
         return prefix

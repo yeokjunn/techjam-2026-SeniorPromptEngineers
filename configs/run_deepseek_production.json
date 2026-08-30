@@ -6,8 +6,20 @@
   "generated_root": "generated_experiments",
   "method_catalog": "research/methods",
   "official_validation_baseline": 0.6016,
+  "use_official_baseline_cache": true,
   "baseline_config": "configs/baseline.json",
   "data_card_path": null,
+  "research": {
+    "allow_web_search_first_pass": true
+  },
+  "eda": {
+    "enabled": true,
+    "required": false,
+    "researcher_max_output_tokens": 1600,
+    "builder_max_output_tokens": 2000,
+    "max_retries": 1,
+    "max_role_reprompts": 1
+  },
   "llm": {
     "provider": "openai",
     "model": "deepseek-chat",

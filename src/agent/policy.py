@@ -385,8 +385,23 @@ class SearchPolicy:
                     )
 
     def should_stop(self, state: RunState) -> bool:
+        """Converged, nothing queued, no lead to exploit -- and every family actually tried.
+
+        ``COVERAGE_FAMILIES`` lists all four families, but without the coverage term here it was
+        computed and then ignored: a run could converge having never proposed ``history_features``
+        or ``multi_task``. Measured over four runs, it always did -- the exploit lead keeps
+        selection on whichever family scored first (7 of 9 iterations on ``bpr`` in the last run),
+        and the untested directions with the actual headroom were never reached.
+
+        This is a stop gate, not a family lock, which is the distinction ``required_family``'s
+        comment is careful about: no iteration is forced to a particular family, the run simply
+        may not *end* while a registered family has never produced a successful candidate. If one
+        genuinely cannot succeed the run falls back to the iteration and wall-clock caps, which is
+        the intended backstop.
+        """
         return (
-            state.stagnant_iterations >= self.patience
+            coverage_complete(state)
+            and state.stagnant_iterations >= self.patience
             and not state.pending_replications
             and exploit_family(state, self.epsilon) is None
         )

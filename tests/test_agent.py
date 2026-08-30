@@ -180,6 +180,17 @@ class PolicyTests(unittest.TestCase):
                 ExperimentNode(3, "hf_ablate_2", "h", "history_features", "exploit", {}, "success", {"primary": 0.6019}),
             ]
         )
+        # Follow-ups are done, but should_stop also gates on coverage: a run may not end while a
+        # registered family has never produced a successful candidate. Cover the remaining three
+        # so this test keeps measuring what it is named for.
+        self.assertFalse(policy.should_stop(state))
+        state.nodes.extend(
+            [
+                ExperimentNode(4, "bpr_c", "h", "bpr", "explore", {}, "success", {"primary": 0.6018}),
+                ExperimentNode(5, "gs_c", "h", "group_softmax", "explore", {}, "success", {"primary": 0.6017}),
+                ExperimentNode(6, "mt_c", "h", "multi_task", "explore", {}, "success", {"primary": 0.6016}),
+            ]
+        )
         self.assertTrue(policy.should_stop(state))
 
 

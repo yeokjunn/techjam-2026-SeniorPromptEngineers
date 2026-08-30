@@ -55,6 +55,19 @@ Untested directions, in the organizers' own order of likelihood, mapped to regis
 3. Multi-objective auxiliary signals (is_click, is_like, play_time_ms) supporting long_view --
    family `multi_task`.
 
+Measured on this harness, not from the kit:
+- Validation primary peaks at epoch 3-5 and then declines steadily: a representative BPR run went
+  0.5974 -> 0.6030 (epoch 3) -> 0.5958 (epoch 11), i.e. it ends up BELOW the 0.6016 baseline if
+  left to run. Early stopping is what captures the peak, so keep `patience` small (2-4) and do
+  not request large `epochs` expecting the extra passes to help.
+- L2 does not move that peak. Sweeping l2 over 1e-6, 1e-5, 1e-4, 1e-3 changes the peak by 0.00005
+  -- noise -- because the penalty is added into the gradient and Adam then normalises it away.
+  Regularisation strength is not the lever here, and is not in any grid.
+- Loss-only changes on the five id fields land in a narrow band, 0.6024-0.6040. That band appears
+  to be the ceiling of what re-weighting the same five fields can reach. Beating it materially
+  most likely requires changing WHAT the model sees (`history_features`) or WHAT it is trained
+  against (`multi_task`), not another point in the bpr/group_softmax grid.
+
 The bottleneck is NOT features-as-more-columns and NOT capacity. Prefer a direction this run has
 not yet tried over another point on a grid you have already sampled, unless the recorded evidence
 specifically justifies repeating it."""

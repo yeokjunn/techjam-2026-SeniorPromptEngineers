@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from src.evaluation.holdout import split_users
 from src.evaluation.official import REPO_ROOT, official_evaluate, starter_modules
 
 
@@ -105,7 +106,26 @@ def run_fm(splits: dict, parameters: dict, artifact_dir: Path) -> dict:
     if best_state is None:
         raise RuntimeError("FM training completed without a valid checkpoint.")
     model.V, model.W, model.b = best_state
-    final_metrics = official_evaluate(valid_users, valid_y, model.predict(valid_x))
+    final_scores = model.predict(valid_x)
+    final_metrics = official_evaluate(valid_users, valid_y, final_scores)
+    # Score the same checkpoint on the selection/reporting halves so a candidate's
+    # `report_primary` has something to be compared against. Without this the two sides are
+    # measured on different populations and the delta is meaningless -- the reporting half is
+    # simply the easier of the two (candidates score ~+0.003 higher on it), so comparing a
+    # candidate's report_primary to the baseline's full-validation primary overstates the gain.
+    #
+    # Additive only: `metrics["primary"]` and the training loop above are untouched, so the
+    # baseline stays bit-identical to the committed reference. Note the asymmetry that remains
+    # -- the baseline early-stops on full validation (changing that would alter its primary),
+    # while candidates now early-stop on the selection half. That biases the baseline's
+    # reporting-half number slightly upward, which understates any candidate's delta rather
+    # than flattering it.
+    for name, mask in zip(("select", "report"), split_users(valid_users)):
+        subset_users = [user for user, keep in zip(valid_users, mask) if keep]
+        if subset_users:
+            final_metrics[f"{name}_primary"] = official_evaluate(
+                subset_users, valid_y[mask], final_scores[mask]
+            )["primary"]
     checkpoint = artifact_dir / "model.npz"
     np.savez_compressed(checkpoint, V=model.V, W=model.W, b=model.b)
     return {

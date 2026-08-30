@@ -1,0 +1,109 @@
+{
+  "agent_note": {
+    "feature_candidates": [
+      {
+        "description": "Smoothed long_view rate of (user, author) pairs, the DIN-style affinity signal, encoded as one int32 column of 9 slots (8 train-only quantile buckets plus a reserved unknown slot) appended as an extra FM field via src.models.features.build_features with spec keys field_offset, smoothing, scheme, use_user_author.",
+        "expected_impact": "Highest of the six groups per the EDA hypothesis: unlike user_rate it varies within a user, so it acts through first-order and second-order FM terms; largest expected GAUC gain when enabled with user_tab or recency.",
+        "family": "history_features",
+        "implementation_scope": "Set use_user_author=true, smoothing=20, scheme=prior_days; concatenate the extra column to train_x (row width 5 to 6+); instantiate FMRanker(context.field_dimension + 9, embedding_dim=16); epochs at most 20 (six extra fields roughly double gather/scatter cost against about 12 s per FM epoch and a 900 s timeout); either trusted same-user sampler, lr in {0.0003,0.0005,0.001}, batch in {2048,4096}.",
+        "leakage_risk": "Low if the smoothing table and quantile buckets are fit on train rows only and scheme=prior_days counts strictly earlier days; unknown keys must map to the reserved slot, never the prior bucket; never refresh the table from validation rows at scoring time.",
+        "name": "user_author smoothed rate (prior_days, m=20)"
+      },
+      {
+        "description": "Within-user temporal feature: days since the user's last long_view, capped at 14, encoded in the same 9-slot bucket scheme; expresses temporal dynamics the five static id fields cannot.",
+        "expected_impact": "Adds within-user variation across days; per the EDA hypothesis gains concentrate on multi-day active users; pairs naturally with user_author in the first registered configuration.",
+        "family": "history_features",
+        "implementation_scope": "use_recency=true in the same spec and build_features path as user_author; no fm_core change (verified field-count agnostic); same sampler, lr, and batch grid; run one arm with user_author+recency and one with user_author alone to attribute the gain.",
+        "leakage_risk": "Low under prior_days; the main risk is scoring-time leakage: validation features must be computed from strictly earlier train data only, never from the user's validation-day activity (EDA plan leakage_risks[3]).",
+        "name": "recency (days since user's last long_view, capped 14, prior_days)"
+      },
+      {
+        "description": "Smoothed long_view rate of the (tab, dur_bucket) cell, capturing tab/position and duration-format bias that varies within a user; same 9-slot encoding as the other history groups.",
+        "expected_impact": "Per the EDA hypothesis it should specifically help nDCG@5 at the head of the ranked list, where position and tab bias dominate; expected smaller than user_author but complementary.",
+        "family": "history_features",
+        "implementation_scope": "use_tab_cross=true in the same spec; watch cell sparsity, since rare (tab, dur_bucket) cells rely on smoothing m in {5,20,100}; measure per-bucket within-user lift in the EDA before registering a ranking run.",
+        "leakage_risk": "Low; train-only tables with smoothing; sparse cells without smoothing would memorize labels, so m must stay well above zero.",
+        "name": "tab_cross (tab x duration-bucket smoothed rate)"
+      },
+      {
+        "description": "Weighted binary cross-entropy on the is_click target (46.3% of train rows, claimed r=0.76 with long_view) over the same shared FM embeddings, added to the unchanged ranking loss; targets produced by src.models.features.build_aux_labels.",
+        "expected_impact": "More supervision per row for long-tail users and videos where long_view positives are scarce; expected GAUC help at aux_weight 0.1-0.3, with degradation risk at 1.0 where the auxiliary term can dominate the ranking head.",
+        "family": "multi_task",
+        "implementation_scope": "use_is_click=true, aux_weight in {0.1,0.3}; field set and k=16 unchanged; epochs up to 40 at near-plain-BPR per-epoch cost; stack on top of the best history_features arm once it is registered.",
+        "leakage_risk": "None if auxiliary labels remain train-only: build_aux_labels raises for non-train splits; extending is_click, is_like, or play_time columns to any validation or test scoring path is a leak per the multi_task card (EDA plan leakage_risks[2]).",
+        "name": "is_click auxiliary head (aux_weight 0.1-0.3)"
+      },
+      {
+        "description": "Listwise loss over one positive and K same-user negative scores per group with max-shifted softmax and temperature, negatives resampled every epoch; matches the within-user evaluation better than pointwise BCE or a single BPR pair.",
+        "expected_impact": "Closer approximation to the evaluated within-user list; K=4 before K=8 to bound per-step compute and avoid duplicate-negative collapse; expected strongest pure-loss baseline if the both-label user share is high.",
+        "family": "group_softmax",
+        "implementation_scope": "Trusted same-user sampler with the documented signature exactly; skip users without both labels; batch in {512,1024,2048} groups, lr in {0.0003,0.0005,0.001}, k=16; report per-epoch cost as K changes; BPR (one negative, softplus loss) is the degenerate ablation of this family.",
+        "leakage_risk": "Low; groups are formed from train labels only and never across validation rows; users with a single label class are skipped rather than imputed.",
+        "name": "Same-user group softmax (K=4, temperature 1.0)"
+      }
+    ],
+    "findings": [
+      {
+        "evidence": "Method cards bpr and group_softmax (Known failure modes); EDA plan expected_artifacts[0].",
+        "implication": "If the both-label share is low, the effective training pool shrinks below the nominal row count, and K=8 groups may collapse onto duplicate negatives, reducing effective list size. K=4 is the safer first registration until the group-size distribution is measured.",
+        "leakage_safe": true,
+        "observation": "Both ranking-loss families require, per user, at least one positive and one negative long_view; users with only one label class cannot form pairs or groups and must be skipped (bpr and group_softmax cards, Known failure modes). The share of such users and the same-user negative counts available at K=4 and K=8 are not yet measured; the EDA plan's first artifact targets exactly this.",
+        "title": "Within-user label structure gates BPR and group_softmax feasibility"
+      },
+      {
+        "evidence": "Method card history_features (Known failure modes, first bullet); kuairand-starter-kit/README.en.md:141-148; EDA plan expected_artifacts[1] and feature_hypotheses[0-2].",
+        "implication": "Enable user_author together with user_tab, recency, or tab_cross rather than user_rate alone. The EDA's per-bucket within-user lift table at m in {5,20,100} under prior_days should confirm which group carries the most separation before any ranking experiment is registered.",
+        "leakage_safe": true,
+        "observation": "User-side-only features are constant within a user, so under within-user GAUC they contribute exactly nothing through the first-order term and act only through crosses with video-side fields (history_features card; README.en.md:141-148). user_author (user,author smoothed rate) and tab_cross vary within a user, recency varies across days, user_rate does not vary within a user at all.",
+        "title": "Only within-user-varying history groups can move GAUC; user_rate is first-order inert"
+      },
+      {
+        "evidence": "Method card multi_task (Hypothesis, Known failure modes); EDA plan expected_artifacts[2] and questions[2].",
+        "implication": "Register is_click at aux_weight 0.1-0.3 first; treat play_time as the first head to disable and is_like as variance-only if used alone. If within-user correlation is much weaker than the global claim, the shared-embedding bet weakens and multi_task should be deprioritized.",
+        "leakage_safe": true,
+        "observation": "is_click fires on 46.3% of train rows and correlates with long_view at 0.76; scaled play_time correlates at 0.60 but is censored at video length (a fully-watched short video can resemble a half-watched long one); is_like fires on only 1.9% of train rows (multi_task card). Whether these correlations hold within users, and the play_time censoring rate, are unmeasured; EDA plan artifact 3 targets them.",
+        "title": "Auxiliary-head hierarchy: is_click strongest, play_time censored, is_like too sparse"
+      },
+      {
+        "evidence": "Method card history_features (Objective, Known failure modes); EDA plan leakage_risks[1-3] and questions[3].",
+        "implication": "Quantify the prior_days-vs-leave_one_out gap once as a leakage diagnostic; ship prior_days only, keep unknown keys in the reserved slot rather than the prior bucket, and never derive validation or test features from anything but strictly earlier train data.",
+        "leakage_safe": true,
+        "observation": "leave_one_out lets a train row see the same user's later days, so it looks stronger on train and the gain does not transfer, because every validation row is scored from strictly earlier data (history_features card). Under prior_days, roughly 9.5% of train rows fall in the unknown first-day slot; the count of train rows with later-day history (leave_one_out exposure) is unmeasured and is EDA plan question 3.",
+        "title": "leave_one_out is a diagnostic contrast, not a shippable scheme"
+      },
+      {
+        "evidence": "Method card history_features (Keep k==16 note; README.en.md:133-139); EDA plan leakage_risks[4]; research state baseline_primary=0.6016 with empty experiments.",
+        "implication": "Fix k=16 in every candidate. Pre-register a small grid per family (m in {5,20,100} for history groups, aux_weight in {0.1,0.3} for multi_task, K in {4,8} and temperature in {0.5,1.0,2.0} for group_softmax) and evaluate each configuration exactly once against validation GAUC/nDCG@5.",
+        "leakage_safe": true,
+        "observation": "k=8/16/32 gives 0.5895/0.5902/0.5887 (README.en.md:133-139, cited by the history_features card), so embedding dimension stays 16. No experiments are registered yet (research state: experiments empty, baseline primary 0.6016), and the EDA plan lists repeated validation-metric peeking during subset selection as an overfitting risk.",
+        "title": "Capacity is a measured dead end; discipline is small pre-registered grids, one evaluation each"
+      }
+    ],
+    "objective": "Summarize EDA findings and propose feature candidates for the UI.",
+    "recommended_next_focus": "Execute the four EDA artifacts in one compact pass over train plus validation id/day fields only (validation labels stay exclusively with the official evaluator): (1) per-user label-structure and K=4/8 same-user group-size report; (2) train-only within-user separation table for the six history groups at m in {5,20,100} under prior_days plus unknown-slot coverage (card claims about 9.5%); (3) within-user correlation of is_click, is_like, and scaled play_time with long_view plus the play_time censoring rate at video duration; (4) leave_one_out exposure count. Then pre-register the first ranking experiment as history_features with use_user_author+use_recency (arm A) and plus use_tab_cross (arm B), m=20, prior_days, k=16, lr in {0.0003,0.0005}, batch 2048, epochs at most 20; register is_click at aux_weight 0.1-0.3 as the second family and group_softmax K=4, temperature 1.0 as the third. Evaluate each configuration exactly once against validation GAUC/nDCG@5; run the leave_one_out contrast once as a diagnostic only and never ship it.",
+    "summary": "Pre-experiment EDA report for within-user long_view ranking (validation GAUC / nDCG@5). Research state: baseline primary 0.6016 with zero registered experiments, so every number below is attributed to the supplied method cards, the starter-kit README lines they cite, or the research state; the four planned EDA artifacts exist to replace claims with measurements. Conclusions: (1) BPR and group_softmax feasibility hinges on the share of users with both label classes, currently unmeasured; (2) under within-user GAUC only history groups that vary within a user (user_author, user_tab, recency, video_age, tab_cross) can move the metric, while user_rate is first-order inert; (3) is_click is the strongest auxiliary head (46.3% incidence, claimed r=0.76), play_time is duration-censored and weakest, is_like is too sparse (1.9%) to carry alone; (4) leave_one_out is a diagnostic contrast only, since validation rows are scored from strictly earlier train data; (5) capacity is a measured dead end (k=8/16/32 gives 0.5895/0.5902/0.5887), so k stays 16 and the first ranking experiment should be a small pre-registered grid evaluated once.",
+    "ui_notes": [
+      "All quoted numbers are attributed to the supplied method cards, the starter-kit README lines they cite, or the research state (baseline 0.6016, zero experiments); the EDA artifacts replace claims with measurements, and no statistic on this page is invented.",
+      "Tag user_rate as expected-inert under within-user GAUC (first-order term constant within a user, README.en.md:141-148) so reviewers do not over-weight it.",
+      "Render leave_one_out as diagnostic-only; any configuration that lets a train row see later days, or derives validation features from same-list data, should display as blocked.",
+      "Auxiliary heads (is_click, is_like, play_time) are train-only by construction; grey out any validation or test auxiliary-label path in the UI (build_aux_labels raises for non-train splits).",
+      "Pin k=16 across all candidate cards; the k=8/16/32 sweep (0.5895/0.5902/0.5887) is a measured dead end.",
+      "Show per-epoch cost next to each candidate: about 12 s per FM epoch baseline, roughly 2x with six extra history fields (epochs at most 20), near-baseline with auxiliary heads (epochs up to 40), scaling with K for group_softmax."
+    ]
+  },
+  "attempt": 1,
+  "change_summary": null,
+  "completed_at": "2026-08-29T18:16:38.517222+00:00",
+  "error": null,
+  "event_id": "bfd8f15de83f4ac48849eab1330ecea0",
+  "experiment_id": null,
+  "iteration": 1,
+  "metrics": null,
+  "objective": "Summarize EDA findings and propose feature candidates for the UI.",
+  "repair": null,
+  "role": "eda_builder",
+  "stage": "eda_builder",
+  "started_at": "2026-08-29T18:13:44.499594+00:00",
+  "status": "completed",
+  "updated_at": "2026-08-29T18:16:38.517222+00:00"
+}

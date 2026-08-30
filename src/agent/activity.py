@@ -9,6 +9,8 @@ from typing import Any
 
 STAGE_ORDER = (
     "initializing",
+    "eda_researcher",
+    "eda_builder",
     "researcher",
     "critic_preflight",
     "builder",
@@ -21,6 +23,8 @@ STAGE_ORDER = (
 )
 
 ROLE_OBJECTIVES = {
+    "eda_researcher": "Plan leakage-safe EDA and feature-engineering analysis.",
+    "eda_builder": "Summarize EDA findings and propose feature candidates for the UI.",
     "researcher": "Propose one evidence-backed ranking experiment.",
     "researcher_web": "Resolve an evidence gap using primary sources.",
     "critic_preflight": "Check novelty, leakage safety, feasibility, and scope.",
@@ -73,6 +77,14 @@ def summarize_role_output(role: str, data: dict[str, Any]) -> dict[str, Any]:
         "next_focus",
         "diagnosis",
         "parameters",
+        "objective",
+        "summary",
+        "questions",
+        "feature_hypotheses",
+        "findings",
+        "feature_candidates",
+        "recommended_next_focus",
+        "ui_notes",
     )
     for key in allowed:
         if key in data and data[key] not in (None, "", [], {}):

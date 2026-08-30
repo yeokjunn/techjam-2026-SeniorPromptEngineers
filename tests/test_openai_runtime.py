@@ -18,7 +18,7 @@ class FakeResponses:
         self.request = kwargs
         return SimpleNamespace(
             id="response-test",
-            model="gpt-5.5",
+            model="GLM-5.3-Flash",
             output_text=json.dumps(
                 {
                     "approved": True,
@@ -69,7 +69,7 @@ class OpenAIRuntimeTests(unittest.TestCase):
         ):
             provider = OpenAIResponsesProvider(
                 {
-                    "model": "gpt-5.5",
+                    "model": "GLM-5.3-Flash",
                     "reasoning_effort": "medium",
                     "verbosity": "low",
                     "store": False,

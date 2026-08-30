@@ -27,7 +27,6 @@ from src.agent.errors import (
     IncompleteResponse,
     LLMError,
     RoleOutputInvalid,
-    TokenBudgetExceeded,
 )
 from src.agent.llm import LLMCallResult
 from src.agent.research_controller import (
@@ -227,6 +226,7 @@ def research_loop(script: list[Any], max_iterations: int = 1, repeat: bool = Fal
             "run_root": str(root / "runs"),
             "generated_root": str(root / "generated"),
             "method_catalog": str(REPO_ROOT / "research" / "methods"),
+            "discovery_store": str(root / "discoveries.json"),
             "official_validation_baseline": 0.6016,
             "llm": {"max_total_tokens": 1000},
             "budgets": {
@@ -302,9 +302,8 @@ class ErrorClassificationTests(unittest.TestCase):
             (RoleOutputInvalid("Builder changed the approved family."), "proposal"),
             (IncompleteResponse("Reasoning consumed max_output_tokens."), "proposal"),
             (LLMError("Unspecified LLM-layer fault."), "proposal"),
-            (TokenBudgetExceeded("Run exhausted its LLM allowance."), "budget"),
-            (RuntimeError("LLM token budget reached before the next role pass."), "budget"),
-            (RuntimeError("LLM token budget exceeded by the completed role pass."), "budget"),
+            (RuntimeError("LLM token budget reached before the next role pass."), "harness"),
+            (RuntimeError("LLM token budget exceeded by the completed role pass."), "harness"),
             # Bare RuntimeError stays harness: llm.py:198,202,310 are the run's
             # problem (no API key, SDK missing, script exhausted), not the model's.
             (RuntimeError("OPENAI_API_KEY is required for an autonomous research run."), "harness"),
@@ -316,14 +315,6 @@ class ErrorClassificationTests(unittest.TestCase):
             with self.subTest(exception=type(exc).__name__, message=str(exc)):
                 self.assertEqual(_error_kind(exc), kind)
                 self.assertEqual(_is_budget_error(exc), kind == "budget")
-
-    def test_budget_is_checked_before_the_llm_error_arm(self):
-        # TokenBudgetExceeded is itself an LLMError, so a reordering that put the
-        # proposal arm first would re-prompt an exhausted budget twice and then
-        # abandon the proposal instead of stopping the run.
-        self.assertTrue(issubclass(TokenBudgetExceeded, LLMError))
-        self.assertEqual(_error_kind(TokenBudgetExceeded("out of tokens")), "budget")
-
 
 # --------------------------------------------------------------------------- #
 # Proposal errors: re-prompt, then ledger, never break
@@ -338,10 +329,7 @@ class ProposalErrorTests(unittest.TestCase):
             run_dir = loop.run()
             summary = summary_of(run_dir)
             self.assertNotEqual(summary["stop_reason"], "controller_error", error_report(run_dir))
-            # T3/I5 renamed this stop: `max_training_attempts` defaults to
-            # `max_iterations` (1 here), so the training cap is still the first
-            # of the three to fire and the run stops in exactly the same place.
-            self.assertEqual(summary["stop_reason"], "training_attempt_budget_reached")
+            self.assertEqual(summary["stop_reason"], "candidate_budget_reached")
             self.assertEqual(len(provider.calls), 5)
             retries = memory(run_dir, "role_retry")
             self.assertEqual(len(retries), 1)
@@ -419,7 +407,7 @@ class ProposalErrorTests(unittest.TestCase):
             run_dir = loop.run()
             summary = summary_of(run_dir)
             self.assertNotEqual(summary["stop_reason"], "harness_error_breaker", error_report(run_dir))
-            self.assertEqual(summary["stop_reason"], "training_attempt_budget_reached")
+            self.assertEqual(summary["stop_reason"], "candidate_budget_reached")
             self.assertEqual(len(provider.calls), 5)
             retries = memory(run_dir, "role_retry")
             self.assertEqual([record["label"] for record in retries], ["builder"])
@@ -432,11 +420,31 @@ class ProposalErrorTests(unittest.TestCase):
         empty = failure(IncompleteResponse, "Reasoning consumed max_output_tokens.")
         with research_loop([empty, *good_iteration("bpr")]) as (loop, provider):
             run_dir = loop.run()
-            self.assertEqual(summary_of(run_dir)["stop_reason"], "training_attempt_budget_reached")
+            self.assertEqual(summary_of(run_dir)["stop_reason"], "candidate_budget_reached")
             self.assertEqual(len(provider.calls), 5)
             self.assertEqual(len(memory(run_dir, "role_retry")), 1)
             self.assertEqual(loop.consecutive_harness_errors, 0)
             self.assertEqual([node.status for node in loop.state.nodes], ["success"])
+
+    def test_incomplete_builder_does_not_consume_a_candidate_iteration(self):
+        empty = failure(IncompleteResponse, "Reasoning consumed max_output_tokens.")
+        script = [research("bpr"), critic(), empty, empty, empty, *good_iteration("bpr")]
+        with research_loop(script, max_iterations=1) as (loop, provider):
+            run_dir = loop.run()
+            summary = summary_of(run_dir)
+
+            self.assertEqual(summary["stop_reason"], "candidate_budget_reached")
+            self.assertEqual(len(provider.calls), 9)
+            self.assertEqual(loop.state.iteration_count, 1)
+            self.assertEqual([node.status for node in loop.state.nodes], ["success"])
+            self.assertEqual(
+                [record["status"] for record in jsonl(run_dir, "iterations.jsonl")],
+                ["proposal_failed", "success"],
+            )
+            self.assertEqual(
+                [record["iteration"] for record in jsonl(run_dir, "iterations.jsonl")],
+                [1, 1],
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -531,38 +539,20 @@ class HarnessErrorTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# Budget errors: stop cleanly, before and after C's typed exception (T8 / I13)
+# Token usage is reported for feasibility, not enforced as a stop condition
 # --------------------------------------------------------------------------- #
 
 
-class TokenBudgetStopTests(unittest.TestCase):
-    def test_token_budget_message_stops_the_run_cleanly(self):
-        # roles.py:52 as it stands today: a bare RuntimeError whose message
-        # carries the phrase. The message check in _is_budget_error covers it.
+class TokenUsageReportingTests(unittest.TestCase):
+    def test_token_budget_message_is_not_a_clean_stop_condition(self):
         message = "LLM token budget reached before the next role pass."
         with research_loop([failure(RuntimeError, message)]) as (loop, provider):
             run_dir = loop.run()
-            self.assertEqual(summary_of(run_dir)["stop_reason"], "llm_token_budget_reached")
-            self.assertEqual(len(provider.calls), 1)
-            self.assertEqual(memory(run_dir, "role_retry"), [])
-            self.assertEqual(
-                [record["kind"] for record in memory(run_dir, "controller_error")], ["budget"]
-            )
-            self.assertEqual(jsonl(run_dir, "iterations.jsonl"), [])
-            self.assertFalse((run_dir / "error.json").is_file())
-
-    def test_token_budget_exceeded_type_stops_the_run(self):
-        # roles.py:52 after C's T2 step 7. The message deliberately omits the
-        # phrase, so only the isinstance branch can classify this as a budget stop.
-        message = "Run exhausted its LLM allowance."
-        self.assertNotIn("token budget", message.lower())
-        with research_loop([failure(TokenBudgetExceeded, message)]) as (loop, provider):
-            run_dir = loop.run()
-            self.assertEqual(summary_of(run_dir)["stop_reason"], "llm_token_budget_reached")
-            self.assertEqual(len(provider.calls), 1)
-            self.assertEqual(memory(run_dir, "role_retry"), [])
-            self.assertEqual(
-                [record["kind"] for record in memory(run_dir, "controller_error")], ["budget"]
+            self.assertEqual(summary_of(run_dir)["stop_reason"], "proposal_budget_reached")
+            self.assertEqual(len(provider.calls), 2)
+            self.assertNotIn(
+                "budget",
+                [record["kind"] for record in memory(run_dir, "controller_error")],
             )
             self.assertFalse((run_dir / "error.json").is_file())
 
@@ -667,6 +657,7 @@ def baseline_config(root: Path) -> dict[str, Any]:
         "run_root": str(root / "runs"),
         "generated_root": str(root / "generated"),
         "method_catalog": str(REPO_ROOT / "research" / "methods"),
+        "discovery_store": str(root / "discoveries.json"),
         "official_validation_baseline": 0.6016,
         "llm": {"max_total_tokens": 1000},
         "budgets": {
@@ -708,7 +699,28 @@ def skip_reasons(skipped: list[dict[str, str]]) -> dict[str, str]:
     return {record["path"]: record["reason"] for record in skipped}
 
 
+def _posix(path: Path | str) -> str:
+    return Path(path).as_posix()
+
+
 class BaselineSelectionTests(unittest.TestCase):
+    def test_official_baseline_cache_skips_baseline_reproduction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = baseline_config(root)
+            config["use_official_baseline_cache"] = True
+
+            with patch("src.agent.research_controller.run_agent") as run_agent_mock:
+                baseline, skipped = _ensure_baseline(config)
+
+            run_agent_mock.assert_not_called()
+            self.assertEqual(skipped, [])
+            self.assertEqual(baseline["run_id"], "official_cached_baseline")
+            self.assertEqual(baseline["summary_path"], "official://kuairand-pure/validation-baseline")
+            self.assertEqual(baseline["best"]["experiment_id"], "official_fm_seed0")
+            self.assertEqual(baseline["best"]["metrics"], {"primary": 0.6016})
+            self.assertIsNone(baseline["best"]["artifact_path"])
+
     def test_baseline_is_rejected_when_the_source_revision_differs(self):
         """A summary produced by code that is no longer on disk is not adoptable.
 
@@ -725,7 +737,7 @@ class BaselineSelectionTests(unittest.TestCase):
 
             selected, skipped = _latest_valid_baseline(run_root, 0.6016, revision)
             self.assertIsNone(selected)
-            self.assertEqual(skipped, [{"path": str(stale), "reason": "revision_mismatch"}])
+            self.assertEqual(skipped, [{"path": _posix(stale), "reason": "revision_mismatch"}])
 
             # A run that recorded no manifest at all is its own named reason, not
             # the same one: "built by other code" and "we cannot tell" differ.
@@ -736,7 +748,7 @@ class BaselineSelectionTests(unittest.TestCase):
             self.assertIsNone(selected)
             self.assertEqual(
                 skip_reasons(skipped),
-                {str(stale): "revision_mismatch", str(unrecorded): "no_source_manifest"},
+                {_posix(stale): "revision_mismatch", _posix(unrecorded): "no_source_manifest"},
             )
 
             # Non-vacuity: the recorded revision is the only discriminator here.
@@ -746,9 +758,9 @@ class BaselineSelectionTests(unittest.TestCase):
             )
             selected, skipped = _latest_valid_baseline(run_root, 0.6016, revision)
             self.assertIsNotNone(selected)
-            self.assertEqual(selected["summary_path"], str(stale))
+            self.assertEqual(selected["summary_path"], _posix(stale))
             self.assertEqual(
-                skip_reasons(skipped), {str(unrecorded): "no_source_manifest"}
+                skip_reasons(skipped), {_posix(unrecorded): "no_source_manifest"}
             )
 
     def test_baseline_is_rejected_when_the_artifact_is_missing(self):
@@ -767,7 +779,7 @@ class BaselineSelectionTests(unittest.TestCase):
             )
             selected, skipped = _latest_valid_baseline(run_root, 0.6016, revision)
             self.assertIsNone(selected)
-            self.assertEqual(skipped, [{"path": str(windows), "reason": "artifact_missing"}])
+            self.assertEqual(skipped, [{"path": _posix(windows), "reason": "artifact_missing"}])
             # The Windows string is neither absolute here nor a real relative
             # path, so it resolves under the repo root to something absent.
             self.assertFalse((REPO_ROOT / WINDOWS_ARTIFACT).is_file())
@@ -781,7 +793,7 @@ class BaselineSelectionTests(unittest.TestCase):
             self.assertIsNone(selected)
             self.assertEqual(
                 skip_reasons(skipped),
-                {str(windows): "artifact_missing", str(absent): "artifact_missing"},
+                {_posix(windows): "artifact_missing", _posix(absent): "artifact_missing"},
             )
 
         # T2's acceptance clause, on a tree holding *only* the stale run:
@@ -810,12 +822,12 @@ class BaselineSelectionTests(unittest.TestCase):
 
             self.assertEqual(calls, [REPO_ROOT / "configs" / "baseline.json"])
             self.assertEqual(
-                loop.baseline_summary["summary_path"], str(regenerated / "summary.json")
+                loop.baseline_summary["summary_path"], _posix(regenerated / "summary.json")
             )
             selection = selection_of(loop.run_dir)
-            self.assertEqual(selection["selected"], str(regenerated / "summary.json"))
+            self.assertEqual(selection["selected"], _posix(regenerated / "summary.json"))
             self.assertEqual(
-                selection["skipped"], [{"path": str(stale), "reason": "artifact_missing"}]
+                selection["skipped"], [{"path": _posix(stale), "reason": "artifact_missing"}]
             )
 
         # I11's *second* site, on the same regeneration path: the re-run is gated
@@ -887,7 +899,7 @@ class BaselineSelectionTests(unittest.TestCase):
             # the original handler caught, so any one of them ended *every*
             # research run at construction instead of costing one candidate.
             malformed = {
-                str(write_raw_summary(run_root, run_id, text)): "unreadable_summary"
+                _posix(write_raw_summary(run_root, run_id, text)): "unreadable_summary"
                 for run_id, text in (
                     ("20260829T000000000006Z_baseline", '{"best": {'),
                     ("20260829T000000000007Z_baseline", "[]"),
@@ -913,16 +925,16 @@ class BaselineSelectionTests(unittest.TestCase):
                 loop = adopting_loop(root)
 
             selection = selection_of(loop.run_dir)
-            self.assertEqual(selection["selected"], str(adoptable))
-            self.assertEqual(loop.baseline_summary["summary_path"], str(adoptable))
+            self.assertEqual(selection["selected"], _posix(adoptable))
+            self.assertEqual(loop.baseline_summary["summary_path"], _posix(adoptable))
             self.assertEqual(
                 skip_reasons(selection["skipped"]),
                 {
-                    str(stale): "revision_mismatch",
-                    str(windows): "artifact_missing",
-                    str(leaked): "outside_tolerance",
-                    str(other_experiment): "experiment_id_mismatch",
-                    str(unusable_manifest): "no_source_manifest",
+                    _posix(stale): "revision_mismatch",
+                    _posix(windows): "artifact_missing",
+                    _posix(leaked): "outside_tolerance",
+                    _posix(other_experiment): "experiment_id_mismatch",
+                    _posix(unusable_manifest): "no_source_manifest",
                     **malformed,
                 },
             )
@@ -983,7 +995,7 @@ class BaselineSelectionTests(unittest.TestCase):
             selected, skipped = _latest_valid_baseline(run_root, 0.6016, revision)
             self.assertEqual(skipped, [])
             self.assertEqual(selected["run_id"], newer_id)
-            self.assertEqual(selected["summary_path"], str(newer))
+            self.assertEqual(selected["summary_path"], _posix(newer))
             self.assertEqual(selected["best"]["metrics"]["primary"], 0.6015)
 
 

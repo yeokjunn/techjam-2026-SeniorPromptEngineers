@@ -56,6 +56,32 @@ class RolePass:
 
 
 @dataclass(frozen=True)
+class EDAArtifact:
+    iteration: int
+    path: Path
+    status: str = "completed"
+    summary: str = ""
+    error: str | None = None
+    plan: dict[str, Any] = field(default_factory=dict)
+    report: dict[str, Any] = field(default_factory=dict)
+    findings: tuple[dict[str, Any], ...] = ()
+    feature_candidates: tuple[dict[str, Any], ...] = ()
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+
+@dataclass(frozen=True)
+class DebuggerEvent:
+    iteration: int
+    stage: str
+    candidate_id: str | None = None
+    error_type: str | None = None
+    error: str = ""
+    lesson: str = ""
+    event_type: str = "debugger_memory"
+
+
+@dataclass(frozen=True)
 class IterationSnapshot:
     iteration: int
     experiment_id: str
@@ -72,6 +98,16 @@ class IterationSnapshot:
     agent_notes: dict[str, Any] = field(default_factory=dict)
     candidate_dir: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SubmissionCheck:
+    valid: bool
+    row_count: int
+    errors: tuple[str, ...]
+    warnings: tuple[str, ...]
+    duplicate_pairs: int
+    alignment_checked: bool = False
 
 
 @dataclass(frozen=True)
@@ -94,13 +130,7 @@ class RunSnapshot:
     journal_markdown: str | None = None
     results_markdown: str | None = None
     run_config: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class SubmissionCheck:
-    valid: bool
-    row_count: int
-    errors: tuple[str, ...]
-    warnings: tuple[str, ...]
-    duplicate_pairs: int
-    alignment_checked: bool = False
+    eda_artifacts: tuple[EDAArtifact, ...] = ()
+    live_role_passes: tuple[RolePass, ...] = ()
+    live_eda: EDAArtifact | None = None
+    debugger_events: tuple[DebuggerEvent, ...] = ()

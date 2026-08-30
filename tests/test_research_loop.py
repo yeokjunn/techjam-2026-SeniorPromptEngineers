@@ -287,7 +287,8 @@ class ResearchLoopTests(unittest.TestCase):
 
             # Cheap complement to the two end-to-end pins below: an explicit
             # max_proposals beats the max_iterations * 2 default, and an absent
-            # max_training_attempts falls back to max_iterations.
+            # max_training_attempts means training attempts are reported but not
+            # used as a stop condition.
             explicit, explicit_path = research_config(
                 root, max_iterations=5, max_proposals=3
             )
@@ -298,7 +299,7 @@ class ResearchLoopTests(unittest.TestCase):
                 baseline_summary=BASELINE_SUMMARY,
             )
             self.assertEqual(explicit_loop.max_proposals, 3)
-            self.assertEqual(explicit_loop.max_training_attempts, 5)
+            self.assertIsNone(explicit_loop.max_training_attempts)
 
     def test_training_attempt_cap_bounds_retraining_within_one_candidate(self):
         """`_execute`'s own guard reads the training cap, not the candidate cap.
@@ -469,15 +470,14 @@ class OfficialConvergenceReportingTests(unittest.TestCase):
         reporting a budget as its reason — and it is why the two numbers are
         reported separately.
 
-        The plan's sketch has only `bpr` ever succeed. The loop forbids it:
-        `required_family` pins every proposal after the first success to the
-        uncovered family, so no bpr-only run can reach three scored iterations.
-        The candidate cap stands in as the harness agenda that outlives the rule.
+        The plan's sketch follows the current best lead instead of enforcing
+        family coverage. The candidate cap stands in as the harness agenda that
+        outlives the rule.
         """
         script = [
             research("bpr"), critic(), manifest("bpr"), critic(),
             research("group_softmax"), critic(), manifest("group_softmax"), critic(),
-            research("bpr"), critic(), manifest("bpr"), critic(),
+            research("group_softmax"), critic(), manifest("group_softmax"), critic(),
         ]
         provider = ScriptedProvider(script)
         with tempfile.TemporaryDirectory() as directory:

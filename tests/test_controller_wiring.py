@@ -487,9 +487,7 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
                     covered = successful_state("bpr", "group_softmax")
                     self.assertTrue(policy.coverage_complete(covered))
                     self.assertIsNone(policy.required_family(covered))
-                    self.assertEqual(
-                        policy.required_family(successful_state("bpr")), "group_softmax"
-                    )
+                    self.assertIsNone(policy.required_family(successful_state("bpr")))
                     # The stop rule itself, which is what the run hangs on: with
                     # coverage read off `family_names()` this is False forever and
                     # the run can only end on a budget, never `converged`.

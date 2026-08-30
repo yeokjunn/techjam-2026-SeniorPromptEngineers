@@ -40,7 +40,7 @@
     "max_iterations": 50,
     "max_proposals": 100,
     "max_wall_clock_seconds": 21600,
-    "experiment_timeout_seconds": 900,
+    "experiment_timeout_seconds": 432,
     "test_timeout_seconds": 60,
     "max_debug_repairs": 2,
     "max_consecutive_harness_errors": 3,

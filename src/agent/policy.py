@@ -19,6 +19,11 @@ FAMILIES = families.family_names()
 # unsatisfiable and every run could only end on a budget.
 _MINIMUM_COVERAGE = frozenset({"bpr", "group_softmax"})
 
+# A promising family needs a small exploitation window before the agent is
+# allowed to diversify. This keeps the loop from jumping to a new family before
+# it has attributed the best observed result with controlled follow-ups.
+BEST_FAMILY_FOLLOWUP_ATTEMPTS = 2
+
 # The parameters every family takes: name -> (coercion, fallback). The fallbacks
 # are today's, so an entry that carries no `defaults` behaves exactly as before.
 _SHARED: dict[str, tuple[Callable[[Any], Any], Any]] = {
@@ -152,7 +157,11 @@ def family_experiment_score(state: RunState, family: str) -> float:
 
 
 def next_family_hint(state: RunState) -> str | None:
-    """Return the next family to try, preferring unseen or lower-performing approved families."""
+    """Return the next family to try when there is no unresolved best-family lead."""
+    lead = exploit_family(state)
+    if lead is not None:
+        return lead
+
     completed = successful_families(state)
     if not completed:
         return "bpr"
@@ -174,21 +183,97 @@ def successful_families(state: RunState) -> set[str]:
     return {node.family for node in state.nodes if node.status == "success"}
 
 
-def required_family(state: RunState) -> str | None:
+def _best_node(state: RunState) -> ExperimentNode | None:
+    if not state.best_experiment_id:
+        return None
+    for node in state.nodes:
+        if node.experiment_id == state.best_experiment_id:
+            return node
+    return None
+
+
+def _best_family(state: RunState) -> str | None:
+    node = _best_node(state)
+    return None if node is None else node.family
+
+
+def _best_primary(state: RunState) -> float | None:
+    if not state.best_metrics:
+        return None
+    return float(state.best_metrics["primary"])
+
+
+def _followups_after_best(state: RunState, family: str) -> int:
+    best = _best_node(state)
+    if best is None:
+        return 0
+    return sum(
+        1
+        for node in state.nodes
+        if node.iteration > best.iteration and node.family == family
+    )
+
+
+def _latest_node(state: RunState) -> ExperimentNode | None:
+    if not state.nodes:
+        return None
+    return max(state.nodes, key=lambda node: node.iteration)
+
+
+def _latest_needs_best_fallback(state: RunState, epsilon: float) -> bool:
+    latest = _latest_node(state)
+    best_family = _best_family(state)
+    best_primary = _best_primary(state)
+    if latest is None or best_family is None or best_primary is None:
+        return False
+    if latest.family == best_family:
+        return False
+    if latest.status != "success" or not latest.metrics:
+        return True
+    return float(latest.metrics["primary"]) + float(epsilon) < best_primary
+
+
+def exploit_family(state: RunState, epsilon: float = 0.002) -> str | None:
+    """Family that should be pursued before broad exploration.
+
+    The loop exploits a best lead when either:
+    * the most recent different family failed/regressed and should fall back; or
+    * the best family has not yet received a small controlled follow-up window.
+
+    The threshold for a lead is intentionally `> baseline`, not `> epsilon`,
+    because sub-epsilon improvements still need attribution before the run can
+    defensibly move on.
+    """
+    best_family = _best_family(state)
+    best_primary = _best_primary(state)
+    if best_family is None or best_primary is None:
+        return None
+    if best_primary <= float(state.baseline_primary):
+        return None
+    if _latest_needs_best_fallback(state, epsilon):
+        return best_family
+    if _followups_after_best(state, best_family) < BEST_FAMILY_FOLLOWUP_ATTEMPTS:
+        return best_family
+    return None
+
+
+def required_family(state: RunState, epsilon: float = 0.002) -> str | None:
+    lead = exploit_family(state, epsilon)
+    if lead is not None:
+        return lead
+
     completed = successful_families(state)
     if not completed:
         return None
     missing = _coverage_families() - completed
-    # `sorted(...)[0]` rather than `next(iter(...))`: identical while the guard
-    # below keeps `missing` a single element, and deterministic if it is ever
-    # relaxed. Set iteration order is not a promise the search policy may make.
-    if len(missing) == 1:
-        return sorted(missing)[0]
     if len(missing) > 1:
         # Owner C's steer (652c0a8): with several uncovered families, prefer the
         # underexplored / underperforming one. Unreachable until a third
         # coverage family exists (E's `coverage_families()`).
         return next_family_hint(state)
+    # Missing coverage is advisory, not a hard family lock. Otherwise one good
+    # result in `history_features` immediately forces an unrelated BPR run before
+    # attribution/fallback can happen.
     return None
 
 
@@ -300,4 +385,8 @@ class SearchPolicy:
                     )
 
     def should_stop(self, state: RunState) -> bool:
-        return coverage_complete(state) and state.stagnant_iterations >= self.patience and not state.pending_replications
+        return (
+            state.stagnant_iterations >= self.patience
+            and not state.pending_replications
+            and exploit_family(state, self.epsilon) is None
+        )

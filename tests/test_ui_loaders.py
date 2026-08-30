@@ -225,6 +225,26 @@ class DashboardLoaderTests(unittest.TestCase):
                 load_candidate_files(run_dir, iteration.candidate_dir), ("CODE", "TESTS")
             )
 
+    def test_snapshot_tolerates_null_iteration_parameters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            (run_dir / "iterations.jsonl").write_text(
+                json.dumps(
+                    {
+                        "iteration": 1,
+                        "status": "success",
+                        "proposal": {"family": "bpr", "parameters": None},
+                        "configuration": None,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            snapshot = load_run_snapshot(run_dir)
+            self.assertEqual(snapshot.iterations[0].parameters, {})
+
 
     def test_load_gate_result_and_journal_reports(self):
         with tempfile.TemporaryDirectory() as directory:

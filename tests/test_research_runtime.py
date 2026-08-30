@@ -84,13 +84,13 @@ class RuntimeSchemaTests(unittest.TestCase):
 
 
 class PolicyTests(unittest.TestCase):
-    def test_both_families_required_before_stop(self):
+    def test_family_coverage_is_reported_not_required(self):
         state = RunState("run", "running", "now", 0.6016, meaningful_best=0.6016)
         bpr = ExperimentNode(
             1, "bpr", "h1", "bpr", "explore", {}, "success", {"primary": 0.601}
         )
         state.nodes.append(bpr)
-        self.assertEqual(required_family(state), "group_softmax")
+        self.assertIsNone(required_family(state))
         self.assertFalse(coverage_complete(state))
         state.nodes.append(
             ExperimentNode(

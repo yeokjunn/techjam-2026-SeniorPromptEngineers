@@ -293,7 +293,7 @@ RESEARCH STATE:
         eda_report: EDAReport | None = None,
     ) -> ResearchDecision:
         family_rule = (
-            f"You must choose family={required_family!r} because the other required family was already attempted."
+            f"You must choose family={required_family!r} because the search policy is exploiting or falling back to the current best lead."
             if required_family
             else f"Choose one registered family ({', '.join(sorted(family_names()))}) based on evidence and the experiment history."
         )

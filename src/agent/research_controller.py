@@ -28,7 +28,6 @@ from .errors import LLMError
 from .llm import LLMProvider, build_provider
 from .policy import (
     SearchPolicy,
-    coverage_complete,
     required_family,
     sanitize_parameters,
     scored_primaries,
@@ -1230,7 +1229,7 @@ class ResearchLoop:
             proposals_before = self.state.proposal_attempts
             self._interventions_at_iteration_start = self.state.manual_interventions
             try:
-                if self.state.pending_replications and coverage_complete(self.state):
+                if self.state.pending_replications:
                     task = self.state.pending_replications[0]
                     self._replication(task)
                     self.state.pending_replications.pop(0)
@@ -1249,7 +1248,7 @@ class ResearchLoop:
                     lambda fb, seq=0: self.roles.research(
                         self.state,
                         iteration,
-                        required_family(self.state),
+                        required_family(self.state, float(self.convergence["epsilon"])),
                         feedback=fb,
                         sequence=seq,
                         eda_report=eda_report,
@@ -1362,9 +1361,10 @@ class ResearchLoop:
         self.state.status = "completed"
         self._save()
         # I6 / I-9: the organizers' verdict, reported beside the harness's stop
-        # and never in place of it. `should_stop` is coverage-gated and the caps
-        # bound it, so a run can satisfy the epsilon/N rule and still stop for
-        # some other reason — Owner D prints both numbers.
+        # and never in place of it. `should_stop` is gated on unresolved
+        # replications/follow-ups rather than family coverage, so a run can
+        # satisfy the epsilon/N rule and still spend the next pass attributing a
+        # promising lead before stopping.
         epsilon = float(self.convergence["epsilon"])
         patience = int(self.convergence["patience"])
         official_sequence = [self.state.baseline_primary] + scored_primaries(self.state)

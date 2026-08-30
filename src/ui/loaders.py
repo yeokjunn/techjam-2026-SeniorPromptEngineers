@@ -291,7 +291,11 @@ def _iteration(
         or value.get("experiment_id")
         or f"iteration_{value.get('iteration', 0)}"
     )
-    parameters = proposal.get("parameters") or value.get("configuration") or {}
+    parameters = proposal.get("parameters")
+    if not isinstance(parameters, dict):
+        parameters = value.get("configuration")
+    if not isinstance(parameters, dict):
+        parameters = {}
     hypothesis = proposal.get("hypothesis") or value.get("hypothesis") or ""
     family = proposal.get("family") or value.get("kind") or ""
     parent = proposal.get("parent_experiment") or value.get("parent_experiment")

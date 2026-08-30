@@ -36,7 +36,10 @@ targets in `[0, 1]`, one column per enabled head:
 | head | target |
 |---|---|
 | `is_click` | binary, 46.3% of train rows |
-| `is_like` | binary, 1.9% of train rows |
+| `is_like` | binary, sparse feedback |
+| `is_follow` | binary, sparse feedback |
+| `is_comment` | binary, sparse feedback |
+| `is_forward` | binary, sparse feedback |
 | `play_time` | `log1p(play_time_ms)`, min-max scaled on train |
 
 The auxiliary targets are **train-only by construction**. A loss touches train
@@ -53,8 +56,9 @@ not the capacity or the features.
 - FM embedding dimension fixed at 16 for attribution
 - Learning rate: 0.0003, 0.0005, or 0.001
 - Batch size: 2048 or 4096; one or two negatives per positive
-- `aux_weight`: 0.1, 0.3, or 1.0
-- Any subset of the three heads via `use_<head>`
+- `aux_weight`: 0.05, 0.1, 0.3, or 1.0
+- Start with click-only (`use_is_click=true`, all other heads false), then add one head at a time only after it beats or matches the click-only control.
+- Any subset of the six heads via `use_<head>`
 - Epochs up to 40 — auxiliary targets add a loss term, not FM fields, so the
   per-epoch cost is close to plain BPR
 

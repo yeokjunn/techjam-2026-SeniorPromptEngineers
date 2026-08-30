@@ -16,7 +16,7 @@ FM_RANKER_CONTRACT = """RUNTIME API CARD: src.models.fm_core.FMRanker
 - gradients(features, score_gradients) expects dLoss/dScore, not binary labels, and returns (grad_v, grad_w, grad_b).
 - apply_gradients(grad_v, grad_w, grad_b=0.0) takes three unpacked gradient values; never call apply_gradients(grads, lr).
 - predict(features) returns one score per row. state_dict()/load_state_dict() preserve checkpoints.
-- BPR pattern: gradient = (sigmoid(pos_score - neg_score) - 1.0) / batch_size; apply positive gradients and negative gradients with opposite sign."""
+- BPR pattern: gradient = (sigmoid(pos_score - neg_score) - 1.0) / batch_size; call gradients(pos_x, gradient) and gradients(neg_x, -gradient), then apply grad_v_p + grad_v_n and grad_w_p + grad_w_n."""
 
 
 SAMPLING_CONTRACTS = {

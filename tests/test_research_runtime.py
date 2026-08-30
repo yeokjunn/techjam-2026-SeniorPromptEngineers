@@ -304,6 +304,7 @@ class PromptStructureTests(unittest.TestCase):
         self.assertIn("gradients(features, score_gradients)", prompt)
         self.assertIn("apply_gradients(grad_v, grad_w, grad_b=0.0)", prompt)
         self.assertIn("never call apply_gradients(grads, lr)", prompt)
+        self.assertIn("grad_v_p + grad_v_n", prompt)
 
     def test_builder_prompt_includes_runtime_contracts_and_debugger_memory(self):
         provider = ScriptedProvider([

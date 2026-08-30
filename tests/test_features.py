@@ -320,6 +320,14 @@ class RegistryContractTests(unittest.TestCase):
                     self.assertIn(key, entry.defaults)
                     self.assertIn(entry.defaults[key], allowed)
 
+    def test_multi_task_defaults_to_low_weight_click_only(self):
+        parameters = sanitize_parameters("multi_task", {})
+        self.assertEqual(parameters["aux_weight"], 0.05)
+        self.assertTrue(parameters["use_is_click"])
+        for head in AUX_HEADS:
+            if head != "is_click":
+                self.assertFalse(parameters[f"use_{head}"])
+
     def test_registry_toggles_match_the_feature_modules_own_names(self):
         """families.py keeps literals so types.py's import stays light; pin them here."""
         self.assertEqual(fam_history_groups, GROUPS)

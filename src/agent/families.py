@@ -125,6 +125,8 @@ FAMILIES: dict[str, Family] = {
         required_calls=(_EITHER_SAMPLER, ("build_features",)),
     ),
     # Auxiliary targets add a loss term, not FM fields, so the epoch budget is bpr's.
+    # The conservative default is click-only at low weight: prior runs showed that enabling every
+    # sparse/noisy head at 0.3 can swamp the ranking objective before the family gets a fair test.
     "multi_task": Family(
         name="multi_task",
         method_card="research/methods/multi_task.md",
@@ -133,15 +135,15 @@ FAMILIES: dict[str, Family] = {
             **SHARED_GRID,
             "batch_size": (2048, 4096),
             "negatives_per_positive": (1, 2),
-            "aux_weight": (0.1, 0.3, 1.0),
+            "aux_weight": (0.05, 0.1, 0.3, 1.0),
             **{f"use_{head}": (True, False) for head in AUX_HEADS},
         },
         defaults={
             **SHARED_DEFAULTS,
             "batch_size": 2048,
             "negatives_per_positive": 1,
-            "aux_weight": 0.3,
-            **{f"use_{head}": True for head in AUX_HEADS},
+            "aux_weight": 0.05,
+            **{f"use_{head}": head == "is_click" for head in AUX_HEADS},
         },
         required_calls=(_EITHER_SAMPLER, ("build_aux_labels",)),
     ),

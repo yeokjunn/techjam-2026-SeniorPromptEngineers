@@ -110,6 +110,25 @@ def _cached_data_card(data_dir: str) -> str:
     return render_data_card(Path(data_dir))
 
 
+KUAIRAND_PURE_REQUIRED_FILES = (
+    "log_random_4_22_to_5_08_pure.csv",
+    "log_standard_4_08_to_4_21_pure.csv",
+    "log_standard_4_22_to_5_08_pure.csv",
+    "user_features_pure.csv",
+    "video_features_basic_pure.csv",
+    "video_features_statistic_pure.csv",
+)
+
+
+def _validate_kuairand_pure_data_dir(data_dir: Path) -> None:
+    missing = [name for name in KUAIRAND_PURE_REQUIRED_FILES if not (data_dir / name).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"KuaiRand-Pure data directory is incomplete: {data_dir}. "
+            f"Missing required files: {', '.join(missing)}"
+        )
+
+
 def _repo_relative(path: Path) -> str:
     """A POSIX path relative to the repo root when it lives there, else absolute.
 
@@ -342,6 +361,11 @@ class ResearchLoop:
         self.config = config
         self.config_path = config_path
         self.data_dir = _resolve_repo_path(config["data_dir"])
+        self.strict_data_contract = bool(
+            config.get("strict_kuairand_pure_data", baseline_summary is None)
+        )
+        if self.strict_data_contract:
+            _validate_kuairand_pure_data_dir(self.data_dir)
         self.generated_root = _resolve_repo_path(config.get("generated_root", "generated_experiments"))
         self.run_root = _resolve_repo_path(config.get("run_root", "runs"))
         self.discovery_store = DiscoveryStore(
@@ -421,9 +445,14 @@ class ResearchLoop:
             # cannot be produced.
             configured_card = config.get("data_card_path")
             if isinstance(configured_card, str) and configured_card:
-                self.state.data_card_path = configured_card
+                data_card_path = _resolve_repo_path(configured_card)
+                if self.strict_data_contract and not data_card_path.is_file():
+                    raise FileNotFoundError(f"Configured data card does not exist: {data_card_path}")
+                self.state.data_card_path = _repo_relative(data_card_path)
             else:
                 card = _cached_data_card(str(self.data_dir))
+                if self.strict_data_contract and not card.strip():
+                    raise RuntimeError(f"Failed to render KuaiRand-Pure data card from {self.data_dir}")
                 if card.strip():
                     card_path = self.run_dir / "DATA_CARD.md"
                     self.audit.write_text_atomic(card_path, card)
@@ -1124,7 +1153,10 @@ class ResearchLoop:
                 iteration,
                 decision,
                 outcome.metrics,
-                outcome.diagnostics,
+                {
+                    **outcome.diagnostics,
+                    "diagnostic_metrics": outcome.diagnostic_metrics,
+                },
             )
             status = "success"
             metrics = outcome.metrics
@@ -1134,13 +1166,27 @@ class ResearchLoop:
             # ``state.json``, ``best.json`` and ``summary.json`` — files that are
             # committed and read back on another machine.
             artifact = (
-                _repo_relative(Path(outcome.artifact_path)) if outcome.artifact_path else None
+                _repo_relative(_resolve_repo_path(outcome.artifact_path))
+                if outcome.artifact_path
+                else None
+            )
+            test_scores_path = (
+                _repo_relative(_resolve_repo_path(outcome.test_scores_path))
+                if outcome.test_scores_path
+                else None
+            )
+            validation_scores_path = (
+                _repo_relative(_resolve_repo_path(outcome.validation_scores_path))
+                if outcome.validation_scores_path
+                else None
             )
         else:
             postflight = None
             status = "failed"
             metrics = None
             artifact = None
+            test_scores_path = None
+            validation_scores_path = None
 
         try:
             candidate_dir = str(workspace.directory.relative_to(REPO_ROOT))
@@ -1155,8 +1201,13 @@ class ResearchLoop:
             parameters=manifest.parameters,
             status=status,
             metrics=metrics,
+            diagnostic_metrics=(
+                outcome.diagnostic_metrics if outcome is not None else {}
+            ),
             artifact_path=artifact,
             candidate_dir=candidate_dir,
+            test_scores_path=test_scores_path,
+            validation_scores_path=validation_scores_path,
             parent_experiment=decision.parent_experiment,
             replicated_from=replicated_from,
         )
@@ -1339,6 +1390,18 @@ class ResearchLoop:
                         self.state.stop_reason = "proposal_budget_reached"
                         break
                     raise
+                if not preflight.approved and preflight.admission != "hard_reject":
+                    preflight = self._role_call(
+                        "preflight_adjudicator",
+                        iteration,
+                        lambda fb, seq=0: self.roles.critic_adjudicate(
+                            self.state,
+                            iteration,
+                            decision,
+                            preflight,
+                            eda_report=eda_report,
+                        ),
+                    )
                 if not preflight.approved:
                     self._record_rejection(
                         iteration,
@@ -1531,6 +1594,7 @@ class ResearchLoop:
                     "action": node.action,
                     "status": node.status,
                     "metrics": node.metrics,
+                    "diagnostic_metrics": node.diagnostic_metrics,
                     "delta_vs_baseline": None
                     if not node.metrics
                     else float(node.metrics["primary"]) - self.state.baseline_primary,

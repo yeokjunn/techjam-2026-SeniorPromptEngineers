@@ -15,6 +15,7 @@ from .safety import (
     validate_identifier,
     validate_source,
 )
+from .autofix import fix_candidate_source, fix_test_source
 from src.evaluation.official import SANITY_CEILING, SANITY_FLOOR
 
 from .types import CandidateManifest, ExperimentOutcome
@@ -62,13 +63,18 @@ class CandidateWorkspace:
         self.test_path = self.directory / "test_candidate.py"
 
     def write(self, manifest: CandidateManifest) -> None:
-        validate_source(manifest.code)
-        validate_family_contract(manifest.code, manifest.family)
-        validate_source(manifest.tests, test_file=True)
-        self.code_path.write_text(manifest.code, encoding="utf-8")
-        self.test_path.write_text(manifest.tests, encoding="utf-8")
+        code = fix_candidate_source(manifest.code)
+        tests = fix_test_source(manifest.tests)
+        validate_source(code)
+        validate_family_contract(code, manifest.family)
+        validate_source(tests, test_file=True)
+        self.code_path.write_text(code, encoding="utf-8")
+        self.test_path.write_text(tests, encoding="utf-8")
+        manifest_payload = manifest.to_dict()
+        manifest_payload["code"] = code
+        manifest_payload["tests"] = tests
         (self.directory / "manifest.json").write_text(
-            json.dumps(manifest.to_dict(), indent=2) + "\n", encoding="utf-8"
+            json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8"
         )
 
 
@@ -237,6 +243,7 @@ class CandidateExecutor:
                 artifact_path=payload.get("artifact_path"),
                 epoch_trace=list(payload.get("training_trace", [])),
                 diagnostics=dict(payload.get("diagnostics", {})),
+                diagnostic_metrics=dict(payload.get("diagnostic_metrics", {})),
                 stdout_path=_repo_relative(stdout_path, self.repo_root),
                 stderr_path=_repo_relative(stderr_path, self.repo_root),
                 command=command,

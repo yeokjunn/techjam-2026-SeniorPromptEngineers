@@ -322,6 +322,25 @@ class ErrorClassificationTests(unittest.TestCase):
 
 
 class ProposalErrorTests(unittest.TestCase):
+    def test_builder_identity_drift_is_canonicalized_without_proposal_failure(self):
+        drifted = manifest("bpr")
+        drifted["family"] = "group_softmax"
+        drifted["hypothesis_id"] = "stale_hypothesis"
+        with research_loop([research("bpr"), critic(), drifted, critic()]) as (
+            loop,
+            provider,
+        ):
+            run_dir = loop.run()
+
+        self.assertEqual(len(provider.calls), 4)
+        self.assertEqual([node.status for node in loop.state.nodes], ["success"])
+        self.assertEqual(loop.state.nodes[0].family, "bpr")
+        self.assertEqual(loop.state.nodes[0].hypothesis_id, "h_bpr")
+        self.assertEqual(
+            [record["status"] for record in jsonl(run_dir, "iterations.jsonl")],
+            ["success"],
+        )
+
     def test_malformed_research_response_is_reprompted_and_the_run_survives(self):
         broken = research("bpr")
         broken["family"] = "nope"  # types.py:113 -> ValueError

@@ -130,6 +130,43 @@ def find_optimal_weights(
     return [float(w) for w in best_weights], best_metrics
 
 
+def _resolve_repo_path(value: str | None) -> Path | None:
+    if not value:
+        return None
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return REPO_ROOT / path
+
+
+def _score_paths_for_node(node: Any) -> tuple[Path | None, Path | None]:
+    """Resolve score files from persisted run artifacts, with legacy fallbacks."""
+    val_path = _resolve_repo_path(getattr(node, "validation_scores_path", None))
+    test_path = _resolve_repo_path(getattr(node, "test_scores_path", None))
+    if val_path is not None and test_path is not None:
+        return val_path, test_path
+
+    artifact_path = _resolve_repo_path(getattr(node, "artifact_path", None))
+    if artifact_path is not None:
+        artifact_dir = artifact_path.parent
+        artifact_val = artifact_dir / "validation_scores.npy"
+        artifact_test = artifact_dir / "test_scores.npy"
+        if val_path is None:
+            val_path = artifact_val
+        if test_path is None:
+            test_path = artifact_test
+        if val_path.is_file() and test_path.is_file():
+            return val_path, test_path
+
+    candidate_dir = _resolve_repo_path(getattr(node, "candidate_dir", None))
+    if candidate_dir is not None:
+        if val_path is None:
+            val_path = candidate_dir / "validation_scores.npy"
+        if test_path is None:
+            test_path = candidate_dir / "test_scores.npy"
+    return val_path, test_path
+
+
 def select_candidate_pool(
     nodes: list[Any],
     generated_root: Path,
@@ -167,15 +204,13 @@ def select_candidate_pool(
     results: list[CandidatePrediction] = []
     for node in chosen_nodes:
         cand_dir = getattr(node, "candidate_dir", None)
-        if not cand_dir:
-            continue
-        dir_path = Path(cand_dir)
-        if not dir_path.is_absolute():
-            dir_path = REPO_ROOT / dir_path
-
-        val_path = dir_path / "validation_scores.npy"
-        test_path = dir_path / "test_scores.npy"
-        if not (val_path.is_file() and test_path.is_file()):
+        val_path, test_path = _score_paths_for_node(node)
+        if not (
+            val_path is not None
+            and test_path is not None
+            and val_path.is_file()
+            and test_path.is_file()
+        ):
             continue
 
         try:
@@ -197,7 +232,7 @@ def select_candidate_pool(
             CandidatePrediction(
                 experiment_id=str(getattr(node, "experiment_id", "")),
                 family=str(getattr(node, "family", "")),
-                candidate_dir=cand_dir,
+                candidate_dir=str(cand_dir or val_path.parent),
                 primary_metric=float(metrics.get("primary", 0.0)),
                 validation_scores=val_scores,
                 test_scores=test_scores,

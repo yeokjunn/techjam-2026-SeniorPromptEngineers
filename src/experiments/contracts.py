@@ -16,6 +16,7 @@ class CandidateContext:
     field_dimension: int
     evaluate_validation: Callable[[np.ndarray], dict[str, float]]
     test_x: np.ndarray | None = None
+    random_valid_x: np.ndarray | None = None
 
 
 @dataclass
@@ -25,4 +26,5 @@ class CandidateOutput:
     training_trace: list[dict] = field(default_factory=list)
     diagnostics: dict = field(default_factory=dict)
     test_scores: np.ndarray | None = None
+    random_validation_scores: np.ndarray | None = None
 

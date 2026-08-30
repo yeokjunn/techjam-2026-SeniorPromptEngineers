@@ -29,6 +29,9 @@ class MockNode:
     status: str
     candidate_dir: str
     metrics: dict[str, float]
+    artifact_path: str | None = None
+    test_scores_path: str | None = None
+    validation_scores_path: str | None = None
 
 
 @dataclass
@@ -142,6 +145,38 @@ class EnsembleTests(unittest.TestCase):
                 kit_dir=KIT_DIR,
             )
             self.assertEqual(gate_res.status, "ok")
+
+    def test_select_candidate_pool_uses_artifact_score_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            generated_root = root / "generated"
+            candidate_dir = generated_root / "run1" / "001_candidate"
+            artifact_dir = root / "runs" / "run1" / "artifacts" / "001_candidate"
+            candidate_dir.mkdir(parents=True)
+            artifact_dir.mkdir(parents=True)
+
+            val_scores = np.asarray([0.1, 0.5, 0.9], dtype=np.float64)
+            test_scores = np.asarray([0.2, 0.4], dtype=np.float64)
+            val_path = artifact_dir / "validation_scores.npy"
+            test_path = artifact_dir / "test_scores.npy"
+            np.save(val_path, val_scores)
+            np.save(test_path, test_scores)
+
+            node = MockNode(
+                "candidate",
+                "bpr",
+                "exploit",
+                "success",
+                str(candidate_dir),
+                {"primary": 0.61},
+                test_scores_path=str(test_path),
+                validation_scores_path=str(val_path),
+            )
+
+            pool = select_candidate_pool([node], generated_root=generated_root)
+            self.assertEqual(len(pool), 1)
+            self.assertTrue(np.array_equal(pool[0].validation_scores, val_scores))
+            self.assertTrue(np.array_equal(pool[0].test_scores, test_scores))
 
 
 if __name__ == "__main__":

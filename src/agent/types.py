@@ -49,6 +49,7 @@ class ExperimentOutcome:
     stderr_path: str | None = None
     command: list[str] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    diagnostic_metrics: dict[str, dict[str, float]] = field(default_factory=dict)
     failure_class: str | None = None
     test_scores_path: str | None = None
     validation_scores_path: str | None = None
@@ -217,17 +218,32 @@ class EDAReport:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "EDAReport":
+        def clipped(item: Any, limit: int) -> str:
+            return str(item)[:limit]
+
         return cls(
-            summary=str(_required(value, "summary", str)),
+            summary=clipped(_required(value, "summary", str), 360),
             findings=tuple(
-                EDAFinding.from_dict(item) for item in _required(value, "findings", list)
+                EDAFinding(
+                    clipped(_required(item, "title", str), 80),
+                    clipped(_required(item, "observation", str), 220),
+                    clipped(_required(item, "implication", str), 220),
+                    clipped(_required(item, "evidence", str), 180),
+                    bool(item.get("leakage_safe", True)),
+                ) for item in _required(value, "findings", list)[:3]
             ),
             feature_candidates=tuple(
-                FeatureCandidate.from_dict(item)
-                for item in _required(value, "feature_candidates", list)
+                FeatureCandidate(
+                    clipped(_required(item, "name", str), 80),
+                    clipped(_required(item, "description", str), 220),
+                    clipped(_required(item, "family", str), 40),
+                    clipped(_required(item, "expected_impact", str), 160),
+                    clipped(_required(item, "implementation_scope", str), 180),
+                    clipped(_required(item, "leakage_risk", str), 180),
+                ) for item in _required(value, "feature_candidates", list)[:3]
             ),
-            recommended_next_focus=str(_required(value, "recommended_next_focus", str)),
-            ui_notes=tuple(str(item) for item in value.get("ui_notes", [])),
+            recommended_next_focus=clipped(_required(value, "recommended_next_focus", str), 300),
+            ui_notes=tuple(clipped(item, 160) for item in value.get("ui_notes", [])[:3]),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -241,6 +257,7 @@ class CriticDecision:
     rationale: str
     concerns: tuple[str, ...] = ()
     next_focus: str = ""
+    admission: str = "approved"
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "CriticDecision":
@@ -250,6 +267,7 @@ class CriticDecision:
             rationale=str(_required(value, "rationale", str)),
             concerns=tuple(str(item) for item in value.get("concerns", [])),
             next_focus=str(value.get("next_focus", "")),
+            admission=str(value.get("admission", "approved")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -307,8 +325,11 @@ class ExperimentNode:
     parameters: dict[str, Any]
     status: str
     metrics: dict[str, float] | None = None
+    diagnostic_metrics: dict[str, dict[str, float]] = field(default_factory=dict)
     artifact_path: str | None = None
     candidate_dir: str | None = None
+    test_scores_path: str | None = None
+    validation_scores_path: str | None = None
     parent_experiment: str | None = None
     replicated_from: str | None = None
 

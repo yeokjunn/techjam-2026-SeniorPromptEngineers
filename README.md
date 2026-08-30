@@ -332,27 +332,31 @@ and 32.02 seconds wall-clock. Source:
 
 ## Latest verified autonomous integration run
 
-Latest local live run `20260830T070229778050Z_research` completed four iterations
-and preserved the best validation checkpoint from the first history-features
-candidate:
+Latest local live run `20260830T175102340187Z_research` completed with
+`stop_reason: converged` at iteration 5 under the official epsilon `0.002`,
+patience-3 rule. It used 5 training attempts, 7 proposal attempts, 325,690
+reported LLM tokens, 1,510.00 seconds wall-clock, 0 GPU-hours, and 0 manual
+interventions.
 
 | Iteration | Candidate | Family | Status | Primary | Notes |
 |---:|---|---|---|---:|---|
-| 1 | `cand_hf_tabcross_prior_days_v1` | `history_features` | success | **0.6031** | Best result; all six history feature groups enabled. |
-| 2 | `cand_bpr_sameuser_v1` | `bpr` | failed by controller timeout | — | `result.json` existed with primary `0.6023`, but the controller finalized it as failed after the timeout; previous best was preserved. |
-| 3 | `cand_bpr_sameuser_v2` | `bpr` | failed | — | Candidate bug: treated the validation metrics dict as a float. |
-| 4 | `cand_bpr_sameuser_v3` | `bpr` | success | 0.5929 | Pure BPR regressed; next policy should fall back to history-feature ablations. |
+| 1 | `hf_prior_user_author_recency_decay_v1_bpr_bce` | `history_features` | failed | — | Candidate unpacked the validation metrics dict as a tuple; bounded debugger repair did not rescue this run. |
+| 2 | `hf_prior_days_recency_candidate_author_overlap_v2_bpr` | `history_features` | success | **0.6039** | Best single checkpoint; improved official validation baseline by `+0.0023`. |
+| 3 | `hf_prior_days_recency_candidate_author_overlap_v2_bpr_seed1` | `history_features` | success | 0.6033 | Exact seed replication; did not improve by more than `0.002`. |
+| 4 | `hf_prior_days_recency_candidate_author_overlap_v2_bpr_seed2` | `history_features` | success | 0.6035 | Exact seed replication; did not improve by more than `0.002`. |
+| 5 | `bpr_margin_softplus_0p1` | `bpr` | success | 0.6034 | Margin-BPR follow-up; did not improve by more than `0.002`, triggering convergence after 3 stagnant successes. |
 
-Best validation metrics from that run:
+Best single-checkpoint validation metrics from that run:
 
 | GAUC | nDCG@5 | Primary | Delta vs official 0.6016 |
 |---:|---:|---:|---:|
-| 0.6695 | 0.5366 | **0.6031** | **+0.0015** |
+| 0.6702 | 0.5375 | **0.6039** | **+0.0023** |
 
-It used 4 iterations, 4 training attempts, 111,450 reported LLM tokens,
-1,879.65 seconds wall-clock, 0 GPU-hours, and 0 manual interventions. It stopped
-on the global wall-clock budget, not convergence. The run artifacts remain
-generated outputs under `runs/` and are intentionally not committed in this PR.
+The final ensemble blended the four successful candidates and reached validation
+primary `0.6046` with GAUC `0.6711` and nDCG@5 `0.5380`. The label-free
+submission gate passed on 170,588 test rows. The run artifacts remain generated
+outputs under `runs/` and are intentionally not committed in this PR. Source:
+[`summary.json`](runs/20260830T175102340187Z_research/summary.json).
 
 Previously committed integration run `20260829T060130480764Z_research` executed
 the real BPR trainer and the label-free submission gate:
@@ -387,8 +391,8 @@ Conductor: research_controller.ResearchLoop
 
 ## Limitations and next work
 
-- No committed converged live-LLM run exists yet; the reported autonomous run is
-  the deterministic one-iteration smoke test.
+- The latest live-LLM run converged locally and passed the label-free submission
+  gate; hidden-test score remains unknown and must not guide model selection.
 - The harness lacks the append-only `intervene` command and separate persisted
   official-convergence verdict.
 - Only BPR and group-softmax are currently registered; sequence features,

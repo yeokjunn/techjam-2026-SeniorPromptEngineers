@@ -12,6 +12,7 @@ import numpy as np
 from src.evaluation.official import (
     TEST_ROWS,
     classify_primary,
+    load_random_validation,
     load_test_meta,
     load_train_valid,
     official_evaluate,
@@ -77,6 +78,8 @@ def validate_and_persist_output(
     artifact_dir: Path,
     *,
     expected_test_rows: int | None = None,
+    random_valid_users: tuple[str, ...] | list[str] | None = None,
+    random_valid_y: np.ndarray | None = None,
 ) -> dict[str, Any]:
     if not isinstance(output, CandidateOutput):
         raise TypeError("Candidate run() must return CandidateOutput.")
@@ -135,11 +138,40 @@ def validate_and_persist_output(
         for key, value in output.diagnostics.items()
         if str(key).lower() not in RESERVED_DIAGNOSTIC_KEYS
     }
+    diagnostic_metrics: dict[str, dict[str, float]] = {}
+    if random_valid_y is not None and random_valid_users is not None:
+        random_scores = output.random_validation_scores
+        if random_scores is None:
+            diagnostics["random_exposure_status"] = "not_scored"
+        else:
+            random_scores = np.asarray(random_scores, dtype=np.float64)
+            if (
+                random_scores.ndim != 1
+                or len(random_scores) != len(random_valid_y)
+                or not np.all(np.isfinite(random_scores))
+            ):
+                raise ValueError(
+                    "Random-exposure validation scores have the wrong shape or contain NaN/Inf."
+                )
+            random_metrics = official_evaluate(
+                random_valid_users, random_valid_y, random_scores
+            )
+            random_metrics.update(
+                {
+                    "users": float(len(set(random_valid_users))),
+                    "rows": float(len(random_valid_y)),
+                    "robustness_gap": float(metrics["primary"])
+                    - float(random_metrics["primary"]),
+                }
+            )
+            diagnostic_metrics["random_exposure"] = random_metrics
+            diagnostics["random_exposure_status"] = "scored"
     metrics.update({"users": float(len(set(valid_users))), "rows": float(len(valid_y))})
     return {
         "metrics": metrics,
         "training_trace": _json_safe(output.training_trace),
         "diagnostics": diagnostics,
+        "diagnostic_metrics": diagnostic_metrics,
         "artifact_path": checkpoint_path.as_posix(),
         "validation_scores_path": _repo_relative(valid_scores_path),
         "test_scores_status": test_scores_status,
@@ -163,6 +195,7 @@ def main() -> None:
 
     parameters = json.loads(args.spec.read_text(encoding="utf-8"))["parameters"]
     splits = load_train_valid(args.data_dir)
+    splits["random_valid"] = load_random_validation(args.data_dir)
     # Test features only: the kit derives bucket edges and every vocab from
     # splits['train'] alone, so this third key changes nothing about train/valid
     # and reproduces the kit's own test encoding. The placeholder label column
@@ -172,6 +205,7 @@ def main() -> None:
     encoded, dimension = data_module.encode(splits)
     train_x, train_y, train_users = encoded["train"]
     valid_x, valid_y, valid_users = encoded["valid"]
+    random_valid_x, random_valid_y, random_valid_users = encoded["random_valid"]
     test_x = encoded["test"][0]
 
     def evaluate_validation(scores: np.ndarray) -> dict[str, float]:
@@ -191,6 +225,7 @@ def main() -> None:
         field_dimension=dimension,
         evaluate_validation=evaluate_validation,
         test_x=test_x,
+        random_valid_x=random_valid_x,
     )
     module = _load_candidate(args.candidate)
     output = module.run(context, parameters)
@@ -200,6 +235,8 @@ def main() -> None:
         valid_y,
         args.artifact_dir,
         expected_test_rows=int(test_x.shape[0]),
+        random_valid_users=tuple(random_valid_users),
+        random_valid_y=random_valid_y,
     )
     _write_json_atomic(args.result, payload)
 

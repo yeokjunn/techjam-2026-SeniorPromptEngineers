@@ -77,9 +77,11 @@ class CandidateContractTests(unittest.TestCase):
     def test_candidate_output_test_scores_default_to_none(self):
         output = CandidateOutput(validation_scores=np.zeros(3), checkpoint_state={})
         self.assertIsNone(output.test_scores)
+        self.assertIsNone(output.random_validation_scores)
 
     def test_candidate_context_takes_optional_test_features(self):
         self.assertIsNone(self.context().test_x)
+        self.assertIsNone(self.context().random_valid_x)
         with_test = self.context(test_x=np.zeros((2, 5)))
         self.assertEqual(with_test.test_x.shape, (2, 5))
 

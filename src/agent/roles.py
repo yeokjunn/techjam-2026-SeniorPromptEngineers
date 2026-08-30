@@ -63,7 +63,8 @@ specifically justifies repeating it."""
 BASE_CANDIDATE_CONTRACT = """candidate.py must define `run(context, parameters) -> CandidateOutput`.
 Use only numpy, collections, math, time, src.models.fm_core.FMRanker, src.models.sampling,
 src.models.features, and src.experiments.contracts.CandidateOutput. The context provides train_x, train_y, train_users,
-valid_x, valid_users, field_dimension, evaluate_validation(scores), and test_x (which may be None).
+valid_x, valid_users, field_dimension, evaluate_validation(scores), test_x, and
+random_valid_x (the latter two may be None).
 Build the model with src.models.fm_core.FMRanker. Do NOT re-implement the factorization machine:
 it gathers sparse field indices, so a dense one-hot formulation over ~40k fields overflows to NaN
 and, even when it converges, breaks attribution against the official baseline. Its entire API is:
@@ -99,6 +100,7 @@ is a TypeError that costs the iteration:
         training_trace=[...],    # list[dict] -- NOT "train_trace"
         diagnostics={...},       # dict; put extra numbers here, NOT as new arguments
         test_scores=...,         # np.ndarray (n_test,) or None
+        random_validation_scores=...,  # np.ndarray (n_random_valid,) or None
     )
 
 There is no valid_primary, metrics or score argument: per-epoch numbers belong inside
@@ -106,7 +108,9 @@ training_trace, and anything else belongs in diagnostics.
 Return `test_scores` — one finite score per row of `context.test_x`, same row order, from the same
 trained model. Return `test_scores=None` only when `context.test_x` is None.
 Construct the result exactly as `CandidateOutput(validation_scores=..., checkpoint_state=...,
-training_trace=..., diagnostics=..., test_scores=...)`; do not probe alternative constructors.
+training_trace=..., diagnostics=..., test_scores=..., random_validation_scores=...)`; do not
+probe alternative constructors. Score random_valid_x with the selected model, but never use
+that split for training, early stopping, checkpoint selection, or hyperparameter selection.
 test_candidate.py must use Python unittest only. Define at least one class inheriting
 `unittest.TestCase` with at least one `test_*` method. Tests run exactly as
 `python -m unittest -v test_candidate.py`. Do not use pytest, pytest fixtures, monkeypatch
@@ -122,9 +126,11 @@ Always pass an explicit split-specific spec:
   train_spec = dict(spec, split='train', field_offset=context.field_dimension)
   valid_spec = dict(spec, split='valid', field_offset=context.field_dimension)
   test_spec = dict(spec, split='test', field_offset=context.field_dimension)
+  random_valid_spec = dict(spec, split='random_valid', field_offset=context.field_dimension)
 Call build_features(context.train_x, train_spec), build_features(context.valid_x, valid_spec),
 and build_features(context.test_x, test_spec) when test_x is not None. Use feature_dimension(spec)
-for the added FM index width, not train_extra.shape[1]."""
+for the added FM index width, not train_extra.shape[1]. Build random-validation features with
+random_valid_spec when context.random_valid_x is not None."""
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -140,6 +146,9 @@ def _load_skill(name: str) -> str:
 
 DATA_SCIENTIST_SKILL = _load_skill("data-scientist")
 ML_ENGINEER_SKILL = _load_skill("ml-engineer")
+HYPERPARAMETER_OPTIMIZATION_SKILL = _load_skill("hyperparameter-optimization")
+COUNTERFACTUAL_WATCH_MODELING_SKILL = _load_skill("counterfactual-watch-modeling")
+FEATURE_AND_MODEL_IDEATION_SKILL = _load_skill("feature-and-model-ideation")
 
 
 class ResearchRoles:
@@ -200,6 +209,12 @@ class ResearchRoles:
             prefix += f"\n\n{DATA_SCIENTIST_SKILL}"
         if ML_ENGINEER_SKILL:
             prefix += f"\n\n{ML_ENGINEER_SKILL}"
+        if HYPERPARAMETER_OPTIMIZATION_SKILL:
+            prefix += f"\n\n{HYPERPARAMETER_OPTIMIZATION_SKILL}"
+        if COUNTERFACTUAL_WATCH_MODELING_SKILL:
+            prefix += f"\n\n{COUNTERFACTUAL_WATCH_MODELING_SKILL}"
+        if FEATURE_AND_MODEL_IDEATION_SKILL:
+            prefix += f"\n\n{FEATURE_AND_MODEL_IDEATION_SKILL}"
         prefix += f"\n\n{method_cards}"""
         if data_card:
             prefix += f"\n\nDATA CARD:\n{data_card}"
@@ -396,10 +411,17 @@ RESEARCH STATE:
                 "Web search is unavailable in this run. Use curated cards and EDA evidence only; set needs_web_search=false."
             )
         volatile_block = f"""ROLE: Researcher
-Propose one controlled ranking-loss experiment. {family_rule}
+Propose one controlled but creative ranking experiment. {family_rule}
 {search_rule}
 All parameter fields in the schema must be present; use null only for parameters irrelevant to the family.
 Return one concise JSON decision. Keep rationale and hypothesis to one sentence each.
+Explore a concrete new mechanism, ablation, or materially simplified configuration rather than
+copying a prior experiment's parameter tuple. Creativity is encouraged within the registered
+families and approved parameter space: consider targeted history ablations, candidate-specific
+cross features, auxiliary-signal combinations, sampling variants, or loss schedules when the
+family supports them. Do not claim a broad six-group history configuration is minimal. If using
+a previously rejected parent, explicitly state the concrete correction and why a bounded probe is
+still informative. Never trade away leakage safety, the candidate contract, or resource limits.
 Do not repeat a previous failed proposal or reuse its hypothesis_id.
 
 EDA EVIDENCE:
@@ -478,10 +500,18 @@ RESEARCH STATE:
         eda_report: EDAReport | None = None,
     ) -> CriticDecision:
         volatile_block = f"""ROLE: Critic preflight
-Decide whether this proposal is evidence-backed, novel relative to history, leakage-safe,
-computationally feasible, and isolates a ranking-loss variable. Reject unsupported evidence,
-cross-user negatives, test access, evaluator changes, or unrelated architecture changes.
-Use the EDA evidence as supporting context, not as permission to change the task contract.
+Review the proposal using two levels of judgment. Hard-reject only leakage or future-history
+usage, cross-user negatives, hidden-test access, evaluator/split/label/budget/reference-file
+changes, unsafe imports or operations, invalid candidate contracts, numerical unsafety, or
+clear computational infeasibility. These are unconditional safety vetoes.
+
+Insufficient novelty, weak evidence, imperfect variable isolation, and reuse of a prior rejected
+parent are SOFT concerns. Do not reject for those alone. If the proposal is safe but imperfect,
+return approved=false with admission="borderline" and list concise warnings. It may be admitted
+as a cheap probe after adjudication. Return admission="hard_reject" only for a hard safety veto.
+Lack of creativity, expected weak performance, or a pre-assumption that an experiment will not
+work can never be a hard rejection reason. If approved without warnings, return
+admission="approved". The task contract remains immutable.
 
 STATE: {self._state_summary(state)}
 EDA EVIDENCE: {self._eda_context(eda_report)}
@@ -498,7 +528,55 @@ PROPOSAL: {json.dumps(decision.to_dict(), indent=2, sort_keys=True)}
             "critic_decision",
             sequence=sequence,
         )
-        return CriticDecision.from_dict(result.data)
+        critic = CriticDecision.from_dict(result.data)
+        # The critic's boolean is not authoritative for soft concerns. Older providers may
+        # still emit approved=false without the admission field; normalize that response into
+        # the explicit borderline state so the controller can adjudicate it.
+        if critic.admission not in {"hard_reject", "borderline", "approved", "approved_with_warnings"}:
+            critic = CriticDecision(
+                **{**asdict(critic), "admission": "borderline" if not critic.approved else "approved"}
+            )
+        elif not critic.approved and critic.admission == "approved":
+            critic = CriticDecision(**{**asdict(critic), "admission": "borderline"})
+        return critic
+
+    def critic_adjudicate(
+        self,
+        state: RunState,
+        iteration: int,
+        decision: ResearchDecision,
+        critic: CriticDecision,
+        eda_report: EDAReport | None = None,
+    ) -> CriticDecision:
+        volatile_block = f"""ROLE: Preflight adjudicator
+Decide whether this proposal should receive one bounded validation probe.
+Hard-reject only an actual safety or contract violation. Novelty, evidence strength, attribution,
+and repeated history are soft concerns: allow a safe proposal when it has a concrete probe
+justification such as a cheap runtime, a targeted ablation, a materially simplified configuration,
+or an explicit correction to the prior rejection. Return JSON using the critic_decision schema.
+Set approved=true and admission="approved_with_warnings" when allowing a probe. Set
+approved=false and admission="hard_reject" only for a hard violation. Preserve the concerns and
+explain the admission decision in rationale.
+
+CRITIC REVIEW: {json.dumps(critic.to_dict(), indent=2, sort_keys=True)}
+PROPOSAL: {json.dumps(decision.to_dict(), indent=2, sort_keys=True)}
+STATE: {self._state_summary(state)}
+EDA EVIDENCE: {self._eda_context(eda_report)}
+"""
+        prompt = f"{self._stable_prefix(state, decision.family)}\n\n{volatile_block}"
+        result = self._call(state, iteration, "preflight_adjudicator", prompt, "critic_decision")
+        adjudication = CriticDecision.from_dict(result.data)
+        # Adjudication is only a release valve for soft concerns. A missing admission state
+        # must not silently turn a soft review into a hard rejection.
+        if not adjudication.approved and adjudication.admission != "hard_reject":
+            adjudication = CriticDecision(
+                **{**asdict(adjudication), "admission": "hard_reject"}
+            )
+        elif adjudication.approved and adjudication.admission == "approved":
+            adjudication = CriticDecision(
+                **{**asdict(adjudication), "admission": "approved_with_warnings"}
+            )
+        return adjudication
 
     def build(
         self,
@@ -553,10 +631,22 @@ EDA EVIDENCE:
             sequence=sequence,
         )
         manifest = CandidateManifest.from_dict(result.data)
-        if manifest.family != decision.family or manifest.hypothesis_id != decision.hypothesis_id:
-            raise RoleOutputInvalid("Builder changed the approved family or hypothesis ID.")
-        parameters = sanitize_parameters(manifest.family, normalize_parameters(manifest.parameters))
-        return CandidateManifest(**{**asdict(manifest), "parameters": parameters})
+        # Proposal identity belongs to the approved ResearchDecision, not to the
+        # Builder.  Treat a copied/stale family or hypothesis ID as correctable
+        # role-output drift instead of abandoning an otherwise approved probe.
+        # CandidateWorkspace still validates the source against the canonical
+        # family contract, so this cannot broaden imports or bypass safety.
+        parameters = sanitize_parameters(
+            decision.family, normalize_parameters(manifest.parameters)
+        )
+        return CandidateManifest(
+            **{
+                **asdict(manifest),
+                "hypothesis_id": decision.hypothesis_id,
+                "family": decision.family,
+                "parameters": parameters,
+            }
+        )
 
     def debug(
         self,

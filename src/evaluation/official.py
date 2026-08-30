@@ -17,6 +17,7 @@ VALID_END = 20220428
 TEST_START = 20220429
 TEST_END = 20220508
 TEST_ROWS = 170_588
+RANDOM_VALIDATION_FILE = "log_random_4_22_to_5_08_pure.csv"
 LABEL_PLACEHOLDER = -1
 SANITY_FLOOR = 0.47
 SANITY_CEILING = 0.80
@@ -76,6 +77,43 @@ def load_train_valid(data_dir: Path) -> dict[str, list[tuple]]:
                     )
                 )
     return splits
+
+
+def load_random_validation(data_dir: Path) -> list[tuple]:
+    """Load random-exposure rows matching the official validation dates.
+
+    This is a diagnostic split only. Keeping the same 2022-04-22 through
+    2022-04-28 window avoids mixing temporal drift into the exposure-policy
+    comparison. Encoding still fits vocabularies and buckets on standard
+    training traffic only.
+    """
+    video_to_author: dict[str, str] = {}
+    with (data_dir / "video_features_basic_pure.csv").open(
+        encoding="utf-8", newline=""
+    ) as handle:
+        for row in csv.DictReader(handle):
+            video_to_author[row["video_id"]] = row["author_id"]
+
+    rows: list[tuple] = []
+    with (data_dir / RANDOM_VALIDATION_FILE).open(
+        encoding="utf-8", newline=""
+    ) as handle:
+        for row in csv.DictReader(handle):
+            date = int(row["date"])
+            if not (VALID_START <= date <= VALID_END):
+                continue
+            rows.append(
+                (
+                    date,
+                    row["user_id"],
+                    row["video_id"],
+                    video_to_author.get(row["video_id"], "UNK"),
+                    row["tab"],
+                    float(row["duration_ms"]),
+                    1 if row["long_view"] != "0" else 0,
+                )
+            )
+    return rows
 
 
 @dataclass(frozen=True)

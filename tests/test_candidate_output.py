@@ -134,6 +134,58 @@ class CandidateOutputTests(unittest.TestCase):
             self.assertIsNone(payload["test_scores_path"])
             self.assertFalse((Path(directory) / "test_scores.npy").exists())
 
+    def test_random_exposure_metrics_are_separate_diagnostics(self):
+        output = CandidateOutput(
+            validation_scores=np.asarray([0.8, 0.2]),
+            checkpoint_state={},
+            random_validation_scores=np.asarray([0.1, 0.9]),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            payload = validate_and_persist_output(
+                output,
+                ["standard", "standard"],
+                np.asarray([1, 0], dtype=np.float32),
+                Path(directory),
+                random_valid_users=["random", "random"],
+                random_valid_y=np.asarray([1, 0], dtype=np.float32),
+            )
+        self.assertEqual(payload["diagnostics"]["random_exposure_status"], "scored")
+        self.assertEqual(payload["metrics"]["primary"], 1.0)
+        random_metrics = payload["diagnostic_metrics"]["random_exposure"]
+        self.assertAlmostEqual(random_metrics["primary"], 0.31546488404273987)
+        self.assertAlmostEqual(random_metrics["robustness_gap"], 0.6845351159572601)
+        self.assertNotIn("random_exposure", payload["metrics"])
+
+    def test_missing_random_scores_is_optional_and_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload = validate_and_persist_output(
+                CandidateOutput(np.asarray([1.0, 0.0]), {}),
+                ["standard", "standard"],
+                np.asarray([1, 0], dtype=np.float32),
+                Path(directory),
+                random_valid_users=["random", "random"],
+                random_valid_y=np.asarray([1, 0], dtype=np.float32),
+            )
+        self.assertEqual(payload["diagnostics"]["random_exposure_status"], "not_scored")
+        self.assertEqual(payload["diagnostic_metrics"], {})
+
+    def test_invalid_random_scores_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(
+            ValueError, "Random-exposure"
+        ):
+            validate_and_persist_output(
+                CandidateOutput(
+                    np.asarray([1.0, 0.0]),
+                    {},
+                    random_validation_scores=np.asarray([np.nan]),
+                ),
+                ["standard", "standard"],
+                np.asarray([1, 0], dtype=np.float32),
+                Path(directory),
+                random_valid_users=["random", "random"],
+                random_valid_y=np.asarray([1, 0], dtype=np.float32),
+            )
+
     def test_ceiling_hit_is_marked_as_leak(self):
         # The canonical perfect-ranking fixture scores primary 1.0 — above the
         # leak ceiling — so it doubles as the ceiling case: the ledger keeps

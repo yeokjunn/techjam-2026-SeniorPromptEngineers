@@ -306,6 +306,10 @@ def sanitize_parameters(family: str, raw: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"Unsupported family: {family}")
     defaults = dict(getattr(entry, "defaults", {}) or {})
     grid = dict(getattr(entry, "grid", {}) or {})
+    if family == "history_features":
+        for name in grid:
+            if name.startswith("use_") and name not in raw:
+                defaults[name] = False
 
     parameters: dict[str, Any] = {}
     for name, (coerce, fallback) in _SHARED.items():

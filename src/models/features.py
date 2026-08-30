@@ -45,6 +45,7 @@ from src.evaluation.official import (
     REPO_ROOT,
     TRAIN_END,
     TRAIN_START,
+    load_random_validation,
     load_test_meta,
     load_train_valid,
 )
@@ -70,7 +71,7 @@ RECENCY_CAP_DAYS = 14
 DEFAULT_SMOOTHING = 20.0
 DEFAULT_SCHEME = "prior_days"
 SCHEMES = ("prior_days", "leave_one_out")
-SPLITS = ("train", "valid", "test")
+SPLITS = ("train", "valid", "test", "random_valid")
 
 # Kit row layout: (date, user_id, video_id, author_id, tab, duration_ms, long_view)
 _DATE, _USER, _VIDEO, _AUTHOR, _TAB, _DURATION, _LABEL = range(7)
@@ -152,9 +153,12 @@ def _split_rows(spec: dict, split: str, expected: int) -> tuple[list, list, dict
     data_dir = _resolve_data_dir(spec)
     try:
         splits = _cached_train_valid(str(data_dir))
-        target = (
-            _cached_test_rows(str(data_dir), expected) if split == "test" else splits[split]
-        )
+        if split == "test":
+            target = _cached_test_rows(str(data_dir), expected)
+        elif split == "random_valid":
+            target = load_random_validation(data_dir)
+        else:
+            target = splits[split]
         uploads = _cached_upload_ordinals(str(data_dir))
     except (OSError, KeyError) as exc:
         raise FeatureDataUnavailable(

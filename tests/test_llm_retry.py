@@ -91,9 +91,11 @@ class FakeResponses:
     def __init__(self, outcomes):
         self.outcomes = list(outcomes)
         self.calls = 0
+        self.requests = []
 
     def create(self, **kwargs):
         self.calls += 1
+        self.requests.append(dict(kwargs))
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -284,6 +286,28 @@ class RetryPolicyTests(unittest.TestCase):
             self._complete(provider)
         self.assertIsInstance(caught.exception, LLMError)
         self.assertEqual(responses.calls, 2)
+
+    def test_max_output_incomplete_retries_once_with_a_larger_cap(self):
+        incomplete = _valid_response(
+            "",
+            status="incomplete",
+            incomplete_details={"reason": "max_output_tokens"},
+        )
+        provider, responses = _openai_provider([incomplete, _valid_response()])
+        with patch("src.agent.llm.time.sleep"):
+            result = provider.complete(
+                role="critic",
+                instructions="trusted",
+                prompt="inspect",
+                schema_name="critic_decision",
+                max_output_tokens=1600,
+                max_retries=1,
+            )
+        self.assertEqual(result.retries, 1)
+        self.assertEqual(
+            [request["max_output_tokens"] for request in responses.requests],
+            [1600, 3200],
+        )
 
     def test_unparseable_output_text_raises_role_output_invalid(self):
         provider, responses = _openai_provider([_valid_response("not-json")])

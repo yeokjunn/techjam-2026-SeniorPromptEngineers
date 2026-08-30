@@ -17,7 +17,7 @@ import time
 import unittest
 from pathlib import Path
 
-from src.agent.audit import ResearchAudit
+from src.agent.audit import ResearchAudit, _replace_atomic
 
 
 class ConcurrentReaderTests(unittest.TestCase):
@@ -79,9 +79,7 @@ class ConcurrentReaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "no_such_dir" / "activity.json"
             with self.assertRaises((PermissionError, FileNotFoundError, OSError)):
-                ResearchAudit._replace_with_retry(
-                    Path(directory) / "absent.tmp", missing, attempts=2
-                )
+                _replace_atomic(Path(directory) / "absent.tmp", missing)
 
     def test_the_written_value_is_intact_after_contention(self):
         with tempfile.TemporaryDirectory() as directory:

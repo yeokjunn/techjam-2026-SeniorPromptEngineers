@@ -20,7 +20,6 @@ from src.agent.errors import (
     IncompleteResponse,
     LLMError,
     RoleOutputInvalid,
-    TokenBudgetExceeded,
 )
 from src.agent.llm import (
     OpenAIResponsesProvider,
@@ -59,7 +58,7 @@ def _valid_response(output_text: str | None = None, **overrides):
     }
     response = {
         "id": "response-test",
-        "model": "gpt-5.5",
+        "model": "GLM-5.3-Flash",
         "status": "completed",
         "output_text": output_text if output_text is not None else json.dumps(payload),
         "output": [],
@@ -187,6 +186,7 @@ class OfflineSmokeTests(unittest.TestCase):
                     "run_root": str(root / "runs"),
                     "generated_root": str(root / "generated"),
                     "method_catalog": str(REPO_ROOT / "research" / "methods"),
+                    "discovery_store": str(root / "discoveries.json"),
                 }
             )
             config_path = root / "offline_smoke.json"
@@ -291,7 +291,7 @@ class RetryPolicyTests(unittest.TestCase):
             self._complete(provider)
         self.assertEqual(responses.calls, 1)
 
-    def test_token_budget_uses_a_typed_exception(self):
+    def test_token_budget_is_reported_not_enforced_by_roles(self):
         with tempfile.TemporaryDirectory() as directory:
             roles = ResearchRoles(
                 ScriptedProvider(copy.deepcopy(_load_script())),
@@ -300,8 +300,8 @@ class RetryPolicyTests(unittest.TestCase):
                 max_total_tokens=0,
             )
             state = RunState("run", "running", "now", 0.6016)
-            with self.assertRaises(TokenBudgetExceeded):
-                roles.research(state, 1, "bpr")
+            roles.research(state, 1, "bpr")
+            self.assertGreater(state.token_usage.total_tokens, 0)
 
     def test_family_mismatch_raises_role_output_invalid(self):
         payload = copy.deepcopy(_load_script()[0])

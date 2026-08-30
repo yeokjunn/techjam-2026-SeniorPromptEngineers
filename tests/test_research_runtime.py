@@ -7,11 +7,13 @@ from pathlib import Path
 
 from src.agent.audit import ResearchAudit
 from src.agent.catalog import MethodCatalog
-from src.agent.families import FAMILIES, family_names
+from src.agent.discoveries import DiscoveryStore
+from src.agent.families import FAMILIES, coverage_families, family_names
 from src.agent.llm import FAMILY_ENUM, ScriptedProvider
 from src.agent.policy import SearchPolicy, coverage_complete, required_family
+from src.agent.runtime_contracts import runtime_contract_prompt
 from src.agent.roles import BASE_CANDIDATE_CONTRACT, ResearchRoles
-from src.agent.types import ExperimentNode, ResearchDecision, RunState, TokenUsage
+from src.agent.types import CandidateManifest, ExperimentNode, ResearchDecision, RunState, TokenUsage
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +49,12 @@ def research_payload(family: str, needs_web: bool = False) -> dict:
     }
 
 
+def web_research_payload(family: str) -> dict:
+    payload = research_payload(family)
+    payload["web_searched"] = True
+    return payload
+
+
 class RuntimeSchemaTests(unittest.TestCase):
     def test_missing_structured_field_is_rejected(self):
         payload = research_payload("bpr")
@@ -80,20 +88,50 @@ class RuntimeSchemaTests(unittest.TestCase):
             self.assertEqual(len(provider.calls), 2)
             self.assertFalse(provider.calls[0]["allow_web_search"])
             self.assertTrue(provider.calls[1]["allow_web_search"])
+            self.assertTrue(decision.web_searched)
+
+    def test_discovery_store_persists_proposal_and_outcome(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "discoveries.json"
+            store = DiscoveryStore(path)
+            decision = ResearchDecision.from_dict(web_research_payload("bpr"))
+            discovery_id = store.record_proposal(1, decision)
+            self.assertIsNotNone(discovery_id)
+
+            node = ExperimentNode(
+                1,
+                "candidate_bpr",
+                decision.hypothesis_id,
+                decision.family,
+                decision.action,
+                decision.parameters,
+                "success",
+                {"GAUC": 0.67, "nDCG@5": 0.54, "primary": 0.605},
+            )
+            store.record_outcome(1, decision, node, baseline_primary=0.6016)
+
+            reloaded = DiscoveryStore(path)
+            text = reloaded.prompt_text()
+            self.assertIn("family=bpr", text)
+            self.assertIn("primary=0.605", text)
+            self.assertIn("https://arxiv.org/abs/1205.2618", text)
 
 
 class PolicyTests(unittest.TestCase):
-    def test_both_families_required_before_stop(self):
+    def test_family_coverage_is_reported_not_required(self):
         state = RunState("run", "running", "now", 0.6016, meaningful_best=0.6016)
-        bpr = ExperimentNode(
-            1, "bpr", "h1", "bpr", "explore", {}, "success", {"primary": 0.601}
-        )
-        state.nodes.append(bpr)
-        self.assertEqual(required_family(state), "group_softmax")
+        cov = sorted(coverage_families())
+        for i, family in enumerate(cov[:-1], start=1):
+            state.nodes.append(
+                ExperimentNode(
+                    i, family, f"h{i}", family, "explore", {}, "success", {"primary": 0.601}
+                )
+            )
+        self.assertIsNone(required_family(state))
         self.assertFalse(coverage_complete(state))
         state.nodes.append(
             ExperimentNode(
-                2, "list", "h2", "group_softmax", "explore", {}, "success", {"primary": 0.602}
+                len(cov), cov[-1], "h_last", cov[-1], "explore", {}, "success", {"primary": 0.602}
             )
         )
         self.assertTrue(coverage_complete(state))
@@ -134,12 +172,10 @@ class PromptStructureTests(unittest.TestCase):
             state = RunState("run", "running", "now", 0.6016)
             roles.research(state, 1, None)
             prompt = provider.calls[0]["prompt"]
-            # The prefix (which includes method cards) should appear before state summary
             self.assertIn("METHOD CARD", prompt)
             self.assertIn("ROLE: Researcher", prompt)
             method_card_pos = prompt.find("METHOD CARD")
             role_pos = prompt.find("ROLE: Researcher")
-            # Method cards should appear before the role directive
             self.assertLess(method_card_pos, role_pos)
 
     def test_stable_prefix_is_identical_across_two_iterations(self):
@@ -202,12 +238,40 @@ class PromptStructureTests(unittest.TestCase):
             self.assertIn("ROLE: Researcher", prompt)
             self.assertNotIn("DATA CARD:", prompt)
 
+    def test_researcher_prompt_includes_persistent_discoveries(self):
+        provider = ScriptedProvider([research_payload("bpr")])
+        with tempfile.TemporaryDirectory() as directory:
+            discovery_path = Path(directory) / "discoveries.json"
+            store = DiscoveryStore(discovery_path)
+            store.record_proposal(1, ResearchDecision.from_dict(web_research_payload("bpr")))
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=1000,
+                discovery_store=store,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            roles.research(state, 2, "bpr")
+            prompt = provider.calls[0]["prompt"]
+            self.assertIn("PERSISTENT WEB DISCOVERIES:", prompt)
+            self.assertIn("https://arxiv.org/abs/1205.2618", prompt)
+
     def test_builder_prompt_requires_test_scores(self):
         """Verify Builder prompt includes test_scores requirement."""
         # This would need a builder response payload in practice
         # For now, we verify the BASE_CANDIDATE_CONTRACT contains test_scores
         self.assertIn("test_scores", BASE_CANDIDATE_CONTRACT)
         self.assertIn("Return `test_scores`", BASE_CANDIDATE_CONTRACT)
+
+    def test_builder_prompt_matches_sandbox_and_unittest_runner(self):
+        self.assertIn("Never call getattr", BASE_CANDIDATE_CONTRACT)
+        self.assertIn("never import from parent packages", BASE_CANDIDATE_CONTRACT)
+        self.assertIn("python -m unittest -v test_candidate.py", BASE_CANDIDATE_CONTRACT)
+        self.assertIn("unittest.TestCase", BASE_CANDIDATE_CONTRACT)
+        self.assertIn("Do not use pytest", BASE_CANDIDATE_CONTRACT)
+        self.assertIn("do not probe alternative constructors", BASE_CANDIDATE_CONTRACT)
 
     def test_builder_prompt_names_the_sampler_from_the_registry(self):
         """Verify Builder uses registry samplers (or falls back gracefully)."""
@@ -229,10 +293,84 @@ class PromptStructureTests(unittest.TestCase):
             decision = roles.research(state, 1, "bpr")
             roles.build(state, 1, decision)
             builder_prompt = provider.calls[1]["prompt"]
-            # Should mention the trusted sampler name or have fallback text
-            self.assertTrue(
-                "sample_bpr_pairs" in builder_prompt or "trusted sampler" in builder_prompt.lower()
+            self.assertIn(
+                "sample_bpr_pairs(users, labels, rng, negatives_per_positive)",
+                builder_prompt,
             )
+
+    def test_runtime_contract_cards_ground_fm_api(self):
+        prompt = runtime_contract_prompt("bpr")
+        self.assertIn("FMRanker", prompt)
+        self.assertIn("gradients(features, score_gradients)", prompt)
+        self.assertIn("apply_gradients(grad_v, grad_w, grad_b=0.0)", prompt)
+        self.assertIn("never call apply_gradients(grads, lr)", prompt)
+        self.assertIn("grad_v_p + grad_v_n", prompt)
+
+    def test_builder_prompt_includes_runtime_contracts_and_debugger_memory(self):
+        provider = ScriptedProvider([
+            {"candidate_id": "c1", "hypothesis_id": "h_bpr", "family": "bpr",
+             "code": "def run(c, p): pass", "tests": "pass", "parameters": parameters("bpr")}
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=10000,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            decision = ResearchDecision.from_dict(research_payload("bpr"))
+            roles.build(
+                state,
+                1,
+                decision,
+                debugger_memory="- iteration 1: never call apply_gradients(grads, lr)",
+            )
+            prompt = provider.calls[0]["prompt"]
+            self.assertIn("RUNTIME CONTRACTS:", prompt)
+            self.assertIn("DEBUGGER MEMORY FROM THIS RUN:", prompt)
+            self.assertIn("never call apply_gradients(grads, lr)", prompt)
+
+    def test_debugger_prompt_includes_runtime_contracts_and_memory(self):
+        provider = ScriptedProvider([
+            {
+                "preserve_hypothesis": True,
+                "diagnosis": "unpacked gradients",
+                "replacement_code": "def run(c, p): pass",
+                "replacement_tests": "pass",
+            }
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=10000,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            decision = ResearchDecision.from_dict(research_payload("bpr"))
+            roles.debug(
+                state,
+                1,
+                decision,
+                CandidateManifest(
+                    candidate_id="c1",
+                    hypothesis_id="h_bpr",
+                    family="bpr",
+                    code="bad code",
+                    tests="bad tests",
+                    parameters=parameters("bpr"),
+                ),
+                "ValueError from apply_gradients",
+                1,
+                debugger_memory="- iteration 1: unpack gradients before apply_gradients",
+            )
+            prompt = provider.calls[0]["prompt"]
+            self.assertIn("RUNTIME CONTRACTS:", prompt)
+            self.assertIn("DEBUGGER MEMORY FROM THIS RUN:", prompt)
+            self.assertIn("unpack gradients before apply_gradients", prompt)
 
     def test_schema_family_enum_follows_the_registry(self):
         """Verify schema family enums match family_names()."""
@@ -260,6 +398,42 @@ class PromptStructureTests(unittest.TestCase):
             # Feedback should appear as PREVIOUS ATTEMPT REJECTED block
             self.assertIn("PREVIOUS ATTEMPT REJECTED:", prompt)
             self.assertIn(feedback_text, prompt)
+
+    def test_role_sequence_writes_distinct_pass_files(self):
+        """Verify sequence parameter writes distinct pass files in passes/ without overwriting."""
+        provider = ScriptedProvider([
+            research_payload("bpr"),
+            research_payload("bpr"),
+            {"approved": False, "decision": "reject", "rationale": "first", "concerns": [], "next_focus": "fix"},
+            {"approved": True, "decision": "proceed", "rationale": "second", "concerns": [], "next_focus": "run"},
+            {"candidate_id": "c1", "hypothesis_id": "h_bpr", "family": "bpr",
+             "code": "def run(c, p): pass", "tests": "pass", "parameters": parameters("bpr")},
+            {"candidate_id": "c1", "hypothesis_id": "h_bpr", "family": "bpr",
+             "code": "def run(c, p): pass", "tests": "pass", "parameters": parameters("bpr")},
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=10000,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            d0 = roles.research(state, 1, "bpr", sequence=0)
+            d1 = roles.research(state, 1, "bpr", sequence=1)
+            self.assertTrue((audit.passes_dir / "001_researcher_0.json").is_file())
+            self.assertTrue((audit.passes_dir / "001_researcher_1.json").is_file())
+
+            roles.critic_preflight(state, 1, d0, sequence=0)
+            roles.critic_preflight(state, 1, d1, sequence=1)
+            self.assertTrue((audit.passes_dir / "001_critic_preflight_0.json").is_file())
+            self.assertTrue((audit.passes_dir / "001_critic_preflight_1.json").is_file())
+
+            roles.build(state, 1, d0, sequence=0)
+            roles.build(state, 1, d1, sequence=1)
+            self.assertTrue((audit.passes_dir / "001_builder_0.json").is_file())
+            self.assertTrue((audit.passes_dir / "001_builder_1.json").is_file())
 
 
 if __name__ == "__main__":

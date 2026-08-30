@@ -27,11 +27,31 @@ The loss is unchanged — this family may use either trusted sampler. What chang
 is the field set. `src.models.features.build_features(rows, spec)` returns one
 `int32` column per enabled group, already offset by `spec["field_offset"]`:
 
-```text
-extra   = build_features(context.train_x, spec)          # (n, g) int32
-train_x = concatenate([context.train_x, extra], axis=1)   # row width 5 -> 5 + g
-model   = FMRanker(context.field_dimension + feature_dimension(spec), embedding_dim=16, ...)
+Call it **once per split**, and `spec["split"]` must name the split whose rows you are
+passing. The builder cross-checks the row count against the trusted split and raises
+`ValueError: Split 'train' has 1141112 trusted rows but 124909 were passed` if they disagree —
+that is the error you get from scoring validation rows with `split="train"` still set.
+
+```python
+base = {"field_offset": context.field_dimension, **parameters}
+
+train_x = np.concatenate(
+    [context.train_x, build_features(context.train_x, {**base, "split": "train"})], axis=1
+)
+valid_x = np.concatenate(
+    [context.valid_x, build_features(context.valid_x, {**base, "split": "valid"})], axis=1
+)
+# only when context.test_x is not None:
+test_x = np.concatenate(
+    [context.test_x, build_features(context.test_x, {**base, "split": "test"})], axis=1
+)
+
+model = FMRanker(context.field_dimension + feature_dimension(spec), embedding_dim=16, ...)
 ```
+
+Row width goes from 5 to `5 + g`. Train rows are scored from strictly earlier days; valid and
+test rows are scored from all of train (see the time-respecting rule below), so the split label
+changes the statistics, not just the length check.
 
 Six groups are available, each occupying 9 slots (8 quantile buckets computed on
 train values only, plus a reserved slot for "no history / unknown"):

@@ -1,0 +1,22 @@
+{
+  "best": {
+    "artifact_path": "runs/20260829T165457850194Z_baseline/artifacts/003_official_fm_seed0/model.npz",
+    "experiment_id": "official_fm_seed0",
+    "iteration": 3,
+    "metrics": {
+      "GAUC": 0.6671333909034729,
+      "nDCG@5": 0.5358057022094727,
+      "primary": 0.6014695167541504,
+      "rows": 124909.0,
+      "users": 22377.0
+    }
+  },
+  "config_name": "kuairand-pure-baseline-ladder",
+  "iterations": 3,
+  "llm_tokens": 0,
+  "manual_interventions": 0,
+  "run_id": "20260829T165457850194Z_baseline",
+  "stop_reason": "iteration_budget_reached",
+  "successful_iterations": 3,
+  "wall_clock_seconds": 111.07800000003772
+}

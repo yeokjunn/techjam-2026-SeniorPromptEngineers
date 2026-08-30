@@ -1,0 +1,42 @@
+{
+  "mode": "research",
+  "name": "kuairand-pure-deepseek-2iter",
+  "data_dir": "data/KuaiRand-Pure/data",
+  "run_root": "runs",
+  "generated_root": "generated_experiments",
+  "method_catalog": "research/methods",
+  "official_validation_baseline": 0.6016,
+  "baseline_config": "configs/baseline.json",
+  "data_card_path": null,
+  "llm": {
+    "provider": "openai",
+    "model": "deepseek-chat",
+    "reasoning_effort": "low",
+    "verbosity": "low",
+    "store": false,
+    "max_output_tokens": 32000,
+    "max_tool_calls": 2,
+    "max_total_tokens": 400000,
+    "request_timeout_seconds": 300,
+    "max_retries": 3
+  },
+  "budgets": {
+    "max_iterations": 5,
+    "max_training_attempts": 5,
+    "max_proposals": 15,
+    "max_wall_clock_seconds": 10800,
+    "experiment_timeout_seconds": 900,
+    "test_timeout_seconds": 60,
+    "max_debug_repairs": 2,
+    "max_consecutive_harness_errors": 3,
+    "max_role_reprompts": 3
+  },
+  "convergence": {
+    "epsilon": 0.002,
+    "patience": 3
+  },
+  "replication_seeds": [
+    1,
+    2
+  ]
+}

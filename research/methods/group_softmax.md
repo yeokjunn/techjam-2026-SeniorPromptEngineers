@@ -27,6 +27,35 @@ loss = -log_softmax(logits)[0]
 The score gradient is `softmax(logits) - one_hot(positive)`, divided by the
 temperature.
 
+`src.models.sampling.sample_softmax_groups` is mandatory, and it returns **row indices that are
+already grouped**:
+
+```text
+positives, negatives = sample_softmax_groups(train_users, train_y, rng, negatives_per_group)
+
+positives   int64, shape (n_groups,)                       one positive row per group
+negatives   int64, shape (n_groups, negatives_per_group)   ALREADY 2-D — do not reshape it
+```
+
+`negatives` is returned pre-shaped by `np.stack`, so calling `.reshape(-1, K)` on it is both
+unnecessary and wrong: the flat size is `n_groups * negatives_per_group`, which only divides
+cleanly by coincidence and raises `ValueError: cannot reshape array of size N` otherwise.
+Row `k` of `negatives` holds the `K` negatives belonging to `positives[k]`, same user.
+
+Gather features with `context.train_x[positives]` -> `(n_groups, n_fields)` and
+`context.train_x[negatives]` -> `(n_groups, negatives_per_group, n_fields)`. Group `k`'s logits
+are `positive_score[k]` concatenated with `negative_scores[k]`, giving `K + 1` entries.
+
+Three properties to design around rather than assert against:
+
+- Users without **both** a positive and a negative row are skipped entirely, so `positives`
+  does not cover every user, nor every positive row. A test asserting full coverage will fail.
+- When a user's negative pool is smaller than `negatives_per_group`, negatives are drawn with
+  replacement, so a group can repeat an index; this is the duplicate-negative failure mode
+  listed below, not a bug in the sampler.
+- With no eligible user at all, `positives` is `(0,)` and `negatives` is
+  `(0, negatives_per_group)`. Guard the division when averaging a loss over groups.
+
 ## Safe initial search space
 
 - Same-user negatives only

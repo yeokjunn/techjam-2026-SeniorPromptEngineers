@@ -29,16 +29,76 @@ the official evaluator, split, label, budgets, or reference files. Return only t
 structured output. Evidence must be attributable to a supplied method card or primary source."""
 
 
+# The organizers measured these; they are not guesses (kuairand-starter-kit/README.en.md:120-170).
+# Lives in the cacheable stable prefix, so it is charged once per run, not once per call.
+SEARCH_SPACE_GUIDANCE = """SEARCH-SPACE EVIDENCE (measured by the organizers; do not re-derive):
+
+Already tried and yielding nothing -- do not spend an iteration re-testing these:
+- More static feature fields: primary 0.5940 with all 13 CWM fields vs 0.5950 with the 5 -- no
+  gain. The user_id x video_id cross already absorbs most of the learnable signal.
+- More capacity: embedding k = 8/16/32 gives 0.5895/0.5902/0.5887 -- flat. Keep k = 16.
+- First-order terms on purely user-side features contribute EXACTLY 0, because ranking is within
+  a user and a constant does not reorder that user's list. User-side signal can only pay off
+  through cross terms with item-side features.
+
+Untested directions, in the organizers' own order of likelihood, mapped to registered families:
+1. Change the loss to a ranking objective -- families `bpr`, `group_softmax`. Rated most likely.
+2. User-behaviour sequences (DIN/SIM-style interest modelling) -- family `history_features`.
+   The kit calls this "a completely blank direction": the official features use no behavioural
+   history at all, and each user has hundreds to thousands of train interactions.
+3. Multi-objective auxiliary signals (is_click, is_like, play_time_ms) supporting long_view --
+   family `multi_task`.
+
+The bottleneck is NOT features-as-more-columns and NOT capacity. Prefer a direction this run has
+not yet tried over another point on a grid you have already sampled, unless the recorded evidence
+specifically justifies repeating it."""
+
+
 BASE_CANDIDATE_CONTRACT = """candidate.py must define `run(context, parameters) -> CandidateOutput`.
 Use only numpy, collections, math, time, src.models.fm_core.FMRanker, src.models.sampling,
 and src.experiments.contracts.CandidateOutput. The context provides train_x, train_y, train_users,
 valid_x, valid_users, field_dimension, and evaluate_validation(scores).
+Build the model with src.models.fm_core.FMRanker. Do NOT re-implement the factorization machine:
+it gathers sparse field indices, so a dense one-hot formulation over ~40k fields overflows to NaN
+and, even when it converges, breaks attribution against the official baseline. Its entire API is:
+
+    model = FMRanker(dimension, embedding_dim=16, learning_rate=..., l2=1e-6, seed=...)
+    scores, embeddings, summed = model.logits(features)   # features: int32 (n, n_fields) indices
+    grad_v, grad_w, grad_b = model.gradients(features, score_gradients)  # d(loss)/d(score), (n,)
+    model.apply_gradients(grad_v, grad_w, grad_b)         # Adam + L2 are applied inside
+    scores = model.predict(features)                      # (n,) chunked, for validation/test
+    state = model.state_dict()                            # {"V", "W", "b"} COPIES -> checkpoint_state
+    model.load_state_dict(state)                          # restore, e.g. best epoch on early stop
+
+state_dict() returns copies, not views, so writing into them does not change the model: to
+restore a checkpoint call load_state_dict(state). Do not hand-roll the restore -- "b" is a
+0-dimensional array, so `current["b"][:] = value` raises IndexError.
+
+Parameters are model.V (dimension, embedding_dim), model.W (dimension,) and model.b. There is no
+model.w0, model.w or model.v. Express your loss as a per-row score gradient and hand it to
+gradients()/apply_gradients(); never hand-roll the optimizer or touch the arrays directly.
 Do not import evaluators or perform file, network, process, or dynamic-code operations.
 The trusted worker writes checkpoints and computes final metrics.
-Return finite validation scores, a dict of numpy checkpoint arrays, a training trace, and diagnostics.
+Return CandidateOutput with EXACTLY these field names -- there are no others, and a wrong name
+is a TypeError that costs the iteration:
+
+    CandidateOutput(
+        validation_scores=...,   # np.ndarray (n_valid,), finite
+        checkpoint_state=...,    # dict[str, np.ndarray], e.g. model.state_dict()
+        training_trace=[...],    # list[dict] -- NOT "train_trace"
+        diagnostics={...},       # dict; put extra numbers here, NOT as new arguments
+        test_scores=...,         # np.ndarray (n_test,) or None
+    )
+
+There is no valid_primary, metrics or score argument: per-epoch numbers belong inside
+training_trace, and anything else belongs in diagnostics.
 Return `test_scores` — one finite score per row of `context.test_x`, same row order, from the same
 trained model. Return `test_scores=None` only when `context.test_x` is None.
-Tests must exercise same-user sampling/group construction without loading the real dataset."""
+Tests must exercise same-user sampling/group construction without loading the real dataset.
+test_candidate.py is run with `python -m unittest`, which discovers ONLY subclasses of
+unittest.TestCase: put every check in a `class X(unittest.TestCase)` with `def test_*`
+methods. Bare pytest-style `def test_...()` functions are collected as zero tests and the
+iteration fails."""
 
 
 class ResearchRoles:
@@ -78,6 +138,8 @@ class ResearchRoles:
         method_cards = self.catalog.prompt_text(method_card_key)
         data_card = self._data_card_text(state)
         prefix = f"""{BASE_INSTRUCTIONS}
+
+{SEARCH_SPACE_GUIDANCE}
 
 {BASE_CANDIDATE_CONTRACT}
 
@@ -160,7 +222,8 @@ class ResearchRoles:
             else f"Choose one registered family ({', '.join(sorted(family_names()))}) based on evidence and the experiment history."
         )
         volatile_block = f"""ROLE: Researcher
-Propose one controlled ranking-loss experiment. {family_rule}
+Propose one controlled experiment anywhere in the algorithmic stack -- the loss, the
+feature set, or the training objective. {family_rule}
 Use the curated cards first. Set needs_web_search=true only if these cards cannot support the decision.
 All parameter fields in the schema must be present; use null only for parameters irrelevant to the family.
 

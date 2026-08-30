@@ -38,7 +38,7 @@ def decision_payload(family: str) -> dict:
 
 class FamilyRegistryTests(unittest.TestCase):
     def test_family_names_expose_the_registered_families(self):
-        expected = {"bpr", "group_softmax", "history_features", "multi_task"}
+        expected = {"bpr", "group_softmax", "history_features", "multi_task", "din"}
         self.assertEqual(family_names(), frozenset(expected))
         self.assertEqual(family_names(), frozenset(FAMILIES))
 

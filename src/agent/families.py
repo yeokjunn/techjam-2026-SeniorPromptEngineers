@@ -53,6 +53,8 @@ TRUSTED_CALL_MODULES = {
     "sample_softmax_groups": "src.models.sampling",
     "build_features": "src.models.features",
     "build_aux_labels": "src.models.features",
+    "run_din_trainer": "src.models.din_trainer",
+    "build_user_sequences": "src.models.sequence",
 }
 
 # Literals, deliberately not imported from ``src.models.features``: ``types.py`` imports this
@@ -137,6 +139,48 @@ FAMILIES: dict[str, Family] = {
             **{f"use_{head}": True for head in AUX_HEADS},
         },
         required_calls=(_EITHER_SAMPLER, ("build_aux_labels",)),
+    ),
+    # DIN target-conditional attention over a user's item-id history (the
+    # committee's #2 unexplored direction). The query is the candidate item, so
+    # two candidates for the same user get different attention weights -> the
+    # user-side signal survives the within-user first-order=0 trap (the one
+    # mechanism the kit contract blesses). All torch math lives in the trusted
+    # ``run_din_trainer`` primitive; the candidate is a thin wrapper. ``k`` stays
+    # pinned at 16 (the FM-block width); ``embedding_dim`` is the separate
+    # item-history embedding width (capacity is a measured dead end for FM, but
+    # a small attention tower is a different mechanism). epochs caps at 20 (CPU
+    # training inside the 900s subprocess timeout).
+    "din": Family(
+        name="din",
+        method_card="research/methods/din.md",
+        trusted_sampler="sample_softmax_groups",
+        grid={
+            **SHARED_GRID,
+            "epochs": range(1, 21),
+            "batch_size": (2048, 4096),
+            "embedding_dim": (16, 32),
+            "seq_len": (20, 50),
+            "attention_dim": (16, 32),
+            "dropout": (0.0, 0.2, 0.5),
+            "aux_weight": (0.1, 0.3, 1.0),
+            "use_is_click": (True, False),
+            "use_play_time": (True, False),
+            "loss_variant": ("uniform", "positives_weighted", "lambdarank_top5"),
+        },
+        defaults={
+            **SHARED_DEFAULTS,
+            "epochs": 20,
+            "batch_size": 2048,
+            "embedding_dim": 32,
+            "seq_len": 50,
+            "attention_dim": 32,
+            "dropout": 0.2,
+            "aux_weight": 0.1,
+            "use_is_click": True,
+            "use_play_time": False,
+            "loss_variant": "uniform",
+        },
+        required_calls=(("run_din_trainer",),),
     ),
 }
 

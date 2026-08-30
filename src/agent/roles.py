@@ -33,11 +33,17 @@ Evidence must be attributable to a supplied method card or primary source."""
 
 BASE_CANDIDATE_CONTRACT = """candidate.py must define `run(context, parameters) -> CandidateOutput`.
 Use only numpy, collections, math, time, src.models.fm_core.FMRanker, src.models.sampling,
-and src.experiments.contracts.CandidateOutput. The context provides train_x, train_y, train_users,
-valid_x, valid_users, field_dimension, and evaluate_validation(scores).
+src.models.din_trainer.run_din_trainer, src.models.sequence.build_user_sequences,
+src.models.features, and src.experiments.contracts.CandidateOutput. The context provides
+train_x, train_y, train_users, valid_x, valid_users, field_dimension, and
+evaluate_validation(scores).
+evaluate_validation(scores) returns a dict with EXACTLY these keys (capitalized):
+{'GAUC': float, 'nDCG@5': float, 'primary': float}. Access them as metrics['GAUC'],
+metrics['nDCG@5'], metrics['primary']. NEVER use lowercase 'gauc' or 'ndcg'.
 Do not import evaluators or perform file, network, process, or dynamic-code operations.
 The trusted worker writes checkpoints and computes final metrics.
-Return finite validation scores, a dict of numpy checkpoint arrays, a training trace, and diagnostics.
+Return finite validation scores (1-D np.float32 array), a dict of numpy checkpoint arrays
+(dict[str, np.ndarray]), a training trace (LIST of dicts, not a dict), and diagnostics (dict).
 Return `test_scores` — one finite score per row of `context.test_x`, same row order, from the same
 trained model. Return `test_scores=None` only when `context.test_x` is None.
 Tests must exercise same-user sampling/group construction without loading the real dataset."""
@@ -256,12 +262,17 @@ PROPOSAL:
         volatile_block = f"""ROLE: Debugger
 Repair the candidate code/tests for the supplied validation or execution error. Preserve the
 approved hypothesis, family, parameters, and candidate contract. Do not broaden permissions.
+The replacement code must use the exact same trusted primitive signatures, FMRanker attribute
+names (V, W, b — capitalized), evaluate_validation keys (GAUC, nDCG@5, primary — capitalized),
+and CandidateOutput field types (training_trace is a list, checkpoint_state is a dict) documented
+in the candidate contract below.
 
 HYPOTHESIS: {json.dumps(decision.to_dict(), indent=2, sort_keys=True)}
 CODE: {manifest.code}
 TESTS: {manifest.tests}
 ERROR: {error}
 """
+        volatile_block += f"\n\n{schema_fields_note('candidate_manifest')}"
         volatile_block += f"\n\n{schema_fields_note('debug_decision')}"
         prompt = f"{self._stable_prefix(state, decision.family)}\n\n{volatile_block}"
         result = self._call(

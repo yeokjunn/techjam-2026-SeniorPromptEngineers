@@ -268,7 +268,29 @@ class SchemaNormalizationTests(unittest.TestCase):
             "research_decision",
             {"parameters": {"embedding_dim": 16, "lr": 0.001, "aux_heads": ["click"], "epochs": 5}},
         )
-        self.assertEqual(data["parameters"], {"k": 16, "learning_rate": 0.001, "epochs": 5})
+        # ``embedding_dim`` is now its own DIN knob (no longer aliased to ``k``),
+        # and ``aux_heads`` is hallucinated junk not in any family grid -> dropped.
+        self.assertEqual(
+            data["parameters"],
+            {"embedding_dim": 16, "learning_rate": 0.001, "epochs": 5},
+        )
+
+    def test_family_grid_keys_are_preserved_through_normalization(self):
+        # Family-specific grid keys (smoothing/scheme/use_*/aux_weight/seq_len/...)
+        # must survive the normalization pass so sanitize_parameters sees the
+        # Researcher's chosen value rather than the default. This is the fix for
+        # the parameter-channel bug that kept history_features/multi_task from
+        # ever running.
+        data = _normalize_schema_output(
+            "research_decision",
+            {"parameters": {"smoothing": 100.0, "scheme": "prior_days", "seq_len": 50,
+                            "aux_weight": 0.3, "use_is_click": True, "epochs": 5}},
+        )
+        for key in ("smoothing", "scheme", "seq_len", "aux_weight", "use_is_click", "epochs"):
+            self.assertIn(key, data["parameters"], f"{key} was stripped")
+        self.assertEqual(data["parameters"]["smoothing"], 100.0)
+        self.assertEqual(data["parameters"]["seq_len"], 50)
+        self.assertIs(data["parameters"]["use_is_click"], True)
 
     def test_missing_hypothesis_id_derived_deterministically(self):
         payload = {

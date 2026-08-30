@@ -35,6 +35,8 @@ ALLOWED_IMPORTS = {
     "src.models.features",
     "src.models.fm_core",
     "src.models.sampling",
+    "src.models.sequence",
+    "src.models.din_trainer",
     "src.experiments.contracts",
 }
 TEST_ONLY_IMPORTS = {"unittest", "candidate"}

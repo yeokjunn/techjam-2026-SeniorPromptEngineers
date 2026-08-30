@@ -38,7 +38,7 @@
   },
   "budgets": {
     "max_iterations": 20,
-    "max_wall_clock_seconds": 4320,
+    "max_wall_clock_seconds": 8640,
     "experiment_timeout_seconds": 432,
     "test_timeout_seconds": 60,
     "max_debug_repairs": 2

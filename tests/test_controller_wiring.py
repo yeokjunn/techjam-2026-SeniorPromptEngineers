@@ -303,15 +303,15 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
 
         # --- an unregistered family is the brief's ValueError, verbatim -------
         with self.assertRaises(ValueError) as unknown:
-            policy.sanitize_parameters("history_features", BPR_RAW)
-        self.assertEqual(str(unknown.exception), "Unsupported family: history_features")
+            policy.sanitize_parameters("unregistered_family", BPR_RAW)
+        self.assertEqual(str(unknown.exception), "Unsupported family: unregistered_family")
         # The lookup comes first, so the family — not an incidental bound — is
         # what the re-prompt is told about. The old `if/elif/else` chain reached
         # its `else` only after the shared checks, so this said "epochs must be
         # between 1 and 40." for a family that does not exist.
         with self.assertRaises(ValueError) as unknown_first:
-            policy.sanitize_parameters("history_features", {**BPR_RAW, "epochs": 99})
-        self.assertEqual(str(unknown_first.exception), "Unsupported family: history_features")
+            policy.sanitize_parameters("unregistered_family", {**BPR_RAW, "epochs": 99})
+        self.assertEqual(str(unknown_first.exception), "Unsupported family: unregistered_family")
 
         # --- with no grid on the entry, today's bounds are the live path ------
         # `Family` has no `grid` field yet, so this is what actually runs until
@@ -468,7 +468,15 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
         def third_family_does_not_break_the_stop_rule(source: str) -> None:
             """A family E registers must leave `should_stop` satisfiable."""
             with self.subTest(coverage_source=source):
-                with patch.dict(families.FAMILIES, {"history_features": third}, clear=False):
+                with patch.dict(
+                    families.FAMILIES,
+                    {
+                        "bpr": families.FAMILIES["bpr"],
+                        "group_softmax": families.FAMILIES["group_softmax"],
+                        "history_features": third,
+                    },
+                    clear=True,
+                ):
                     self.assertEqual(
                         sorted(families.family_names()),
                         ["bpr", "group_softmax", "history_features"],

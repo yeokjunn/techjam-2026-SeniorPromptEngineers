@@ -55,6 +55,13 @@ TRUSTED_CALL_MODULES = {
     "build_aux_labels": "src.models.features",
 }
 
+TRUSTED_CALL_SIGNATURES = {
+    "sample_bpr_pairs": "(users, labels, rng, negatives_per_positive)",
+    "sample_softmax_groups": "(users, labels, rng, negatives_per_group)",
+    "build_features": "(rows, spec)",
+    "build_aux_labels": "(rows, spec)",
+}
+
 # Literals, deliberately not imported from ``src.models.features``: ``types.py`` imports this
 # module, so this import must stay light (no numpy). ``tests/test_features.py`` pins them equal
 # to the feature module's own tuples, so the duplication cannot drift silently.
@@ -182,7 +189,10 @@ def builder_brief(name: str) -> str:
     entry = FAMILIES[name]
     lines = []
     for group in required_call_groups(name):
-        rendered = ", ".join(f"{_qualified(call)}()" for call in group)
+        rendered = ", ".join(
+            f"{_qualified(call)}{TRUSTED_CALL_SIGNATURES.get(call, '()')}"
+            for call in group
+        )
         if len(group) == 1:
             lines.append(f"You must call {rendered}.")
         else:

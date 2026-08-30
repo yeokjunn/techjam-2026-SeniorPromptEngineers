@@ -54,6 +54,112 @@ FAMILY_ENUM = sorted(family_names())
 
 
 SCHEMAS: dict[str, dict[str, Any]] = {
+    "eda_research_plan": {
+        "type": "object",
+        "properties": {
+            "objective": {"type": "string", "maxLength": 260},
+            "questions": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 220},
+                "maxItems": 4,
+            },
+            "feature_hypotheses": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 240},
+                "maxItems": 4,
+            },
+            "required_inputs": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 160},
+                "maxItems": 4,
+            },
+            "leakage_risks": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 220},
+                "maxItems": 4,
+            },
+            "expected_artifacts": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 180},
+                "maxItems": 4,
+            },
+        },
+        "required": [
+            "objective",
+            "questions",
+            "feature_hypotheses",
+            "required_inputs",
+            "leakage_risks",
+            "expected_artifacts",
+        ],
+        "additionalProperties": False,
+    },
+    "eda_report": {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string", "maxLength": 360},
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "maxLength": 80},
+                        "observation": {"type": "string", "maxLength": 220},
+                        "implication": {"type": "string", "maxLength": 220},
+                        "evidence": {"type": "string", "maxLength": 180},
+                        "leakage_safe": {"type": "boolean"},
+                    },
+                    "required": [
+                        "title",
+                        "observation",
+                        "implication",
+                        "evidence",
+                        "leakage_safe",
+                    ],
+                    "additionalProperties": False,
+                },
+                "maxItems": 3,
+            },
+            "feature_candidates": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "maxLength": 80},
+                        "description": {"type": "string", "maxLength": 220},
+                        "family": {"type": "string", "maxLength": 40},
+                        "expected_impact": {"type": "string", "maxLength": 160},
+                        "implementation_scope": {"type": "string", "maxLength": 180},
+                        "leakage_risk": {"type": "string", "maxLength": 180},
+                    },
+                    "required": [
+                        "name",
+                        "description",
+                        "family",
+                        "expected_impact",
+                        "implementation_scope",
+                        "leakage_risk",
+                    ],
+                    "additionalProperties": False,
+                },
+                "maxItems": 3,
+            },
+            "recommended_next_focus": {"type": "string", "maxLength": 180},
+            "ui_notes": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 160},
+                "maxItems": 3,
+            },
+        },
+        "required": [
+            "summary",
+            "findings",
+            "feature_candidates",
+            "recommended_next_focus",
+            "ui_notes",
+        ],
+        "additionalProperties": False,
+    },
     "research_decision": {
         "type": "object",
         "properties": {
@@ -167,6 +273,8 @@ class LLMProvider(Protocol):
         prompt: str,
         schema_name: str,
         allow_web_search: bool = False,
+        max_output_tokens: int | None = None,
+        max_retries: int | None = None,
     ) -> LLMCallResult:
         ...
 
@@ -199,6 +307,37 @@ def _extract_sources(output: Any) -> tuple[list[str], list[dict[str, str]]]:
     return tool_calls, list(unique.values())
 
 
+def _parse_json(text: str) -> Any:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
+            cleaned = "\n".join(lines[1:-1]).strip()
+        else:
+            if cleaned.startswith("```json"):
+                cleaned = cleaned[7:].strip()
+            elif cleaned.startswith("```"):
+                cleaned = cleaned[3:].strip()
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3].strip()
+    
+    if not (cleaned.startswith("{") or cleaned.startswith("[")):
+        start = -1
+        for i, char in enumerate(cleaned):
+            if char in ("{", "["):
+                start = i
+                break
+        end = -1
+        for i, char in enumerate(reversed(cleaned)):
+            if char in ("}", "]"):
+                end = len(cleaned) - i
+                break
+        if start != -1 and end != -1 and start < end:
+            cleaned = cleaned[start:end]
+            
+    return json.loads(cleaned)
+
+
 class OpenAIResponsesProvider:
     def __init__(self, config: dict[str, Any]):
         load_project_environment()
@@ -215,7 +354,7 @@ class OpenAIResponsesProvider:
             )
         except ImportError as exc:
             raise RuntimeError("Install dependencies with: python -m pip install -r requirements.txt") from exc
-        self.model = str(config.get("model", "gpt-5.5"))
+        self.model = str(config.get("model", "gpt-5-nano"))
         self.reasoning_effort = str(config.get("reasoning_effort", "medium"))
         self.verbosity = str(config.get("verbosity", "low"))
         self.store = bool(config.get("store", False))
@@ -226,6 +365,7 @@ class OpenAIResponsesProvider:
         self._status_error = APIStatusError
         timeout = float(config.get("request_timeout_seconds", 180))
         self.client = OpenAI(api_key=api_key, timeout=timeout, max_retries=0)
+        self.supports_web_search = True
 
     def _retry_delay(self, error: Exception, attempt: int) -> float | None:
         retryable = isinstance(error, self._retryable)
@@ -259,6 +399,8 @@ class OpenAIResponsesProvider:
         prompt: str,
         schema_name: str,
         allow_web_search: bool = False,
+        max_output_tokens: int | None = None,
+        max_retries: int | None = None,
     ) -> LLMCallResult:
         if schema_name not in SCHEMAS:
             raise ValueError(f"Unknown structured-output schema: {schema_name}")
@@ -278,7 +420,7 @@ class OpenAIResponsesProvider:
                 },
             },
             "store": self.store,
-            "max_output_tokens": self.max_output_tokens,
+            "max_output_tokens": int(max_output_tokens or self.max_output_tokens),
             "prompt_cache_key": f"kuairand-research-{role}",
         }
         if tools:
@@ -291,7 +433,7 @@ class OpenAIResponsesProvider:
             )
 
         started = time.monotonic()
-        max_attempts = max(1, self.max_retries)
+        max_attempts = max(1, int(max_retries or self.max_retries))
         response = None
         retries = 0
         for attempt in range(max_attempts):
@@ -329,7 +471,7 @@ class OpenAIResponsesProvider:
             raise IncompleteResponse("OpenAI did not return a response.")
         output_text = getattr(response, "output_text", "") or ""
         try:
-            data = json.loads(output_text)
+            data = _parse_json(output_text)
         except json.JSONDecodeError as exc:
             raise RoleOutputInvalid(
                 f"OpenAI response {getattr(response, 'id', '')} contained invalid JSON."
@@ -357,12 +499,238 @@ class OpenAIResponsesProvider:
         )
 
 
+def _chat_base_url(value: str) -> str:
+    """Accept either an API base URL or a full Chat Completions endpoint."""
+    base_url = value.strip().rstrip("/")
+    suffix = "/chat/completions"
+    if base_url.endswith(suffix):
+        base_url = base_url[: -len(suffix)]
+    return base_url
+
+
+class OpenAICompatibleChatProvider:
+    """Structured-output adapter for GLM and other OpenAI-compatible chat APIs."""
+
+    def __init__(self, config: dict[str, Any]):
+        load_project_environment()
+        self.api_key_env = str(config.get("api_key_env", "OPENAI_API_KEY"))
+        api_key = os.environ.get(self.api_key_env)
+        if not api_key:
+            raise RuntimeError(
+                f"{self.api_key_env} is required for an OpenAI-compatible research run."
+            )
+
+        base_url_env = str(config.get("base_url_env", "OPENAI_BASE_URL"))
+        configured_url = config.get("base_url", config.get("endpoint"))
+        base_url = _chat_base_url(str(configured_url or os.environ.get(base_url_env, "")))
+        if not base_url:
+            raise RuntimeError(
+                "Set llm.base_url (or llm.endpoint) in the config, or set "
+                f"{base_url_env}, for an OpenAI-compatible research run."
+            )
+
+        try:
+            from jsonschema import ValidationError, validate
+            from openai import (
+                APIConnectionError,
+                APIStatusError,
+                APITimeoutError,
+                OpenAI,
+                RateLimitError,
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                "Install dependencies with: python -m pip install -r requirements.txt"
+            ) from exc
+
+        self.model = str(
+            config.get("model")
+            or os.environ.get("GLM_MODEL")
+            or os.environ.get("OPENAI_MODEL")
+            or "glm-5.3"
+        )
+        self.provider_name = str(config.get("provider", "openai_compatible"))
+        self.max_output_tokens = int(config.get("max_output_tokens", 24000))
+        self.max_retries = int(config.get("max_retries", RETRY_ATTEMPTS))
+        self.temperature = config.get("temperature")
+        self.role_temperatures = dict(config.get("role_temperatures") or {})
+        self.thinking = config.get("thinking")
+        self.response_format = config.get("response_format")
+        if self.response_format is None and bool(config.get("json_mode", False)):
+            self.response_format = {"type": "json_object"}
+        self.web_search_tool = config.get("web_search_tool")
+        self.supports_web_search = isinstance(self.web_search_tool, dict)
+        self._validate = validate
+        self._validation_error = ValidationError
+        self._retryable = (APIConnectionError, APITimeoutError, RateLimitError)
+        self._status_error = APIStatusError
+        timeout = float(config.get("request_timeout_seconds", 180))
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=0,
+        )
+
+    def _retry_delay(self, error: Exception, attempt: int) -> float | None:
+        retryable = isinstance(error, self._retryable)
+        if isinstance(error, self._status_error):
+            status = getattr(error, "status_code", None)
+            retryable = status in RETRYABLE_STATUS_CODES or (
+                isinstance(status, int) and status >= 500
+            )
+        if not retryable:
+            return None
+
+        delay = min(BACKOFF_MAX_SECONDS, BACKOFF_INITIAL_SECONDS * (2**attempt))
+        response = getattr(error, "response", None)
+        headers = getattr(response, "headers", None)
+        retry_after = headers.get("retry-after") if headers is not None else None
+        if retry_after is not None:
+            try:
+                delay = max(0.0, min(BACKOFF_MAX_SECONDS, float(retry_after)))
+            except (TypeError, ValueError):
+                pass
+        return delay
+
+    def complete(
+        self,
+        *,
+        role: str,
+        instructions: str,
+        prompt: str,
+        schema_name: str,
+        allow_web_search: bool = False,
+        max_output_tokens: int | None = None,
+        max_retries: int | None = None,
+    ) -> LLMCallResult:
+        if schema_name not in SCHEMAS:
+            raise ValueError(f"Unknown structured-output schema: {schema_name}")
+        if allow_web_search and not isinstance(self.web_search_tool, dict):
+            raise LLMError(
+                f"Provider {self.provider_name!r} has no portable web-search tool. "
+                "Configure llm.web_search_tool if this endpoint supports one."
+            )
+
+        schema = SCHEMAS[schema_name]
+        schema_instruction = (
+            "Return only one valid JSON object matching this JSON Schema exactly. "
+            "Do not wrap it in Markdown.\n"
+            + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+        )
+        request: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": f"{instructions}\n\n{schema_instruction}"},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+            "max_tokens": int(max_output_tokens or self.max_output_tokens),
+        }
+        if isinstance(self.response_format, dict):
+            request["response_format"] = self.response_format
+        temperature = self.role_temperatures.get(role, self.temperature)
+        if temperature is not None:
+            request["temperature"] = float(temperature)
+        extra_body: dict[str, Any] = {}
+        if self.thinking is not None:
+            thinking_value = str(self.thinking).lower()
+            if isinstance(self.thinking, dict):
+                extra_body["thinking"] = self.thinking
+            else:
+                effort = thinking_value if thinking_value in {"low", "high", "max"} else "low"
+                extra_body["thinking"] = {"type": "enabled"}
+                extra_body["reasoning_effort"] = effort
+        if extra_body:
+            request["extra_body"] = extra_body
+        if allow_web_search:
+            request["tools"] = [self.web_search_tool]
+
+        started = time.monotonic()
+        max_attempts = max(1, int(max_retries or self.max_retries))
+        response = None
+        output_text = ""
+        retries = 0
+        for attempt in range(max_attempts):
+            try:
+                response = self.client.chat.completions.create(**request)
+            except Exception as exc:
+                delay = self._retry_delay(exc, attempt)
+                if delay is None or attempt + 1 >= max_attempts:
+                    raise
+                time.sleep(delay)
+                retries += 1
+                continue
+
+            choices = getattr(response, "choices", None) or []
+            message = getattr(choices[0], "message", None) if choices else None
+            output_text = str(getattr(message, "content", "") or "")
+            if output_text:
+                break
+            error = IncompleteResponse(
+                f"{self.provider_name} response {getattr(response, 'id', '')} "
+                "contained no output text."
+            )
+            if attempt + 1 >= max_attempts:
+                raise error
+            time.sleep(min(BACKOFF_MAX_SECONDS, BACKOFF_INITIAL_SECONDS * (2**attempt)))
+            retries += 1
+
+        if response is None:
+            raise IncompleteResponse(f"{self.provider_name} did not return a response.")
+        try:
+            data = _parse_json(output_text)
+        except json.JSONDecodeError as exc:
+            raise RoleOutputInvalid(
+                f"{self.provider_name} response {getattr(response, 'id', '')} "
+                "contained invalid JSON."
+            ) from exc
+        try:
+            self._validate(instance=data, schema=schema)
+        except self._validation_error as exc:
+            raise RoleOutputInvalid(
+                f"{self.provider_name} response {getattr(response, 'id', '')} "
+                f"failed schema {schema_name!r}: {exc.message}"
+            ) from exc
+
+        usage_obj = _to_plain(getattr(response, "usage", None)) or {}
+        input_details = usage_obj.get("prompt_tokens_details", {}) or {}
+        web_results = _to_plain(getattr(response, "web_search", None)) or []
+        sources = [
+            {
+                "title": str(item.get("title", item.get("link", ""))),
+                "url": str(item.get("link", "")),
+            }
+            for item in web_results
+            if isinstance(item, dict) and item.get("link")
+        ]
+        usage = TokenUsage(
+            input_tokens=int(usage_obj.get("prompt_tokens", 0)),
+            output_tokens=int(usage_obj.get("completion_tokens", 0)),
+            total_tokens=int(usage_obj.get("total_tokens", 0)),
+            cached_tokens=int(input_details.get("cached_tokens", 0)),
+            web_search_calls=int(bool(allow_web_search and self.web_search_tool)),
+        )
+        return LLMCallResult(
+            data=data,
+            response_id=str(getattr(response, "id", "")),
+            model=str(getattr(response, "model", self.model)),
+            role=role,
+            latency_seconds=time.monotonic() - started,
+            retries=retries,
+            usage=usage,
+            tool_calls=["web_search"] if allow_web_search else [],
+            sources=sources,
+        )
+
+
 class ScriptedProvider:
     """Deterministic provider for offline unit and integration tests."""
 
     def __init__(self, responses: list[dict[str, Any]]):
         self.responses = list(responses)
         self.calls: list[dict[str, Any]] = []
+        self.supports_web_search = True
 
     def complete(self, **kwargs) -> LLMCallResult:
         if not self.responses:
@@ -384,7 +752,9 @@ class ScriptedProvider:
 def build_provider(config: dict[str, Any]) -> LLMProvider:
     """Build the LLM provider named by ``config["llm"]["provider"]``."""
     llm_config = config["llm"]
-    provider = str(llm_config.get("provider", "openai"))
+    provider = str(llm_config.get("provider", "glm")).lower().replace("-", "_")
+    if provider in {"openai_compatible", "glm"}:
+        return OpenAICompatibleChatProvider(llm_config)
     if provider == "openai":
         return OpenAIResponsesProvider(llm_config)
     if provider == "scripted":
@@ -393,3 +763,4 @@ def build_provider(config: dict[str, Any]) -> LLMProvider:
             script_path = PROJECT_ROOT / script_path
         return ScriptedProvider(json.loads(script_path.read_text(encoding="utf-8")))
     raise ValueError(f"Unsupported LLM provider: {provider!r}")
+

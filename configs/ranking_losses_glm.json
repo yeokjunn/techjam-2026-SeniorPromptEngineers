@@ -1,6 +1,6 @@
 {
   "mode": "research",
-  "name": "kuairand-pure-ranking-loss-research",
+  "name": "kuairand-pure-ranking-loss-research-glm",
   "data_dir": "data/KuaiRand-Pure/data",
   "run_root": "runs",
   "generated_root": "generated_experiments",

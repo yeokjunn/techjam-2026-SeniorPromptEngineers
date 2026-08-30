@@ -37,3 +37,4 @@ runs/*_research/
 artifacts/
 runs/*/artifacts/
 *.npz
+archive/

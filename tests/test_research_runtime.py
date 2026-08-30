@@ -10,8 +10,9 @@ from src.agent.catalog import MethodCatalog
 from src.agent.families import FAMILIES, family_names
 from src.agent.llm import FAMILY_ENUM, ScriptedProvider
 from src.agent.policy import SearchPolicy, coverage_complete, required_family
+from src.agent.runtime_contracts import runtime_contract_prompt
 from src.agent.roles import BASE_CANDIDATE_CONTRACT, ResearchRoles
-from src.agent.types import ExperimentNode, ResearchDecision, RunState, TokenUsage
+from src.agent.types import CandidateManifest, ExperimentNode, ResearchDecision, RunState, TokenUsage
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -209,6 +210,14 @@ class PromptStructureTests(unittest.TestCase):
         self.assertIn("test_scores", BASE_CANDIDATE_CONTRACT)
         self.assertIn("Return `test_scores`", BASE_CANDIDATE_CONTRACT)
 
+    def test_builder_prompt_matches_sandbox_and_unittest_runner(self):
+        self.assertIn("Never call getattr", BASE_CANDIDATE_CONTRACT)
+        self.assertIn("never import from parent packages", BASE_CANDIDATE_CONTRACT)
+        self.assertIn("python -m unittest -v test_candidate.py", BASE_CANDIDATE_CONTRACT)
+        self.assertIn("unittest.TestCase", BASE_CANDIDATE_CONTRACT)
+        self.assertIn("Do not use pytest", BASE_CANDIDATE_CONTRACT)
+        self.assertIn("do not probe alternative constructors", BASE_CANDIDATE_CONTRACT)
+
     def test_builder_prompt_names_the_sampler_from_the_registry(self):
         """Verify Builder uses registry samplers (or falls back gracefully)."""
         provider = ScriptedProvider([
@@ -229,10 +238,83 @@ class PromptStructureTests(unittest.TestCase):
             decision = roles.research(state, 1, "bpr")
             roles.build(state, 1, decision)
             builder_prompt = provider.calls[1]["prompt"]
-            # Should mention the trusted sampler name or have fallback text
-            self.assertTrue(
-                "sample_bpr_pairs" in builder_prompt or "trusted sampler" in builder_prompt.lower()
+            self.assertIn(
+                "sample_bpr_pairs(users, labels, rng, negatives_per_positive)",
+                builder_prompt,
             )
+
+    def test_runtime_contract_cards_ground_fm_api(self):
+        prompt = runtime_contract_prompt("bpr")
+        self.assertIn("FMRanker", prompt)
+        self.assertIn("gradients(features, score_gradients)", prompt)
+        self.assertIn("apply_gradients(grad_v, grad_w, grad_b=0.0)", prompt)
+        self.assertIn("never call apply_gradients(grads, lr)", prompt)
+
+    def test_builder_prompt_includes_runtime_contracts_and_debugger_memory(self):
+        provider = ScriptedProvider([
+            {"candidate_id": "c1", "hypothesis_id": "h_bpr", "family": "bpr",
+             "code": "def run(c, p): pass", "tests": "pass", "parameters": parameters("bpr")}
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=10000,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            decision = ResearchDecision.from_dict(research_payload("bpr"))
+            roles.build(
+                state,
+                1,
+                decision,
+                debugger_memory="- iteration 1: never call apply_gradients(grads, lr)",
+            )
+            prompt = provider.calls[0]["prompt"]
+            self.assertIn("RUNTIME CONTRACTS:", prompt)
+            self.assertIn("DEBUGGER MEMORY FROM THIS RUN:", prompt)
+            self.assertIn("never call apply_gradients(grads, lr)", prompt)
+
+    def test_debugger_prompt_includes_runtime_contracts_and_memory(self):
+        provider = ScriptedProvider([
+            {
+                "preserve_hypothesis": True,
+                "diagnosis": "unpacked gradients",
+                "replacement_code": "def run(c, p): pass",
+                "replacement_tests": "pass",
+            }
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=10000,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            decision = ResearchDecision.from_dict(research_payload("bpr"))
+            roles.debug(
+                state,
+                1,
+                decision,
+                CandidateManifest(
+                    candidate_id="c1",
+                    hypothesis_id="h_bpr",
+                    family="bpr",
+                    code="bad code",
+                    tests="bad tests",
+                    parameters=parameters("bpr"),
+                ),
+                "ValueError from apply_gradients",
+                1,
+                debugger_memory="- iteration 1: unpack gradients before apply_gradients",
+            )
+            prompt = provider.calls[0]["prompt"]
+            self.assertIn("RUNTIME CONTRACTS:", prompt)
+            self.assertIn("DEBUGGER MEMORY FROM THIS RUN:", prompt)
+            self.assertIn("unpack gradients before apply_gradients", prompt)
 
     def test_schema_family_enum_follows_the_registry(self):
         """Verify schema family enums match family_names()."""
@@ -260,6 +342,42 @@ class PromptStructureTests(unittest.TestCase):
             # Feedback should appear as PREVIOUS ATTEMPT REJECTED block
             self.assertIn("PREVIOUS ATTEMPT REJECTED:", prompt)
             self.assertIn(feedback_text, prompt)
+
+    def test_role_sequence_writes_distinct_pass_files(self):
+        """Verify sequence parameter writes distinct pass files in passes/ without overwriting."""
+        provider = ScriptedProvider([
+            research_payload("bpr"),
+            research_payload("bpr"),
+            {"approved": False, "decision": "reject", "rationale": "first", "concerns": [], "next_focus": "fix"},
+            {"approved": True, "decision": "proceed", "rationale": "second", "concerns": [], "next_focus": "run"},
+            {"candidate_id": "c1", "hypothesis_id": "h_bpr", "family": "bpr",
+             "code": "def run(c, p): pass", "tests": "pass", "parameters": parameters("bpr")},
+            {"candidate_id": "c1", "hypothesis_id": "h_bpr", "family": "bpr",
+             "code": "def run(c, p): pass", "tests": "pass", "parameters": parameters("bpr")},
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=10000,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            d0 = roles.research(state, 1, "bpr", sequence=0)
+            d1 = roles.research(state, 1, "bpr", sequence=1)
+            self.assertTrue((audit.passes_dir / "001_researcher_0.json").is_file())
+            self.assertTrue((audit.passes_dir / "001_researcher_1.json").is_file())
+
+            roles.critic_preflight(state, 1, d0, sequence=0)
+            roles.critic_preflight(state, 1, d1, sequence=1)
+            self.assertTrue((audit.passes_dir / "001_critic_preflight_0.json").is_file())
+            self.assertTrue((audit.passes_dir / "001_critic_preflight_1.json").is_file())
+
+            roles.build(state, 1, d0, sequence=0)
+            roles.build(state, 1, d1, sequence=1)
+            self.assertTrue((audit.passes_dir / "001_builder_0.json").is_file())
+            self.assertTrue((audit.passes_dir / "001_builder_1.json").is_file())
 
 
 if __name__ == "__main__":

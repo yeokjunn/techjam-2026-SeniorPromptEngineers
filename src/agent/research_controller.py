@@ -24,7 +24,7 @@ from .controller import (
     _source_manifest,
     run_agent,
 )
-from .errors import LLMError, TokenBudgetExceeded
+from .errors import LLMError
 from .llm import LLMProvider, build_provider
 from .policy import (
     SearchPolicy,
@@ -38,6 +38,8 @@ from .roles import ResearchRoles
 from .types import (
     CandidateManifest,
     CriticDecision,
+    EDAReport,
+    EDAResearchPlan,
     ExperimentNode,
     ResearchDecision,
     RunState,
@@ -138,19 +140,8 @@ def _official_convergence_iteration(
     return None
 
 
-# Classification of every exception source the correctness review names (C4).
-# ``roles.py``, ``types.py``, ``llm.py`` and ``policy.py`` are not ours to edit,
-# so the loop classifies by exception *type*. The message check keeps budget
-# stops correct while ``roles.py:52,63`` still raise a bare ``RuntimeError``
-# (C's T2 step 7 converts them to ``TokenBudgetExceeded``, which subclasses
-# ``RuntimeError``, so both spellings classify the same before and after).
-# ``KeyboardInterrupt`` is a ``BaseException`` and is deliberately not caught:
-# Ctrl-C still exits, and the operator records it with ``intervene``.
-
-
 def _is_budget_error(exc: BaseException) -> bool:
-    return isinstance(exc, TokenBudgetExceeded) or (
-        isinstance(exc, RuntimeError) and "token budget" in str(exc).lower())
+    return False
 
 
 def _error_kind(exc: BaseException) -> str:      # 'budget' | 'proposal' | 'harness'
@@ -169,6 +160,34 @@ def _error_kind(exc: BaseException) -> str:      # 'budget' | 'proposal' | 'harn
 
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _compact_error(value: str, limit: int = 1200) -> str:
+    """Keep debugger memory prompt-sized while preserving the failure tail."""
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
+
+
+def _classify_debugger_lesson(error: str) -> str:
+    """Map common failures to terse instructions future roles can act on."""
+    lowered = str(error or "").lower()
+    if "apply_gradients" in lowered or "inhomogeneous shape" in lowered:
+        return (
+            "Use FMRanker.gradients(features, score_gradients) with score gradients, "
+            "unpack (grad_v, grad_w, grad_b), then call apply_gradients(grad_v, grad_w, grad_b)."
+        )
+    if "trusted rows" in lowered and "split" in lowered:
+        return (
+            "For build_features, pass explicit split-specific specs for train, valid, and test; "
+            "do not let validation/test default to split='train'."
+        )
+    if "invalid json" in lowered or "failed schema" in lowered:
+        return "Role output must be one valid JSON object matching the requested schema; no Markdown or extra prose."
+    if "test_scores" in lowered:
+        return "CandidateOutput must include finite test_scores for context.test_x when test_x is not None."
+    return "Repair the exact failing API contract or shape issue; do not change the approved hypothesis."
 
 
 def _baseline_skip_reason(
@@ -258,11 +277,28 @@ def _latest_valid_baseline(
     return best, skipped
 
 
+def _official_baseline_summary(primary: float) -> dict[str, Any]:
+    """Synthetic cached baseline used when the config trusts the published score."""
+    return {
+        "run_id": "official_cached_baseline",
+        "status": "completed",
+        "best": {
+            "experiment_id": "official_fm_seed0",
+            "metrics": {"primary": primary},
+            "artifact_path": None,
+            "candidate_dir": None,
+        },
+        "summary_path": "official://kuairand-pure/validation-baseline",
+    }
+
+
 def _ensure_baseline(
     config: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
     run_root = _resolve_repo_path(config.get("run_root", "runs"))
     official = float(config["official_validation_baseline"])
+    if bool(config.get("use_official_baseline_cache", False)):
+        return _official_baseline_summary(official), []
     revision = str(_source_manifest()["revision"])
     baseline, skipped = _latest_valid_baseline(run_root, official, revision)
     # One line per skip, to stdout, for the operator watching the run start: the
@@ -308,21 +344,33 @@ class ResearchLoop:
         self.generated_root = _resolve_repo_path(config.get("generated_root", "generated_experiments"))
         self.run_root = _resolve_repo_path(config.get("run_root", "runs"))
         self.budgets = config["budgets"]
-        # I5: three caps, three keys. ``max_iterations`` is the *candidate* cap
-        # and nothing else; the training-attempt and proposal caps are their own
-        # knobs, resolved once here because ``_execute`` enforces the training
-        # cap too and must read the same number ``run()`` does. The ``.get``
-        # defaults preserve the old single-knob behaviour for configs that
-        # predate the split (every inline test config), so no caller has to
-        # supply the new keys to keep working.
         max_iterations = int(self.budgets["max_iterations"])
-        self.max_training_attempts = int(
-            self.budgets.get("max_training_attempts", max_iterations)
+        raw_max_training_attempts = self.budgets.get("max_training_attempts")
+        self.max_training_attempts = (
+            int(raw_max_training_attempts)
+            if raw_max_training_attempts is not None
+            else None
         )
         self.max_proposals = int(self.budgets.get("max_proposals", max_iterations * 2))
         self.convergence = config["convergence"]
         llm_config = config["llm"]
         self.provider = provider or build_provider(config)
+        research_config = dict(config.get("research") or {})
+        eda_config = dict(config.get("eda") or {})
+        self.eda_enabled = bool(eda_config.get("enabled", False))
+        self.eda_required = bool(eda_config.get("required", False))
+        self.eda_max_role_reprompts = int(eda_config.get("max_role_reprompts", 0))
+        self.eda_researcher_max_output_tokens = int(
+            eda_config.get("researcher_max_output_tokens", 1000)
+        )
+        self.eda_builder_max_output_tokens = int(
+            eda_config.get("builder_max_output_tokens", 1200)
+        )
+        self.eda_max_retries = int(eda_config.get("max_retries", 1))
+        self.researcher_web_first_pass_requested = bool(
+            research_config.get("allow_web_search_first_pass", False)
+        )
+        self.web_search_enabled = bool(getattr(self.provider, "supports_web_search", False))
         # An injected baseline is the caller's own and was never selected from
         # ``runs/``, so it has no skip list — `[]` says "nothing was rejected",
         # which is true, rather than "nothing was examined", which is not
@@ -402,6 +450,13 @@ class ResearchLoop:
             catalog,
             self.audit,
             max_total_tokens=int(llm_config["max_total_tokens"]),
+            allow_researcher_web_first_pass=(
+                self.researcher_web_first_pass_requested and self.web_search_enabled
+            ),
+            web_search_enabled=self.web_search_enabled,
+            eda_researcher_max_output_tokens=self.eda_researcher_max_output_tokens,
+            eda_builder_max_output_tokens=self.eda_builder_max_output_tokens,
+            eda_max_retries=self.eda_max_retries,
         )
         self.policy = SearchPolicy(
             epsilon=float(self.convergence["epsilon"]),
@@ -446,6 +501,62 @@ class ResearchLoop:
         self.session_started = time.monotonic()
         self.audit.save_state(self.state.to_dict())
 
+    def _debugger_memory_path(self) -> Path:
+        return self.run_dir / "debugger_memory.jsonl"
+
+    def _debugger_memory_text(self, max_entries: int = 6) -> str:
+        """Render recent debugger lessons for prompts."""
+        path = self._debugger_memory_path()
+        if not path.is_file():
+            return ""
+        entries: list[dict[str, Any]] = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                item = json.loads(line)
+                if isinstance(item, dict):
+                    entries.append(item)
+        except (OSError, json.JSONDecodeError):
+            return ""
+        recent = entries[-max_entries:]
+        lines = []
+        for item in recent:
+            lesson = str(item.get("lesson") or "").strip()
+            if not lesson:
+                continue
+            prefix = (
+                f"- iteration {item.get('iteration')}, "
+                f"{item.get('stage', 'debugger')}, "
+                f"{item.get('candidate_id', 'unknown')}: "
+            )
+            lines.append(prefix + lesson)
+        return "\n".join(lines)
+
+    def _record_debugger_memory(
+        self,
+        *,
+        iteration: int,
+        stage: str,
+        candidate_id: str | None,
+        error: str,
+        error_type: str | None = None,
+        lesson: str | None = None,
+    ) -> None:
+        """Persist a compact failure lesson for Builder/Debugger prompts."""
+        self.audit.append_jsonl(
+            self._debugger_memory_path(),
+            {
+                "type": "debugger_memory",
+                "iteration": iteration,
+                "stage": stage,
+                "candidate_id": candidate_id,
+                "error_type": error_type,
+                "error": _compact_error(error),
+                "lesson": lesson or _classify_debugger_lesson(error),
+            },
+        )
+
     def _note_official_convergence(self) -> None:
         """Journal the first iteration at which the organizers' rule fires (I6).
 
@@ -470,22 +581,36 @@ class ResearchLoop:
                 },
             )
 
-    def _role_call(self, label: str, iteration: int, call) -> Any:
+    def _role_call(
+        self,
+        label: str,
+        iteration: int,
+        call,
+        *,
+        max_reprompts: int | None = None,
+    ) -> Any:
         """Run one role pass, re-prompting the model while its own output is at fault.
 
         ``call`` takes the feedback string to hand back to the model (``None`` on
-        the first attempt). A proposal-shaped failure — bad schema, off-grid
-        parameters, a family the researcher was told not to pick — is the model's
-        to fix, so the role is re-sampled up to ``budgets.max_role_reprompts``
-        times with the rejection reason attached. Budget and harness failures are
-        the run's to handle and re-raise immediately.
+        the first attempt) and the attempt sequence index (``0`` on the first attempt).
+        A proposal-shaped failure — bad schema, off-grid parameters, a family the
+        researcher was told not to pick — is the model's to fix, so the role is
+        re-sampled up to ``budgets.max_role_reprompts`` times with the rejection reason
+        attached. Budget and harness failures are the run's to handle and re-raise immediately.
         """
-        maximum = int(self.budgets.get("max_role_reprompts", 2))
+        maximum = (
+            int(self.budgets.get("max_role_reprompts", 2))
+            if max_reprompts is None
+            else int(max_reprompts)
+        )
         feedback: str | None = None
         reprompts = 0
         while True:
             try:
-                return call(feedback)
+                try:
+                    return call(feedback, reprompts)
+                except TypeError:
+                    return call(feedback)
             except Exception as exc:
                 if reprompts >= maximum or _error_kind(exc) != "proposal":
                     raise
@@ -502,6 +627,99 @@ class ResearchLoop:
                         "error_type": type(exc).__name__,
                     },
                 )
+                if label in {"builder", "debugger"}:
+                    self._record_debugger_memory(
+                        iteration=iteration,
+                        stage=f"{label}_role_retry",
+                        candidate_id=None,
+                        error=str(exc),
+                        error_type=type(exc).__name__,
+                    )
+
+    def _record_eda_artifact(
+        self, iteration: int, plan: EDAResearchPlan, report: EDAReport
+    ) -> str:
+        """Persist per-iteration EDA output in a UI-readable artifact directory."""
+        record = {
+            "status": "completed",
+            "iteration": iteration,
+            "plan": plan.to_dict(),
+            "report": report.to_dict(),
+            "feature_candidates": [asdict(item) for item in report.feature_candidates],
+            "findings": [asdict(item) for item in report.findings],
+        }
+        path = self.run_dir / "eda" / f"{iteration:03d}_eda.json"
+        self.audit.write_json_atomic(path, record)
+        self.audit.write_json_atomic(self.run_dir / "eda" / "latest.json", record)
+        return _repo_relative(path)
+
+    def _record_eda_error_artifact(
+        self,
+        iteration: int,
+        exc: BaseException,
+        plan: EDAResearchPlan | None = None,
+    ) -> str:
+        record = {
+            "status": "failed",
+            "iteration": iteration,
+            "plan": None if plan is None else plan.to_dict(),
+            "report": None,
+            "feature_candidates": [],
+            "findings": [],
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+        }
+        path = self.run_dir / "eda" / f"{iteration:03d}_eda_failed.json"
+        self.audit.write_json_atomic(path, record)
+        self.audit.write_json_atomic(self.run_dir / "eda" / "latest.json", record)
+        self.audit.append_jsonl(
+            self.run_dir / "research_memory.jsonl",
+            {
+                "type": "eda_error",
+                "iteration": iteration,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "continued_without_eda": not self.eda_required,
+            },
+        )
+        return _repo_relative(path)
+
+    def _run_eda(
+        self, iteration: int
+    ) -> tuple[EDAReport | None, str | None]:
+        if not self.eda_enabled:
+            return None, None
+        eda_plan = None
+        try:
+            eda_plan = self._role_call(
+                "eda_researcher",
+                iteration,
+                lambda fb, seq=0: self.roles.eda_research(
+                    self.state,
+                    iteration,
+                    feedback=fb,
+                    sequence=seq,
+                ),
+                max_reprompts=self.eda_max_role_reprompts,
+            )
+            eda_report = self._role_call(
+                "eda_builder",
+                iteration,
+                lambda fb, seq=0: self.roles.eda_build(
+                    self.state,
+                    iteration,
+                    eda_plan,
+                    feedback=fb,
+                    sequence=seq,
+                ),
+                max_reprompts=self.eda_max_role_reprompts,
+            )
+            return eda_report, self._record_eda_artifact(iteration, eda_plan, eda_report)
+        except Exception as exc:
+            artifact_path = self._record_eda_error_artifact(iteration, exc, eda_plan)
+            if self.eda_required:
+                raise
+            return None, artifact_path
 
     def _record_failed_proposal(
         self, iteration: int, exc: BaseException, status: str
@@ -527,7 +745,12 @@ class ResearchLoop:
         )
 
     def _record_rejection(
-        self, iteration: int, decision: ResearchDecision, critic: CriticDecision
+        self,
+        iteration: int,
+        decision: ResearchDecision,
+        critic: CriticDecision,
+        eda_report: EDAReport | None = None,
+        eda_artifact_path: str | None = None,
     ) -> None:
         persistence = self.audit.start_activity(
             iteration,
@@ -554,9 +777,11 @@ class ResearchLoop:
         self.audit.record_iteration(
             {
                 "iteration": iteration,
+                "eda_artifact_path": eda_artifact_path,
                 "proposal": decision.to_dict(),
                 "preflight": critic.to_dict(),
                 "agent_notes": {
+                    "eda": None if eda_report is None else eda_report.to_dict(),
                     "researcher": {
                         "hypothesis": decision.hypothesis,
                         "rationale": decision.rationale,
@@ -659,9 +884,40 @@ class ResearchLoop:
                 )
             if repairs_used >= maximum:
                 return current, repairs_used, error
+            self._record_debugger_memory(
+                iteration=iteration,
+                stage="pre_debugger_failure",
+                candidate_id=current.candidate_id,
+                error=error or "",
+                lesson=_classify_debugger_lesson(error or ""),
+            )
             repairs_used += 1
-            debug = self.roles.debug(
-                self.state, iteration, decision, current, error, repairs_used
+            try:
+                debug = self.roles.debug(
+                    self.state,
+                    iteration,
+                    decision,
+                    current,
+                    error,
+                    repairs_used,
+                    debugger_memory=self._debugger_memory_text(),
+                )
+            except Exception as exc:
+                self._record_debugger_memory(
+                    iteration=iteration,
+                    stage="debugger_role_failure",
+                    candidate_id=current.candidate_id,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    lesson=_classify_debugger_lesson(str(exc)),
+                )
+                raise
+            self._record_debugger_memory(
+                iteration=iteration,
+                stage="debugger_repair",
+                candidate_id=current.candidate_id,
+                error=debug.diagnosis,
+                lesson=f"Debugger diagnosis: {debug.diagnosis}",
             )
             current = repaired_manifest(
                 current, debug.replacement_code, debug.replacement_tests
@@ -674,6 +930,8 @@ class ResearchLoop:
         decision: ResearchDecision,
         preflight: CriticDecision,
         manifest: CandidateManifest,
+        eda_report: EDAReport | None = None,
+        eda_artifact_path: str | None = None,
         replicated_from: str | None = None,
     ) -> ExperimentNode:
         workspace = CandidateWorkspace(
@@ -709,7 +967,10 @@ class ResearchLoop:
                 },
                 parent_sources,
             )
-            if self.state.training_attempts >= self.max_training_attempts:
+            if (
+                self.max_training_attempts is not None
+                and self.state.training_attempts >= self.max_training_attempts
+            ):
                 validation_error = "Training-attempt budget reached before execution."
                 break
             self.state.training_attempts += 1
@@ -852,6 +1113,7 @@ class ResearchLoop:
         self.audit.record_iteration(
             {
                 "iteration": iteration,
+                "eda_artifact_path": eda_artifact_path,
                 "proposal": decision.to_dict(),
                 "preflight": preflight.to_dict(),
                 "manifest": {
@@ -867,6 +1129,7 @@ class ResearchLoop:
                 "outcome": outcome_record,
                 "postflight": None if postflight is None else postflight.to_dict(),
                 "agent_notes": {
+                    "eda": None if eda_report is None else eda_report.to_dict(),
                     "researcher": {
                         "hypothesis": decision.hypothesis,
                         "rationale": decision.rationale,
@@ -942,14 +1205,16 @@ class ResearchLoop:
     def run(self) -> Path:
         max_iterations = int(self.budgets["max_iterations"])
         max_wall_clock = float(self.budgets["max_wall_clock_seconds"])
-        max_training_attempts = self.max_training_attempts
         max_proposals = self.max_proposals
 
         while True:
             if self._elapsed() >= max_wall_clock:
                 self.state.stop_reason = "wall_clock_budget_reached"
                 break
-            if self.state.training_attempts >= max_training_attempts:
+            if (
+                self.max_training_attempts is not None
+                and self.state.training_attempts >= self.max_training_attempts
+            ):
                 self.state.stop_reason = "training_attempt_budget_reached"
                 break
             if self.state.iteration_count >= max_iterations:
@@ -958,10 +1223,6 @@ class ResearchLoop:
             if self.policy.should_stop(self.state):
                 self.state.stop_reason = "converged"
                 break
-            if self.state.token_usage.total_tokens >= int(self.config["llm"]["max_total_tokens"]):
-                self.state.stop_reason = "llm_token_budget_reached"
-                break
-
             # Bound before the try so the error handler can always name the pass,
             # and remember whether this pass ever charged a proposal (see the
             # no-progress guard in the handler).
@@ -981,33 +1242,67 @@ class ResearchLoop:
                     break
 
                 self.state.proposal_attempts += 1
+                eda_report, eda_artifact_path = self._run_eda(iteration)
                 decision = self._role_call(
                     "researcher",
                     iteration,
-                    lambda fb: self.roles.research(
-                        self.state, iteration, required_family(self.state), feedback=fb
+                    lambda fb, seq=0: self.roles.research(
+                        self.state,
+                        iteration,
+                        required_family(self.state),
+                        feedback=fb,
+                        sequence=seq,
+                        eda_report=eda_report,
                     ),
                 )
                 preflight = self._role_call(
                     "critic_preflight",
                     iteration,
-                    lambda fb: self.roles.critic_preflight(
-                        self.state, iteration, decision, feedback=fb
+                    lambda fb, seq=0: self.roles.critic_preflight(
+                        self.state,
+                        iteration,
+                        decision,
+                        feedback=fb,
+                        sequence=seq,
+                        eda_report=eda_report,
                     ),
                 )
-                self.state.iteration_count += 1
                 if not preflight.approved:
-                    self._record_rejection(iteration, decision, preflight)
+                    self.state.iteration_count += 1
+                    self._record_rejection(
+                        iteration,
+                        decision,
+                        preflight,
+                        eda_report=eda_report,
+                        eda_artifact_path=eda_artifact_path,
+                    )
                     self.consecutive_harness_errors = 0
                     continue
                 manifest = self._role_call(
                     "builder",
                     iteration,
-                    lambda fb: self.roles.build(
-                        self.state, iteration, decision, feedback=fb
+                    lambda fb, seq=0: self.roles.build(
+                        self.state,
+                        iteration,
+                        decision,
+                        feedback=fb,
+                        sequence=seq,
+                        eda_report=eda_report,
                     ),
                 )
-                self._execute(iteration, decision, preflight, manifest)
+                # A proposal does not become a candidate iteration until the
+                # Builder has returned a valid manifest. Charging the iteration
+                # before this call makes repeated incomplete Builder responses
+                # exhaust max_iterations while producing no candidate at all.
+                self.state.iteration_count += 1
+                self._execute(
+                    iteration,
+                    decision,
+                    preflight,
+                    manifest,
+                    eda_report=eda_report,
+                    eda_artifact_path=eda_artifact_path,
+                )
                 self.consecutive_harness_errors = 0
             except Exception as exc:
                 kind = _error_kind(exc)

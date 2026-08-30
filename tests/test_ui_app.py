@@ -54,6 +54,78 @@ class DashboardAppTests(unittest.TestCase):
                     ["Pipeline", "EDA", "Feature Lab", "Iterations", "Results"],
                 )
 
+    def test_live_stream_and_diagnostics_render(self):
+        from src.ui.models import DebuggerEvent, EDAArtifact, RolePass, RunSnapshot, StageTransition
+        from src.ui.app import _render_live_role_stream, _render_live_diagnostics, _feature_lab, _eda
+        from pathlib import Path
+
+        snapshot = RunSnapshot(
+            run_id="live_test",
+            path=Path("."),
+            status="running",
+            stop_reason=None,
+            started_at="2026-08-30T00:00:00Z",
+            best_experiment_id="cand_1",
+            best_metrics={"primary": 0.605},
+            baseline_primary=0.6016,
+            activity=StageTransition(
+                event_id="e1",
+                iteration=2,
+                stage="debugger",
+                status="active",
+                started_at="2026-08-30T00:00:00Z",
+                updated_at="2026-08-30T00:01:00Z",
+                attempt=2,
+                objective="Debug BPR candidate",
+                error="Shapes mismatch in loss",
+                repair="Added squeeze() before dot product",
+            ),
+            live_role_passes=(
+                RolePass(
+                    sequence=0,
+                    role="eda_researcher",
+                    model="GLM-5.3-Flash",
+                    latency_seconds=1.0,
+                    data={"objective": "Plan EDA", "questions": ["Q1?"], "leakage_risks": ["Risk1"]},
+                ),
+                RolePass(
+                    sequence=1,
+                    role="eda_builder",
+                    model="GLM-5.3-Flash",
+                    latency_seconds=1.5,
+                    data={
+                        "summary": "EDA Done",
+                        "findings": [{"insight": "High correlation"}],
+                        "feature_candidates": [{"name": "dur_bucket"}],
+                    },
+                ),
+            ),
+            live_eda=EDAArtifact(
+                iteration=2,
+                path=Path("eda/latest.json"),
+                status="in_progress",
+                plan={"objective": "Plan EDA"},
+                report={"summary": "Live findings", "feature_candidates": [{"name": "live_feat"}]},
+                feature_candidates=({"name": "live_feat"},),
+            ),
+            debugger_events=(
+                DebuggerEvent(
+                    iteration=2,
+                    stage="safety_tests",
+                    candidate_id="cand_1",
+                    error_type="AssertionError",
+                    error="Shapes mismatch",
+                    lesson="Squeeze tensor dimension",
+                ),
+            ),
+        )
+
+        # Ensure these rendering helper functions execute without throwing any exceptions
+        _render_live_role_stream(snapshot)
+        _render_live_diagnostics(snapshot)
+        _feature_lab(snapshot)
+
+
 
 if __name__ == "__main__":
     unittest.main()

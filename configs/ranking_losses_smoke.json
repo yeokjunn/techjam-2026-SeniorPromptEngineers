@@ -6,23 +6,38 @@
   "generated_root": "generated_experiments",
   "method_catalog": "research/methods",
   "official_validation_baseline": 0.6016,
+  "use_official_baseline_cache": true,
   "baseline_config": "configs/baseline.json",
   "data_card_path": null,
+  "research": {
+    "allow_web_search_first_pass": true
+  },
+  "eda": {
+    "enabled": true,
+    "required": false,
+    "researcher_max_output_tokens": 1600,
+    "builder_max_output_tokens": 2000,
+    "max_retries": 1,
+    "max_role_reprompts": 1
+  },
   "llm": {
-    "provider": "openai",
-    "model": "gpt-5.5",
-    "reasoning_effort": "medium",
-    "verbosity": "low",
-    "store": false,
-    "max_output_tokens": 8000,
-    "max_tool_calls": 1,
-    "max_total_tokens": 30000,
+    "provider": "glm",
+    "model": "glm-5.3",
+    "api_key_env": "ZAI_API_KEY",
+    "base_url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    "temperature": 0.4,
+    "role_temperatures": {
+      "builder": 0.1,
+      "debugger": 0.1
+    },
+    "thinking": "low",
+    "max_output_tokens": 6000,
+    "max_total_tokens": 100000,
     "request_timeout_seconds": 180,
-    "max_retries": 1
+    "max_retries": 5
   },
   "budgets": {
     "max_iterations": 2,
-    "max_training_attempts": 2,
     "max_wall_clock_seconds": 1800,
     "experiment_timeout_seconds": 600,
     "test_timeout_seconds": 60,

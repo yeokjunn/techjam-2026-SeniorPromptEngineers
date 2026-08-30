@@ -245,6 +245,16 @@ def sanitize_parameters(family: str, raw: dict[str, Any]) -> dict[str, Any]:
         # `in` is exact and O(1) for both shapes E ships: a tuple of allowed
         # values and a `range` of allowed integers.
         if parameters[name] not in allowed:
+            legacy_message = next(
+                (
+                    message
+                    for bound_name, permitted, message in _bounds_for(family)
+                    if bound_name == name and not permitted(parameters[name])
+                ),
+                None,
+            )
+            if legacy_message is not None:
+                raise ValueError(legacy_message)
             raise ValueError(
                 f"{family} {name}={parameters[name]!r} is outside the registry grid {allowed!r}."
             )

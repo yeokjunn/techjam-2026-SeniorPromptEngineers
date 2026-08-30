@@ -17,8 +17,8 @@ The repository provides an end-to-end autonomous research harness:
   global budget enforcement
 - a single role-based autonomous research loop using Researcher, Critic, Builder,
   and Debugger passes over shared persisted memory
-- OpenAI Responses API structured outputs, optional primary-source web-search
-  fallback, retry handling, and exact token accounting
+- OpenAI Responses API and OpenAI-compatible Chat Completions adapters, including
+  GLM, with structured outputs, retry handling, and token accounting
 - restricted agent-generated candidates with trusted metric computation
 - BPR and same-user group-softmax research cards and audited sampling utilities
 - coarse live-stage observability, structured agent decision notes, and immutable
@@ -123,6 +123,43 @@ The research run uses `gpt-5.5` with medium reasoning and low verbosity by
 default. Edit `configs/ranking_losses.json` to use a model available to your
 OpenAI project. It has an explicit 150,000-token research budget, 50 training
 attempts, two debugger repairs per candidate, and the official six-hour ceiling.
+
+### Use GLM or another OpenAI-compatible endpoint
+
+GLM uses an OpenAI-compatible **Chat Completions** endpoint rather than the
+Responses API used by the default GPT configuration. A ready-to-edit GLM config
+is provided at `configs/ranking_losses_glm.json`:
+
+```bash
+# Put the provider key in .env; never put it in the JSON config.
+ZAI_API_KEY=your-provider-key
+python -m src.agent.controller --config configs/ranking_losses_glm.json
+```
+
+The adapter also accepts `provider: "openai_compatible"` for other compatible
+services. Configure `model` plus either `base_url`/`endpoint` in JSON or
+`OPENAI_MODEL` plus `OPENAI_BASE_URL` in the environment. The API-key variable is
+selected by `api_key_env` and defaults to `OPENAI_API_KEY`, so a generic setup can
+look like:
+
+```json
+{
+  "llm": {
+    "provider": "openai_compatible",
+    "model": "your-model-name",
+    "api_key_env": "OPENAI_API_KEY",
+    "endpoint": "https://provider.example/v1/chat/completions"
+  }
+}
+```
+
+The key must be issued by the service behind that endpoint; an OpenAI-issued key
+does not authenticate to GLM. Provider-specific reasoning and search are opt-in
+through `thinking` and `web_search_tool`. If the endpoint does not implement
+those extensions, omit them. JSON responses are validated locally against the
+same role schemas used by the GPT path. The example uses Z.AI's global API URL;
+accounts on the mainland China platform should replace it with the base URL shown
+for their account.
 
 The run first reuses a passing official-FM run; if none exists it automatically
 reproduces the baseline gate. It must execute at least one BPR and one

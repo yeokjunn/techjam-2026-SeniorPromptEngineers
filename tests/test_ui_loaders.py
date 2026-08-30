@@ -70,7 +70,9 @@ class DashboardLoaderTests(unittest.TestCase):
             self.assertAlmostEqual(baseline_snapshot.best_metrics["primary"], 0.6015)
             self.assertEqual(research_snapshot.status, "running")
             self.assertAlmostEqual(research_snapshot.baseline_primary, 0.6015)
-            self.assertEqual(len(discover_runs(root / "runs")), 2)
+            discovered = discover_runs(root / "runs")
+            self.assertEqual(len(discovered), 1)
+            self.assertEqual(discovered[0].run_id, "research")
 
     def test_partial_final_jsonl_line_is_tolerated(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -139,7 +141,7 @@ class DashboardLoaderTests(unittest.TestCase):
                             "prompt": f"ROLE: {role}",
                             "result": {
                                 "role": role,
-                                "model": "gpt-5.5",
+                                "model": "GLM-5.3-Flash",
                                 "latency_seconds": 1.25,
                                 "usage": {
                                     "total_tokens": 100,
@@ -168,7 +170,7 @@ class DashboardLoaderTests(unittest.TestCase):
                 ["researcher", "critic_preflight", "builder", "critic_postflight"],
             )
             self.assertEqual(passes[0].role, "researcher")
-            self.assertEqual(passes[0].model, "gpt-5.5")
+            self.assertEqual(passes[0].model, "GLM-5.3-Flash")
             self.assertEqual(len(passes[0].sources), 1)
 
             code, tests = load_candidate_files(run_dir, Path("gen") / "001_candidate")
@@ -223,6 +225,7 @@ class DashboardLoaderTests(unittest.TestCase):
                 load_candidate_files(run_dir, iteration.candidate_dir), ("CODE", "TESTS")
             )
 
+
     def test_load_gate_result_and_journal_reports(self):
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run"
@@ -252,6 +255,117 @@ class DashboardLoaderTests(unittest.TestCase):
             journal, results = load_journal_reports(run_dir)
             self.assertEqual(journal, "# Journal\nContent")
             self.assertEqual(results, "# Results\nContent")
+
+    def test_snapshot_deduplicates_iterations_by_iteration_number(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            (run_dir / "iterations.jsonl").write_text(
+                json.dumps({"iteration": 1, "status": "proposal_failed", "proposal": {"family": "bpr"}})
+                + "\n"
+                + json.dumps({"iteration": 1, "status": "success", "proposal": {"family": "bpr"}})
+                + "\n",
+                encoding="utf-8",
+            )
+            snapshot = load_run_snapshot(run_dir)
+            self.assertEqual(len(snapshot.iterations), 1)
+            self.assertEqual(snapshot.iterations[0].status, "success")
+
+    def test_load_live_eda_and_eda_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            eda_dir = run_dir / "eda"
+            eda_dir.mkdir(parents=True)
+
+            (eda_dir / "latest.json").write_text(
+                json.dumps(
+                    {
+                        "iteration": 1,
+                        "status": "in_progress",
+                        "plan": {"objective": "Investigate duration features"},
+                        "report": {"summary": "Duration buckets show signal"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (eda_dir / "001_eda.json").write_text(
+                json.dumps(
+                    {
+                        "iteration": 1,
+                        "status": "completed",
+                        "plan": {"objective": "Completed plan"},
+                        "report": {
+                            "summary": "Completed report",
+                            "findings": [{"key": "f1"}],
+                            "feature_candidates": [{"name": "dur_bucket"}],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            from src.ui.loaders import load_eda_artifacts, load_live_eda_latest
+
+            live_eda = load_live_eda_latest(run_dir)
+            self.assertIsNotNone(live_eda)
+            self.assertEqual(live_eda.iteration, 1)
+            self.assertEqual(live_eda.status, "in_progress")
+            self.assertEqual(live_eda.plan.get("objective"), "Investigate duration features")
+
+            artifacts = load_eda_artifacts(run_dir)
+            self.assertEqual(len(artifacts), 1)
+            self.assertEqual(artifacts[0].status, "completed")
+            self.assertEqual(len(artifacts[0].feature_candidates), 1)
+
+    def test_load_debugger_events_from_debugger_and_research_memory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+
+            (run_dir / "debugger_memory.jsonl").write_text(
+                json.dumps(
+                    {
+                        "iteration": 2,
+                        "stage": "safety_tests",
+                        "candidate_id": "candidate_bpr",
+                        "error_type": "AssertionError",
+                        "error": "Shapes mismatch",
+                        "lesson": "Align batch dimensions before matrix multiply",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "research_memory.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "role_retry",
+                        "iteration": 2,
+                        "label": "builder",
+                        "error_type": "SyntaxError",
+                        "error": "invalid syntax",
+                        "reprompt": "Fix syntax error on line 12",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            from src.ui.loaders import load_debugger_events
+
+            events = load_debugger_events(run_dir)
+            self.assertEqual(len(events), 2)
+            self.assertEqual(events[0].event_type, "debugger_memory")
+            self.assertEqual(events[0].candidate_id, "candidate_bpr")
+            self.assertEqual(events[1].event_type, "role_retry")
+            self.assertEqual(events[1].stage, "builder")
+            self.assertEqual(events[1].lesson, "Re-prompt #Fix syntax error on line 12: invalid syntax")
+
+
+
+            snapshot = load_run_snapshot(run_dir)
+            self.assertEqual(len(snapshot.debugger_events), 2)
+
 
 
 if __name__ == "__main__":

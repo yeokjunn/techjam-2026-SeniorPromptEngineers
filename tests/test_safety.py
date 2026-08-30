@@ -257,7 +257,10 @@ def run(context, parameters):
 
     def test_builder_brief_names_the_mandatory_calls_and_the_grid(self):
         brief = builder_brief("bpr")
-        self.assertIn("src.models.sampling.sample_bpr_pairs()", brief)
+        self.assertIn(
+            "src.models.sampling.sample_bpr_pairs(users, labels, rng, negatives_per_positive)",
+            brief,
+        )
         self.assertIn("learning_rate: 0.0003, 0.0005, 0.001", brief)
         self.assertIn("seed: 0-999", brief)
         self.assertIn("negatives_per_positive: 1, 2", brief)

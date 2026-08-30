@@ -17,6 +17,7 @@ from .audit import ResearchAudit
 from .candidate_runner import CandidateExecutor, CandidateWorkspace, repaired_manifest
 from .catalog import MethodCatalog
 from .convergence import official_converged
+from .discoveries import DiscoveryStore
 from .controller import (
     REPO_ROOT,
     _count_interventions,
@@ -342,6 +343,9 @@ class ResearchLoop:
         self.data_dir = _resolve_repo_path(config["data_dir"])
         self.generated_root = _resolve_repo_path(config.get("generated_root", "generated_experiments"))
         self.run_root = _resolve_repo_path(config.get("run_root", "runs"))
+        self.discovery_store = DiscoveryStore(
+            _resolve_repo_path(config.get("discovery_store", "research/discoveries/discoveries.json"))
+        )
         self.budgets = config["budgets"]
         max_iterations = int(self.budgets["max_iterations"])
         raw_max_training_attempts = self.budgets.get("max_training_attempts")
@@ -456,6 +460,7 @@ class ResearchLoop:
             eda_researcher_max_output_tokens=self.eda_researcher_max_output_tokens,
             eda_builder_max_output_tokens=self.eda_builder_max_output_tokens,
             eda_max_retries=self.eda_max_retries,
+            discovery_store=self.discovery_store,
         )
         self.policy = SearchPolicy(
             epsilon=float(self.convergence["epsilon"]),
@@ -768,6 +773,7 @@ class ResearchLoop:
             parent_experiment=decision.parent_experiment,
         )
         self.state.nodes.append(node)
+        self.discovery_store.record_rejection(iteration, decision, critic)
         # I3: state first, ledger second. ``record_iteration`` appends to
         # ``iterations.jsonl``; a crash between the two used to replay the
         # iteration on resume and duplicate the line. This order loses at most
@@ -1080,6 +1086,12 @@ class ResearchLoop:
             replicated_from=replicated_from,
         )
         self.state.nodes.append(node)
+        self.discovery_store.record_outcome(
+            iteration,
+            decision,
+            node,
+            self.state.baseline_primary,
+        )
         if status == "success":
             self.policy.observe_success(self.state, node)
             self._note_official_convergence()
@@ -1254,6 +1266,7 @@ class ResearchLoop:
                         eda_report=eda_report,
                     ),
                 )
+                self.discovery_store.record_proposal(iteration, decision)
                 preflight = self._role_call(
                     "critic_preflight",
                     iteration,

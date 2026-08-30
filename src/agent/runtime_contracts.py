@@ -36,11 +36,13 @@ FEATURE_CONTRACTS = {
     "build_features": """RUNTIME API CARD: src.models.features.build_features
 - Call build_features(rows, spec); rows must be the exact split array passed by context.
 - For history features, pass explicit split and field_offset in spec.
+- You can compose or transform the trusted feature columns inside candidate.py, but do not read raw CSVs, filesystem paths, or dataset files directly.
 - Use feature_dimension(spec) for the added index-space width, not the number of generated columns.
 - Concatenate returned int feature columns to the original id fields; preserve row order.""",
     "build_aux_labels": """RUNTIME API CARD: src.models.features.build_aux_labels
-- Call build_aux_labels(rows, spec) only for train-time auxiliary labels.
-- Do not derive validation/test labels or read hidden labels.
+- Call build_aux_labels(rows, spec) for train-time multi-task auxiliary targets (is_click, is_like, is_follow, is_comment, is_forward, play_time).
+- You can combine multiple auxiliary heads or create weighted multi-task loss terms from build_aux_labels only.
+- Do not derive validation/test labels, read hidden labels, or read raw CSVs/dataset files directly.
 - Keep the primary CandidateOutput validation scores for long_view ranking.""",
 }
 

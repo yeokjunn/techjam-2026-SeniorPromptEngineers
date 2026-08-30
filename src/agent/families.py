@@ -66,7 +66,7 @@ TRUSTED_CALL_SIGNATURES = {
 # module, so this import must stay light (no numpy). ``tests/test_features.py`` pins them equal
 # to the feature module's own tuples, so the duplication cannot drift silently.
 HISTORY_GROUPS = ("user_rate", "user_author", "user_tab", "recency", "video_age", "tab_cross")
-AUX_HEADS = ("is_click", "is_like", "play_time")
+AUX_HEADS = ("is_click", "is_like", "is_follow", "is_comment", "is_forward", "play_time")
 
 #: Either trusted sampler satisfies the loss requirement for the feature-side families -- the
 #: loss is not what they vary, so both are legitimate.
@@ -147,9 +147,8 @@ FAMILIES: dict[str, Family] = {
     ),
 }
 
-# The *minimum* coverage set the harness stop rule must satisfy. Deliberately not
-# ``family_names()``: every family added later would otherwise make the rule unsatisfiable.
-COVERAGE_FAMILIES = frozenset({"bpr", "group_softmax"})
+# The *minimum* coverage set the harness stop rule must satisfy.
+COVERAGE_FAMILIES = frozenset({"bpr", "group_softmax", "history_features", "multi_task"})
 
 
 def family_names() -> frozenset[str]:

@@ -322,23 +322,6 @@ def _render_live_overlay(snapshot: RunSnapshot, stale_after: int) -> None:
     with st.expander("Agent Notes — structured decision trace", expanded=True):
         _render_note(activity.agent_note)
         st.caption("Summarized decisions only; raw hidden reasoning and full prompts are not displayed.")
-    with st.expander("Changes", expanded=bool(activity.change_summary)):
-        changes = activity.change_summary
-        if changes is None:
-            st.caption("No finalized candidate change is attached to this stage yet.")
-        else:
-            st.write(f"**+{changes.lines_added} / −{changes.lines_deleted} lines**")
-            st.dataframe(list(changes.files), width="stretch", hide_index=True)
-            patch = load_patch_text(snapshot.path, changes.patch_path)
-            if patch:
-                st.code(patch, language="diff", line_numbers=True)
-    with st.expander("Errors & repairs", expanded=bool(activity.error)):
-        if activity.error:
-            st.error(activity.error)
-        if activity.repair:
-            st.info(activity.repair)
-        if not activity.error and not activity.repair:
-            st.caption("No error or repair is attached to the current stage.")
     with st.expander("Recent timeline"):
         recent = list(snapshot.transitions)[-10:][::-1]
         st.dataframe(

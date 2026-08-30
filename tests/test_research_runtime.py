@@ -7,7 +7,8 @@ from pathlib import Path
 
 from src.agent.audit import ResearchAudit
 from src.agent.catalog import MethodCatalog
-from src.agent.families import FAMILIES, family_names
+from src.agent.discoveries import DiscoveryStore
+from src.agent.families import FAMILIES, coverage_families, family_names
 from src.agent.llm import FAMILY_ENUM, ScriptedProvider
 from src.agent.policy import SearchPolicy, coverage_complete, required_family
 from src.agent.runtime_contracts import runtime_contract_prompt
@@ -48,6 +49,12 @@ def research_payload(family: str, needs_web: bool = False) -> dict:
     }
 
 
+def web_research_payload(family: str) -> dict:
+    payload = research_payload(family)
+    payload["web_searched"] = True
+    return payload
+
+
 class RuntimeSchemaTests(unittest.TestCase):
     def test_missing_structured_field_is_rejected(self):
         payload = research_payload("bpr")
@@ -81,20 +88,50 @@ class RuntimeSchemaTests(unittest.TestCase):
             self.assertEqual(len(provider.calls), 2)
             self.assertFalse(provider.calls[0]["allow_web_search"])
             self.assertTrue(provider.calls[1]["allow_web_search"])
+            self.assertTrue(decision.web_searched)
+
+    def test_discovery_store_persists_proposal_and_outcome(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "discoveries.json"
+            store = DiscoveryStore(path)
+            decision = ResearchDecision.from_dict(web_research_payload("bpr"))
+            discovery_id = store.record_proposal(1, decision)
+            self.assertIsNotNone(discovery_id)
+
+            node = ExperimentNode(
+                1,
+                "candidate_bpr",
+                decision.hypothesis_id,
+                decision.family,
+                decision.action,
+                decision.parameters,
+                "success",
+                {"GAUC": 0.67, "nDCG@5": 0.54, "primary": 0.605},
+            )
+            store.record_outcome(1, decision, node, baseline_primary=0.6016)
+
+            reloaded = DiscoveryStore(path)
+            text = reloaded.prompt_text()
+            self.assertIn("family=bpr", text)
+            self.assertIn("primary=0.605", text)
+            self.assertIn("https://arxiv.org/abs/1205.2618", text)
 
 
 class PolicyTests(unittest.TestCase):
     def test_family_coverage_is_reported_not_required(self):
         state = RunState("run", "running", "now", 0.6016, meaningful_best=0.6016)
-        bpr = ExperimentNode(
-            1, "bpr", "h1", "bpr", "explore", {}, "success", {"primary": 0.601}
-        )
-        state.nodes.append(bpr)
+        cov = sorted(coverage_families())
+        for i, family in enumerate(cov[:-1], start=1):
+            state.nodes.append(
+                ExperimentNode(
+                    i, family, f"h{i}", family, "explore", {}, "success", {"primary": 0.601}
+                )
+            )
         self.assertIsNone(required_family(state))
         self.assertFalse(coverage_complete(state))
         state.nodes.append(
             ExperimentNode(
-                2, "list", "h2", "group_softmax", "explore", {}, "success", {"primary": 0.602}
+                len(cov), cov[-1], "h_last", cov[-1], "explore", {}, "success", {"primary": 0.602}
             )
         )
         self.assertTrue(coverage_complete(state))
@@ -135,12 +172,10 @@ class PromptStructureTests(unittest.TestCase):
             state = RunState("run", "running", "now", 0.6016)
             roles.research(state, 1, None)
             prompt = provider.calls[0]["prompt"]
-            # The prefix (which includes method cards) should appear before state summary
             self.assertIn("METHOD CARD", prompt)
             self.assertIn("ROLE: Researcher", prompt)
             method_card_pos = prompt.find("METHOD CARD")
             role_pos = prompt.find("ROLE: Researcher")
-            # Method cards should appear before the role directive
             self.assertLess(method_card_pos, role_pos)
 
     def test_stable_prefix_is_identical_across_two_iterations(self):
@@ -202,6 +237,26 @@ class PromptStructureTests(unittest.TestCase):
             # Prompt should still work, just without the DATA CARD section
             self.assertIn("ROLE: Researcher", prompt)
             self.assertNotIn("DATA CARD:", prompt)
+
+    def test_researcher_prompt_includes_persistent_discoveries(self):
+        provider = ScriptedProvider([research_payload("bpr")])
+        with tempfile.TemporaryDirectory() as directory:
+            discovery_path = Path(directory) / "discoveries.json"
+            store = DiscoveryStore(discovery_path)
+            store.record_proposal(1, ResearchDecision.from_dict(web_research_payload("bpr")))
+            audit = ResearchAudit(Path(directory) / "run")
+            roles = ResearchRoles(
+                provider,
+                MethodCatalog.load(REPO_ROOT / "research" / "methods"),
+                audit,
+                max_total_tokens=1000,
+                discovery_store=store,
+            )
+            state = RunState("run", "running", "now", 0.6016)
+            roles.research(state, 2, "bpr")
+            prompt = provider.calls[0]["prompt"]
+            self.assertIn("PERSISTENT WEB DISCOVERIES:", prompt)
+            self.assertIn("https://arxiv.org/abs/1205.2618", prompt)
 
     def test_builder_prompt_requires_test_scores(self):
         """Verify Builder prompt includes test_scores requirement."""

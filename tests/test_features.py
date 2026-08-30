@@ -209,9 +209,15 @@ class FeatureBuilderTests(unittest.TestCase):
         self.assertEqual(light.dtype, heavy.dtype)
 
 class AuxiliaryLabelTests(unittest.TestCase):
-    """The multi_task family's auxiliary targets: (is_click, is_like, play_time_ms) per train row."""
+    """The multi_task family's auxiliary targets: (is_click, is_like, is_follow, is_comment, is_forward, play_time_ms) per train row."""
 
-    AUX = [(1, 0, 500.0), (0, 0, 0.0), (1, 1, 120000.0), (0, 0, 250.0), (1, 0, 9000.0)]
+    AUX = [
+        (1, 0, 0, 0, 0, 500.0),
+        (0, 0, 0, 0, 0, 0.0),
+        (1, 1, 1, 0, 1, 120000.0),
+        (0, 0, 0, 0, 0, 250.0),
+        (1, 0, 0, 1, 0, 9000.0),
+    ]
 
     def spec(self, split="train", **overrides):
         base = {"split": split, "aux_rows": self.AUX}
@@ -235,17 +241,20 @@ class AuxiliaryLabelTests(unittest.TestCase):
         targets = self.build(self.spec())
         np.testing.assert_array_equal(targets[:, 0], [1.0, 0.0, 1.0, 0.0, 1.0])
         np.testing.assert_array_equal(targets[:, 1], [0.0, 0.0, 1.0, 0.0, 0.0])
+        np.testing.assert_array_equal(targets[:, 2], [0.0, 0.0, 1.0, 0.0, 0.0])
+        np.testing.assert_array_equal(targets[:, 3], [0.0, 0.0, 0.0, 0.0, 1.0])
+        np.testing.assert_array_equal(targets[:, 4], [0.0, 0.0, 1.0, 0.0, 0.0])
 
     def test_play_time_is_log_compressed_and_min_max_scaled(self):
-        play = self.build(self.spec())[:, 2]
+        play = self.build(self.spec())[:, 5]
         self.assertAlmostEqual(float(play.min()), 0.0, places=6)
         self.assertAlmostEqual(float(play.max()), 1.0, places=6)
         # log1p compression: the 120000ms row must not dwarf everything else linearly.
         self.assertGreater(float(play[4]), 120000.0 / 120000.0 * 0.5)
 
     def test_constant_play_time_does_not_divide_by_zero(self):
-        spec = self.spec(aux_rows=[(0, 0, 42.0), (1, 0, 42.0)])
-        play = build_aux_labels(np.zeros((2, 5)), spec)[:, 2]
+        spec = self.spec(aux_rows=[(0, 0, 0, 0, 0, 42.0), (1, 0, 0, 0, 0, 42.0)])
+        play = build_aux_labels(np.zeros((2, 5)), spec)[:, 5]
         self.assertTrue(np.isfinite(play).all())
         np.testing.assert_array_equal(play, [0.0, 0.0])
 
@@ -330,8 +339,11 @@ class RegistryContractTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     sanitize_parameters(name, {"learning_rate": 0.5})
 
-    def test_feature_families_do_not_widen_required_coverage(self):
-        self.assertEqual(coverage_families(), frozenset({"bpr", "group_softmax"}))
+    def test_feature_families_are_in_required_coverage(self):
+        self.assertEqual(
+            coverage_families(),
+            frozenset({"bpr", "group_softmax", "history_features", "multi_task"}),
+        )
 
 
 if __name__ == "__main__":

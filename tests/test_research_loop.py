@@ -133,6 +133,7 @@ class ResearchLoopTests(unittest.TestCase):
                 "run_root": str(root / "runs"),
                 "generated_root": str(root / "generated"),
                 "method_catalog": str(REPO_ROOT / "research" / "methods"),
+                "discovery_store": str(root / "discoveries.json"),
                 "official_validation_baseline": 0.6016,
                 "llm": {"max_total_tokens": 1000},
                 "budgets": {
@@ -214,6 +215,7 @@ class ResearchLoopTests(unittest.TestCase):
                 "run_root": str(root / "runs"),
                 "generated_root": str(root / "generated"),
                 "method_catalog": str(REPO_ROOT / "research" / "methods"),
+                "discovery_store": str(root / "discoveries.json"),
                 "official_validation_baseline": 0.6016,
                 "llm": {"max_total_tokens": 1000},
                 "budgets": {
@@ -415,6 +417,7 @@ def research_config(root: Path, **budgets: int) -> tuple[dict, Path]:
         "run_root": str(root / "runs"),
         "generated_root": str(root / "generated"),
         "method_catalog": str(REPO_ROOT / "research" / "methods"),
+        "discovery_store": str(root / "discoveries.json"),
         "official_validation_baseline": 0.6016,
         "llm": {"max_total_tokens": 1000},
         "budgets": {

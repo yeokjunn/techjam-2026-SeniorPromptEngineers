@@ -38,6 +38,7 @@
   },
   "budgets": {
     "max_iterations": 50,
+    "max_training_attempts": 50,
     "max_proposals": 100,
     "max_wall_clock_seconds": 21600,
     "experiment_timeout_seconds": 432,

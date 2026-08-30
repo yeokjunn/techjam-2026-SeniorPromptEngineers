@@ -8,6 +8,7 @@ from typing import Any
 from .activity import ROLE_OBJECTIVES, summarize_role_output
 from .audit import ResearchAudit
 from .catalog import MethodCatalog
+from .discoveries import DiscoveryStore
 from .errors import RoleOutputInvalid
 from .families import FAMILIES, builder_brief, family_names
 from .llm import LLMCallResult, LLMProvider, normalize_parameters
@@ -82,6 +83,7 @@ class ResearchRoles:
         eda_researcher_max_output_tokens: int = 1000,
         eda_builder_max_output_tokens: int = 1200,
         eda_max_retries: int = 1,
+        discovery_store: DiscoveryStore | None = None,
     ):
         self.provider = provider
         self.catalog = catalog
@@ -92,6 +94,7 @@ class ResearchRoles:
         self.eda_researcher_max_output_tokens = int(eda_researcher_max_output_tokens)
         self.eda_builder_max_output_tokens = int(eda_builder_max_output_tokens)
         self.eda_max_retries = int(eda_max_retries)
+        self.discovery_store = discovery_store
         self._data_card_cache: dict[str | None, str] = {}
 
     def _data_card_text(self, state: RunState) -> str:
@@ -215,6 +218,11 @@ and leakage-safe feature hypotheses compatible with registered families: {', '.j
             return "No debugger memory has been recorded for this run."
         return debugger_memory
 
+    def _discovery_context(self) -> str:
+        if self.discovery_store is None:
+            return "No persistent web discoveries have been configured for this run."
+        return self.discovery_store.prompt_text()
+
     def eda_research(
         self,
         state: RunState,
@@ -320,6 +328,9 @@ Do not repeat a previous failed proposal or reuse its hypothesis_id.
 EDA EVIDENCE:
 {self._eda_context(eda_report)}
 
+PERSISTENT WEB DISCOVERIES:
+{self._discovery_context()}
+
 RESEARCH STATE:
 {self._state_summary(state)}
 """
@@ -337,6 +348,7 @@ RESEARCH STATE:
             sequence=sequence,
         )
         decision = ResearchDecision.from_dict(result.data)
+        web_searched = bool(result.usage.web_search_calls)
         if required_family and decision.family != required_family:
             raise RoleOutputInvalid(f"Researcher violated required family {required_family!r}.")
 
@@ -356,6 +368,7 @@ RESEARCH STATE:
                 sequence=sequence + 1 if sequence else 1,
             )
             decision = ResearchDecision.from_dict(result.data)
+            web_searched = True
             if result.sources and not decision.evidence:
                 decision = ResearchDecision(
                     **{
@@ -369,7 +382,14 @@ RESEARCH STATE:
         elif not self.web_search_enabled and decision.needs_web_search:
             raise RoleOutputInvalid("Researcher requested web search, but web search is disabled for this run.")
         parameters = sanitize_parameters(decision.family, normalize_parameters(decision.parameters))
-        return ResearchDecision(**{**asdict(decision), "parameters": parameters, "evidence": decision.evidence})
+        return ResearchDecision(
+            **{
+                **asdict(decision),
+                "parameters": parameters,
+                "evidence": decision.evidence,
+                "web_searched": web_searched or decision.web_searched,
+            }
+        )
 
     def critic_preflight(
         self,

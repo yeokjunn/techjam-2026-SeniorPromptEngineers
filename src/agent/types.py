@@ -106,6 +106,7 @@ class ResearchDecision:
     evidence: tuple[EvidenceSource, ...]
     needs_web_search: bool = False
     parent_experiment: str | None = None
+    web_searched: bool = False
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ResearchDecision":
@@ -126,6 +127,7 @@ class ResearchDecision:
             evidence=tuple(EvidenceSource.from_dict(item) for item in evidence_raw),
             needs_web_search=bool(value.get("needs_web_search", False)),
             parent_experiment=value.get("parent_experiment"),
+            web_searched=bool(value.get("web_searched", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:

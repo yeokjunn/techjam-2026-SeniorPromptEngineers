@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="generator" content="html-slides v0.6.6">
+<title>Valid Minimal</title>
+<style>
+  .deck { position: relative; width: 100vw; height: 100vh; }
+  .slide { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+  .slide.active { opacity: 1; pointer-events: auto; }
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+  <div class="slide active" data-slide="0"><h1>Slide 1</h1></div>
+  <div class="slide" data-slide="1"><h1>Slide 2</h1></div>
+  <div class="slide" data-slide="2"><h1>Slide 3</h1></div>
+</div>
+<script>
+var current = 0;
+var slides = document.querySelectorAll('.slide');
+var total = slides.length;
+function goTo(index) {
+  if (index < 0 || index >= total || index === current) return;
+  current = index;
+  slides.forEach(function(s, i) { s.classList.toggle('active', i === current); });
+}
+function next() { goTo(current + 1); }
+function prev() { goTo(current - 1); }
+</script>
+</body>
+</html>

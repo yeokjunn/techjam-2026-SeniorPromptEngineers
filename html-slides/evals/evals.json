@@ -1,0 +1,77 @@
+{
+  "skill_name": "html-slides",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Generate a presentation using the content from eval/content/pro-core.md. Use Pro mode with Obsidian theme. Include the 3 image slides using images from eval/assets/ (screenshot.svg, logo.svg, hero.svg). 13 slides total.",
+      "expected_output": "Obsidian theme with all core components: title, statement, flip cards, architecture flow, code block, stats, VS compare, timeline, table, 3 image variants, CTA. Content-driven layouts, not cycling through components in order.",
+      "files": ["eval/content/pro-core.md"]
+    },
+    {
+      "id": 2,
+      "prompt": "Generate a presentation using the content from eval/content/pro-core.md. Use Pro mode with Excalidraw Light theme. Include the 3 image slides using images from eval/assets/. 13 slides total.",
+      "expected_output": "Excalidraw Light theme: Caveat font, CSS hachure fills, 14px rounded corners, offset drop shadows. Same components as Obsidian but with hand-drawn aesthetic.",
+      "files": ["eval/content/pro-core.md"]
+    },
+    {
+      "id": 3,
+      "prompt": "Generate a presentation using the content from eval/content/pro-core.md. Use Pro mode with Binary Architect theme. Include the 3 image slides using images from eval/assets/. 13 slides total.",
+      "expected_output": "Binary Architect theme: 0px border-radius, grid overlay, neon green accents, monospaced body text, uppercase headings. Sharp hacker-elite aesthetic.",
+      "files": ["eval/content/pro-core.md"]
+    },
+    {
+      "id": 4,
+      "prompt": "Generate a presentation using the content from eval/content/pro-charts.md. Use Pro mode with Obsidian theme. 6 slides with 4 Chart.js charts (bar, line, pie, doughnut).",
+      "expected_output": "All 4 charts render correctly with theme-aware colors. Charts have proper containers, responsive sizing, and animate on slide entry.",
+      "files": ["eval/content/pro-charts.md"]
+    },
+    {
+      "id": 5,
+      "prompt": "Generate a presentation using the content from eval/content/pro-mermaid.md. Use Pro mode with Obsidian theme. 6 slides with 3 Mermaid diagrams (flowchart TD, sequence, mind map). Read references/libraries.md for Mermaid integration requirements.",
+      "expected_output": "Mermaid diagrams in .mermaid-wrap containers with background, border, border-radius. Flowchart uses TD (not LR). themeVariables match Obsidian palette. fontSize 18px+. Diagram lightbox with +/- zoom buttons.",
+      "files": ["eval/content/pro-mermaid.md"]
+    },
+    {
+      "id": 6,
+      "prompt": "Generate a 6-slide pitch deck for 'Aura' using the content from eval/content/vibe-aura.md. Use Vibe mode with Bold Signal preset.",
+      "expected_output": "Bold Signal: Archivo Black font, colored card focal points on dark gradient, section numbers. viewport-base.css included, no conflicting .slide redefinition. All CSS generated from scratch.",
+      "files": ["eval/content/vibe-aura.md"]
+    },
+    {
+      "id": 7,
+      "prompt": "Generate a 6-slide pitch deck for 'Aura' using the content from eval/content/vibe-aura.md. Use Vibe mode with Dark Botanical preset.",
+      "expected_output": "Dark Botanical: Cormorant serif, warm accents (pink, gold, terracotta), abstract gradient circles. viewport-base.css included, no conflicting .slide redefinition.",
+      "files": ["eval/content/vibe-aura.md"]
+    },
+    {
+      "id": 8,
+      "prompt": "Generate a 6-slide pitch deck for 'Aura' using the content from eval/content/vibe-aura.md. Use Vibe mode with Swiss Modern preset.",
+      "expected_output": "Swiss Modern: Archivo + Nunito, white/black/red palette, visible grid, asymmetric layouts, geometric shapes. viewport-base.css included, no conflicting .slide redefinition.",
+      "files": ["eval/content/vibe-aura.md"]
+    },
+    {
+      "id": 9,
+      "prompt": "Generate a 6-slide pitch deck for 'Aura' using the content from eval/content/vibe-aura.md. Use Vibe mode with Creative Voltage preset.",
+      "expected_output": "Creative Voltage: Syne + Space Mono, electric blue + neon yellow, halftone textures. viewport-base.css included, no conflicting .slide redefinition.",
+      "files": ["eval/content/vibe-aura.md"]
+    },
+    {
+      "id": 10,
+      "prompt": "Generate a 6-slide pitch deck for 'Aura' using the content from eval/content/vibe-aura.md. Use Vibe mode with Notebook Tabs preset.",
+      "expected_output": "Notebook Tabs: Bodoni Moda + DM Sans, cream paper card on dark bg, colorful section tabs, binder holes. viewport-base.css included, no conflicting .slide redefinition.",
+      "files": ["eval/content/vibe-aura.md"]
+    },
+    {
+      "id": 11,
+      "prompt": "Generate a 6-slide pitch deck for 'Aura' using the content from eval/content/vibe-aura.md. Use Vibe mode with Vintage Editorial preset.",
+      "expected_output": "Vintage Editorial: Fraunces + Work Sans, cream bg, geometric shapes (circle + line + dot), bold bordered CTA. viewport-base.css included, no conflicting .slide redefinition.",
+      "files": ["eval/content/vibe-aura.md"]
+    },
+    {
+      "id": 12,
+      "prompt": "Generate an 8-slide presentation using the content from eval/content/vibe-devops.md. Use Vibe mode with Excalidraw Light preset. Pure CSS hand-drawn aesthetic — no Rough.js.",
+      "expected_output": "Excalidraw Light CSS-only: Caveat font, CSS hachure fills on cards (14px border-radius), offset drop shadows, CSS-drawn arrows and connectors. No Rough.js CDN. Hand-drawn aesthetic achieved entirely with CSS.",
+      "files": ["eval/content/vibe-devops.md"]
+    }
+  ]
+}

@@ -1528,8 +1528,6 @@ def _results(snapshot: RunSnapshot, official: float) -> None:
     best_primary = metrics.get("primary", 0.6015)
     best_iter = max((item.iteration for item in snapshot.iterations), default=17)
 
-    # Score Comparison Bar Chart
-    st.markdown('<div class="ui-card-title">Score comparison <span style="font-weight: 500; font-size: 0.82rem; color: #64748b;">(validation only)</span></div>', unsafe_allow_html=True)
     # Score Comparison Bar Chart (Full Width)
     st.markdown('<div class="ui-card-title">Score comparison <span style="font-weight: 500; font-size: 0.82rem; color: #64748b;">(validation only · official baseline: 0.6016)</span></div>', unsafe_allow_html=True)
     
@@ -1544,25 +1542,18 @@ def _results(snapshot: RunSnapshot, official: float) -> None:
         {"Model": "Official FM", "Metric": "GAUC", "Score": 0.6015},
         {"Model": "Official FM", "Metric": "nDCG@5", "Score": 0.5390},
         {"Model": "Official FM", "Metric": "Primary (avg)", "Score": 0.5703},
-        {"Model": f"Best (Iter {best_iter})", "Metric": "GAUC", "Score": best_gauc},
-        {"Model": f"Best (Iter {best_iter})", "Metric": "nDCG@5", "Score": best_ndcg},
-        {"Model": f"Best (Iter {best_iter})", "Metric": "Primary (avg)", "Score": best_primary},
         {"Model": best_label, "Metric": "GAUC", "Score": best_gauc},
         {"Model": best_label, "Metric": "nDCG@5", "Score": best_ndcg},
         {"Model": best_label, "Metric": "Primary (avg)", "Score": best_primary},
     ]
     df_chart = pd.DataFrame(chart_data)
 
-    chart = (
     model_order = ["Random", "Popularity", "Official FM", best_label]
 
     bars = (
         alt.Chart(df_chart)
-        .mark_bar()
         .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
         .encode(
-            x=alt.X("Metric:N", title=None, axis=alt.Axis(labels=True)),
-            y=alt.Y("Score:Q", title=None, scale=alt.Scale(domain=[0.0, 0.8])),
             x=alt.X(
                 "Model:N",
                 title=None,
@@ -1584,18 +1575,14 @@ def _results(snapshot: RunSnapshot, official: float) -> None:
                 ),
                 legend=alt.Legend(orient="top", title=None),
             ),
-            column=alt.Column("Model:N", title=None),
-            tooltip=["Model", "Metric", "Score"],
             tooltip=[
                 alt.Tooltip("Model:N"),
                 alt.Tooltip("Metric:N"),
                 alt.Tooltip("Score:Q", format=".4f"),
             ],
         )
-        .properties(height=220)
         .properties(height=280)
     )
-    st.altair_chart(chart, use_container_width=True)
 
     baseline_rule = (
         alt.Chart(pd.DataFrame([{"Baseline": official}]))

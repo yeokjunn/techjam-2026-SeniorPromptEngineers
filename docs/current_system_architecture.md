@@ -216,14 +216,14 @@ The Streamlit dashboard reads persisted artifacts under `runs/` and aggregate ED
 
 ## Latest Verified Run Snapshot
 
-Latest live autonomous run: `kj_20260831T020238331867Z_research`.
+Designated final run: `20260831T141845874517Z_research`, committed at `runs/final/`.
 
 | Result | GAUC | nDCG@5 | Primary |
 |---|---:|---:|---:|
-| Best single checkpoint | 0.6701 | 0.5373 | 0.6037 |
-| Validation-only ensemble | 0.6718 | 0.5378 | 0.6048 |
+| Best single checkpoint | 0.6707 | 0.5382 | 0.6045 |
+| Validation-only ensemble | 0.6711 | 0.5383 | 0.6047 |
 
-The run stopped at iteration 12 by the official convergence rule, used 13 training attempts, reported 1,855,199 LLM tokens, took 3,664.28 seconds wall-clock, had 0 manual interventions, and passed the label-free submission gate on 170,588 test rows.
+The run stopped at iteration 6 by the official convergence rule, used 8 training attempts, reported 446,210 LLM tokens, took 1,771.62 seconds wall-clock, had 0 manual interventions and 0 failed iterations, and passed the label-free submission gate on 170,588 test rows.
 
 Convergence rule implemented by the harness:
 

@@ -21,20 +21,16 @@
     "max_role_reprompts": 1
   },
   "llm": {
-    "provider": "glm",
-    "model": "glm-5.3",
-    "api_key_env": "ZAI_API_KEY",
-    "base_url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-    "temperature": 0.4,
-    "role_temperatures": {
-      "builder": 0.1,
-      "debugger": 0.1
-    },
-    "thinking": "low",
-    "max_output_tokens": 6000,
+    "provider": "openai",
+    "model": "gpt-5.4-nano",
+    "reasoning_effort": "low",
+    "verbosity": "low",
+    "store": false,
+    "max_output_tokens": 8000,
+    "max_tool_calls": 1,
     "max_total_tokens": 2500000,
     "request_timeout_seconds": 180,
-    "max_retries": 5
+    "max_retries": 3
   },
   "budgets": {
     "max_iterations": 50,

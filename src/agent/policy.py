@@ -290,6 +290,21 @@ def scored_primaries(state: RunState) -> list[float]:
     ]
 
 
+def research_primaries(state: RunState) -> list[float]:
+    """Successful non-replication probes used by the harness stagnation agenda.
+
+    Exact seed replications measure variance; they do not test a new mechanism and
+    therefore must not consume the harness's no-progress research window. The
+    official convergence sequence still uses :func:`scored_primaries` and reports
+    every successful iteration.
+    """
+    return [
+        float(node.metrics["primary"])
+        for node in state.nodes
+        if node.status == "success" and node.metrics and node.action != "replicate"
+    ]
+
+
 def sanitize_parameters(family: str, raw: dict[str, Any]) -> dict[str, Any]:
     """Coerce and validate a proposal's parameters against the family registry.
 
@@ -306,7 +321,9 @@ def sanitize_parameters(family: str, raw: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"Unsupported family: {family}")
     defaults = dict(getattr(entry, "defaults", {}) or {})
     grid = dict(getattr(entry, "grid", {}) or {})
-    if family == "history_features":
+    if family == "history_features" and any(
+        name.startswith("use_") for name in raw
+    ):
         for name in grid:
             if name.startswith("use_") and name not in raw:
                 defaults[name] = False
@@ -352,6 +369,23 @@ def sanitize_parameters(family: str, raw: dict[str, Any]) -> dict[str, Any]:
             continue
         if not permitted(parameters[name]):
             raise ValueError(message)
+    history_keys = tuple(f"use_{group}" for group in families.HISTORY_GROUPS)
+    if (
+        family == "history_features"
+        and any(key in grid for key in history_keys)
+        and not any(bool(parameters.get(key)) for key in history_keys)
+    ):
+        raise ValueError(
+            "history_features must enable at least one candidate-dependent history group; "
+            "an all-false configuration is only the baseline FM under a misleading family name."
+        )
+    auxiliary_keys = tuple(f"use_{head}" for head in families.AUX_HEADS)
+    if (
+        family == "multi_task"
+        and any(key in grid for key in auxiliary_keys)
+        and not any(bool(parameters.get(key)) for key in auxiliary_keys)
+    ):
+        raise ValueError("multi_task must enable at least one auxiliary target head.")
     return parameters
 
 
@@ -370,7 +404,7 @@ class SearchPolicy:
         # (`research_controller.py:329`) — so recomputing from scratch is what
         # the old incremental update said, and is right after a resume too.
         state.meaningful_best, state.stagnant_iterations = stagnation(
-            [state.baseline_primary] + scored_primaries(state), self.epsilon
+            [state.baseline_primary] + research_primaries(state), self.epsilon
         )
 
         if state.best_metrics is None or score > float(state.best_metrics["primary"]):

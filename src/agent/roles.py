@@ -636,9 +636,16 @@ EDA EVIDENCE:
         # role-output drift instead of abandoning an otherwise approved probe.
         # CandidateWorkspace still validates the source against the canonical
         # family contract, so this cannot broaden imports or bypass safety.
-        parameters = sanitize_parameters(
-            decision.family, normalize_parameters(manifest.parameters)
+        # The approved signal selection is part of the experiment contract. A
+        # Builder may repair implementation details, but it must not silently
+        # turn off (or add) the history groups / auxiliary heads under test.
+        raw_parameters = normalize_parameters(manifest.parameters)
+        semantic_keys = tuple(
+            key for key in decision.parameters if key.startswith("use_")
         )
+        for key in semantic_keys:
+            raw_parameters[key] = decision.parameters[key]
+        parameters = sanitize_parameters(decision.family, raw_parameters)
         return CandidateManifest(
             **{
                 **asdict(manifest),

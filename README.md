@@ -302,8 +302,11 @@ fires at that engineering guard.
 **Convergence** uses ε = **0.002** and patience **3** over successful validation
 scores only. Failed experiments do not count as convergence evidence because
 they have no validation score. The run summary reports the official convergence
-verdict separately from the harness `stop_reason`; the harness may spend an
-extra pass on queued replications or best-family follow-ups before stopping.
+verdict over every successful iteration, including seed replications. The harness
+research-stagnation counter excludes exact replications because they estimate
+variance rather than test a new mechanism; it therefore requires three stagnant
+non-replication probes before stopping. Queued replications and best-family
+follow-ups are still completed within the 50-iteration/six-hour hard limits.
 
 ## First research agenda
 
@@ -341,7 +344,7 @@ interventions.
 | Iteration | Candidate | Family | Status | Primary | Notes |
 |---:|---|---|---|---:|---|
 | 1 | `hf_prior_user_author_recency_decay_v1_bpr_bce` | `history_features` | failed | — | Candidate unpacked the validation metrics dict as a tuple; bounded debugger repair did not rescue this run. |
-| 2 | `hf_prior_days_recency_candidate_author_overlap_v2_bpr` | `history_features` | success | **0.6039** | Best single checkpoint; improved official validation baseline by `+0.0023`. |
+| 2 | `hf_prior_days_recency_candidate_author_overlap_v2_bpr` | `history_features` | success | **0.6039** | Best single checkpoint, but all history toggles were false; effectively baseline FM fields trained with BPR. |
 | 3 | `hf_prior_days_recency_candidate_author_overlap_v2_bpr_seed1` | `history_features` | success | 0.6033 | Exact seed replication; did not improve by more than `0.002`. |
 | 4 | `hf_prior_days_recency_candidate_author_overlap_v2_bpr_seed2` | `history_features` | success | 0.6035 | Exact seed replication; did not improve by more than `0.002`. |
 | 5 | `bpr_margin_softplus_0p1` | `bpr` | success | 0.6034 | Margin-BPR follow-up; did not improve by more than `0.002`, triggering convergence after 3 stagnant successes. |
@@ -357,6 +360,11 @@ primary `0.6046` with GAUC `0.6711` and nDCG@5 `0.5380`. The label-free
 submission gate passed on 170,588 test rows. The run artifacts remain generated
 outputs under `runs/` and are intentionally not committed in this PR. Source:
 [`summary.json`](runs/20260830T175102340187Z_research/summary.json).
+
+The misleading iteration-2 configuration motivated a contract fix: a
+`history_features` proposal must now enable at least one history group, a
+`multi_task` proposal must enable at least one auxiliary head, and the Builder
+cannot silently change the Researcher's approved `use_*` signal selection.
 
 Previously committed integration run `20260829T060130480764Z_research` executed
 the real BPR trainer and the label-free submission gate:

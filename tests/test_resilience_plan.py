@@ -1,6 +1,6 @@
 import unittest
 
-from src.agent.families import HISTORY_GROUPS
+from src.agent.families import AUX_HEADS, HISTORY_GROUPS
 from src.agent.policy import sanitize_parameters
 from src.agent.types import EDAReport
 
@@ -12,6 +12,19 @@ class ResiliencePlanTests(unittest.TestCase):
         for group in HISTORY_GROUPS:
             if group != "recency":
                 self.assertFalse(result[f"use_{group}"])
+
+    def test_history_features_rejects_empty_signal_set(self):
+        with self.assertRaisesRegex(ValueError, "at least one candidate-dependent"):
+            sanitize_parameters(
+                "history_features",
+                {f"use_{group}": False for group in HISTORY_GROUPS},
+            )
+
+    def test_multi_task_rejects_empty_auxiliary_set(self):
+        with self.assertRaisesRegex(ValueError, "at least one auxiliary"):
+            sanitize_parameters(
+                "multi_task", {f"use_{head}": False for head in AUX_HEADS}
+            )
 
     def test_eda_report_truncates_schema_strings(self):
         report = EDAReport.from_dict({

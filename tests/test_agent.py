@@ -10,6 +10,7 @@ from src.agent.policy import (
     family_experiment_score,
     next_family_hint,
     required_family,
+    research_primaries,
     scored_primaries,
 )
 from src.agent.proposer import ConfigProposer
@@ -224,6 +225,26 @@ class OfficialConvergenceTests(unittest.TestCase):
             self.assertEqual(tracker.stagnant_iterations, state.stagnant_iterations, iteration)
         self.assertEqual(scored_primaries(state), scores[1:])
         self.assertEqual(state.stagnant_iterations, 3)
+
+    def test_replications_do_not_consume_research_stagnation(self):
+        state = RunState("run", "running", "now", 0.6016, meaningful_best=0.6016)
+        policy = SearchPolicy(0.002, 3, [])
+        for iteration, action in enumerate(("explore", "replicate", "replicate"), start=1):
+            node = ExperimentNode(
+                iteration,
+                f"e{iteration}",
+                "h",
+                "bpr",
+                action,
+                {},
+                "success",
+                {"primary": 0.6030},
+            )
+            state.nodes.append(node)
+            policy.observe_success(state, node)
+        self.assertEqual(len(scored_primaries(state)), 3)
+        self.assertEqual(research_primaries(state), [0.6030])
+        self.assertEqual(state.stagnant_iterations, 1)
 
 
 if __name__ == "__main__":

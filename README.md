@@ -1,7 +1,106 @@
 # Senior Prompt Engineers — TechJam 2026
 
-Autonomous ML research agent for the KuaiRand-Pure within-user ranking task.
-The working target is `long_view`, evaluated with GAUC and nDCG@5.
+TechJam 2026 Track 2 — Autonomous Machine Learning Research Agent for Recommender Systems.
+
+## Project overview
+
+An autonomous ML research agent for **KuaiRand-Pure**. Given the dataset and the organizers'
+metrics, it runs the full MLE loop of the problem statement's Figure 1 on its own — read the
+problem, inspect the data, engineer features, train and tune, evaluate, then reflect and
+iterate — and writes the code for each stage itself rather than selecting from prepared
+implementations.
+
+The task is fixed by the organizers and this repository does not change it: rank within each
+user's logged impressions, with `long_view` as the positive label, scored by
+**GAUC / nDCG@5** and `primary = mean(GAUC, nDCG@5)`. Development uses the train and
+validation splits only; the hidden test split is never read during a run
+(`src/evaluation/official.py` filters on date *before* touching the label column).
+
+How it works, end to end:
+
+1. **Baseline first.** The agent reproduces the organizers' reference pipeline — a numpy
+   factorization machine — and refuses to proceed on a baseline that does not match the
+   published validation score, so every later delta is measured against the real reference
+   rather than something the agent built for itself.
+2. **Four roles per iteration.** An EDA pass, then Researcher (proposes one controlled
+   experiment, citing a method card), Critic (approves or rejects before any compute is
+   spent), Builder (writes `candidate.py` and its unit tests) and Debugger (repairs a failed
+   candidate, bounded).
+3. **Generated code runs sandboxed.** Candidate source is AST-validated and executed with a
+   restricted `__builtins__`, an import allowlist and no filesystem, network or subprocess
+   access, so an LLM-written candidate cannot reach the raw logs or the evaluator.
+4. **Trusted code owns the numbers.** Metrics, checkpoints and the submission are computed by
+   the harness, never reported by the candidate.
+5. **It stops on the organizers' rule.** ε = 0.002 over N = 3 iterations, with the
+   50-iteration and 6-hour caps as backstops.
+
+Four research families are registered, each with a method card the Researcher must cite:
+`bpr`, `group_softmax`, `history_features` (user-behaviour history, the starter kit's #2
+untested direction) and `multi_task` (auxiliary feedback signals, its #3).
+
+## Results
+
+The committed converged run is [`runs/final/`](runs/final/); its full ledger, per-iteration
+diffs, data card and submission are in the repository.
+
+| Metric | Official baseline | Agent best | Δ |
+|---|---|---|---|
+| GAUC | 0.6674 | 0.6707 | +0.0033 |
+| nDCG@5 | 0.5357 | 0.5382 | +0.0025 |
+| **primary** | **0.6016** | **0.6045** | **+0.0029** |
+
+Best candidate `hist_prior_days_var_gs2_3b9a_seed1` — a `history_features` proposal, i.e. the
+agent's own gain came from the feature axis rather than from tuning the loss. Stop reason
+`converged`, submission gate `ok`, 170,588 scored rows.
+
+Resource usage to reach that result (Feasibility reporting):
+
+| | |
+|---|---|
+| LLM tokens (input + output) | 446,210 |
+| Agent wall-clock | 29.5 min |
+| GPU-hours | 0.0 |
+| Iterations used | 6 of 50 (stopped on the convergence rule, not the cap) |
+| **Manual interventions** | **0** |
+
+Read the delta against the attainable range, not against 1.0: a perfect ranking scores
+**primary 0.8645** on the hidden test — 27.1% of users have no positive label and score nDCG 0
+for any model — and random scoring sits at 0.4753. The baseline already captures ~31% of that
+span. See *Limitations* for how much of this delta is separable from seed noise.
+
+## Reproduce the results
+
+```bash
+# 1. environment
+python -m venv .venv && .venv/Scripts/activate      # Linux/macOS: source .venv/bin/activate
+python -m pip install -r requirements.txt
+
+# 2. dataset (~280 MB, verified by checksum; never committed)
+sh scripts/download_data.sh
+
+# 3. tests
+python -m pytest -q
+
+# 4. reproduce the official baseline (~40 s of FM training)
+python -m src.agent.controller --config configs/baseline.json
+
+# 5. reproduce the autonomous run: put your provider key in .env, then
+python -m src.agent.controller --config configs/ranking_losses.json
+```
+
+Step 5 is a live LLM run and consumes API credit. For an offline end-to-end check that needs
+no key and no credit, use the scripted provider:
+
+```bash
+python -m src.agent.controller --config configs/offline_smoke.json
+```
+
+Each run writes a timestamped directory under `runs/` containing `journal.md` (hypothesis and
+code diff per iteration), `results.md` (results table, token usage, wall-clock, intervention
+count), `iterations.jsonl`, `DATA_CARD.md` and `submission.csv`. An autonomous run is
+stochastic — the LLM proposes different experiments each time — so a fresh run will not
+reproduce `runs/final/` candidate for candidate; the baseline in step 4 is deterministic and
+does reproduce exactly.
 
 ## What is implemented
 

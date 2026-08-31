@@ -1,46 +1,46 @@
 {
   "status": "ok",
-  "blending_method": "rank",
+  "blending_method": "normalize",
   "metrics": {
-    "GAUC": 0.6717091212793168,
-    "nDCG@5": 0.5379154409853121,
-    "primary": 0.6048122811323144,
+    "GAUC": 0.6711283617816534,
+    "nDCG@5": 0.5382959625342117,
+    "primary": 0.6047121621579326,
     "users": 22377.0,
     "rows": 124909.0
   },
-  "single_best_primary": 0.6041701436042786,
-  "ensemble_primary": 0.6048122811323144,
-  "delta_primary": 0.0006421375280358799,
+  "single_best_primary": 0.6044650077819824,
+  "ensemble_primary": 0.6047121621579326,
+  "delta_primary": 0.00024715437595013157,
   "weights": {
-    "gs_hard_neg_temp2_run1_seed2 (group_softmax)": 0.30303030303030304,
-    "gs_hard_neg_temp2_run1_seed1 (group_softmax)": 0.1816120387548959,
-    "gs_hard_neg_temp2_run1 (group_softmax)": 0.25767882910740053,
-    "hist_user_tab_tabcross_bpr_v1 (history_features)": 0.25767882910740053
+    "hist_prior_days_var_gs2_3b9a_seed1 (history_features)": 0.939174054298974,
+    "mt_click_aux_02_bpr (multi_task)": 0.017126275607970868,
+    "bpr_topweighted_hard_2 (bpr)": 0.0,
+    "gs_hist_cross_hard_temp1 (group_softmax)": 0.0436996700930551
   },
   "candidates": [
     {
-      "experiment_id": "gs_hard_neg_temp2_run1_seed2",
-      "family": "group_softmax",
-      "primary": 0.6041701436042786,
-      "weight": 0.30303030303030304
-    },
-    {
-      "experiment_id": "gs_hard_neg_temp2_run1_seed1",
-      "family": "group_softmax",
-      "primary": 0.6040254831314087,
-      "weight": 0.1816120387548959
-    },
-    {
-      "experiment_id": "gs_hard_neg_temp2_run1",
-      "family": "group_softmax",
-      "primary": 0.6040176749229431,
-      "weight": 0.25767882910740053
-    },
-    {
-      "experiment_id": "hist_user_tab_tabcross_bpr_v1",
+      "experiment_id": "hist_prior_days_var_gs2_3b9a_seed1",
       "family": "history_features",
-      "primary": 0.6028196811676025,
-      "weight": 0.25767882910740053
+      "primary": 0.6044650077819824,
+      "weight": 0.939174054298974
+    },
+    {
+      "experiment_id": "mt_click_aux_02_bpr",
+      "family": "multi_task",
+      "primary": 0.5820275545120239,
+      "weight": 0.017126275607970868
+    },
+    {
+      "experiment_id": "bpr_topweighted_hard_2",
+      "family": "bpr",
+      "primary": 0.5550369024276733,
+      "weight": 0.0
+    },
+    {
+      "experiment_id": "gs_hist_cross_hard_temp1",
+      "family": "group_softmax",
+      "primary": 0.5527652502059937,
+      "weight": 0.0436996700930551
     }
   ]
 }

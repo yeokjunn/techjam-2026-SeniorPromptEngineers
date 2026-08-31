@@ -1,145 +1,145 @@
 {
-  "data_card_path": "runs/20260831T115602777469Z_research/DATA_CARD.md",
+  "data_card_path": "runs/20260831T141845874517Z_research/DATA_CARD.md",
   "data_dir": "data/KuaiRand-Pure/data",
   "feature_candidates": [
     {
-      "description": "Categorical interaction of tab (0-14) with binned hour (e.g., 4-hour buckets) to capture context-specific engagement patterns.",
-      "expected_impact": "High; tab alone has large rate differences, hour may add recency/fatigue effects.",
-      "family": "group_softmax",
-      "implementation_scope": "Add as a feature embedding in candidate.py; requires mapping tab and hourmin to bucket indices.",
-      "leakage_risk": "Low; tab and hour are observed at exposure time, no future info.",
-      "name": "tab_hour_bucket_interaction"
-    },
-    {
-      "description": "Train-only prefix-computed rate of user's past long_view per video category (or tag), updated per exposure.",
-      "expected_impact": "Moderate; captures user preferences and may improve ranking within user.",
+      "description": "Log-scaled normalized exposure count per video derived from leaky video stats, centered by tab mean.",
+      "expected_impact": "Potential small rank gain if exposure correlates with popularity, but risk of leakage-driven overfitting; likely flat once controlling for tab.",
       "family": "history_features",
-      "implementation_scope": "Compute on-the-fly during training using train-only interactions; store per-user, per-category counters.",
-      "leakage_risk": "High if computed over full log; must be strictly prefix (only prior exposures) to avoid future leakage.",
-      "name": "user_history_longview_rate_per_category"
+      "implementation_scope": "Compute per-video log count on train+valid; store as static feature; apply log1p and standardize; use only in hypothesis tests.",
+      "leakage_risk": "High: includes future exposure counts; must never be trusted for final ranking.",
+      "name": "log_video_exposure_count_scaled"
     },
     {
-      "description": "Use is_like, is_comment, is_forward as auxiliary targets in a multi-task loss to sharpen long_view representation.",
-      "expected_impact": "Moderate; auxiliary labels share user intent and could regularize the main objective.",
-      "family": "multi_task",
-      "implementation_scope": "Add auxiliary heads and combine losses; available labels in train; no change to primary label.",
-      "leakage_risk": "Low; labels are contemporaneous with long_view and do not include future info.",
-      "name": "multi_task_auxiliary_labels"
+      "description": "Per-user historical long_view ratio over video_type or upload_type categories, smoothed with prior.",
+      "expected_impact": "Moderate positive gain by capturing preference homogeneity; avoids user-only constant issue.",
+      "family": "history_features",
+      "implementation_scope": "Compute from train log only: group by user + video_type, count long_view/total; add smoothing (e.g., Bayesian prior).",
+      "leakage_risk": "Low if derived strictly from train; no future info.",
+      "name": "user_videotype_longview_ratio"
+    },
+    {
+      "description": "Encoded tab with relative position (e.g., rank of exposure within user's tab sequence) to capture recency-context.",
+      "expected_impact": "Small gain by capturing position effects that are not user-constant; but must avoid raw row order leakage.",
+      "family": "history_features",
+      "implementation_scope": "From train log, compute per-user sequential index per tab and normalize; embed as numeric/embedding feature.",
+      "leakage_risk": "Low if computed from train sequence; do not use raw row order beyond training period.",
+      "name": "tab_interaction_position"
     }
   ],
   "findings": [
     {
-      "evidence": "DATA CARD tab breakdown (train) shows wide rate differences across tabs.",
-      "implication": "Including tab as a categorical feature (or per-tab user history) should improve ranking significantly.",
+      "evidence": "DATA CARD Tab Breakdown shows long_view rates 38.61% (tab1), 4.22% (tab0), 48.93% (tab4).",
+      "implication": "A tab-context feature could help rank within user, but careful with sparse tab handling and confounds with position.",
       "leakage_safe": true,
-      "observation": "Long_view rate varies dramatically by tab: tab 4 at 48.93%, tab 1 at 38.61%, tab 0 at 4.22% (train).",
-      "title": "Tab position is a strong categorical predictor"
+      "observation": "Long_view rate varies strongly by tab (e.g., tab 4 ~49%, tab 0 ~4%), but tabs are sparse (top 3 tabs cover ~96% of rows).",
+      "title": "Tab-driven long_view rate separation"
     },
     {
-      "evidence": "DATA CARD 'Data Quality' section lists zero-duration and duplicate counts.",
-      "implication": "Univariate correlation analyses should exclude or flag these rows to avoid spurious estimates.",
-      "leakage_safe": true,
-      "observation": "239 videos with zero duration (24,076 rows) and 15,609 exact duplicate rows exist in train log.",
-      "title": "Data quality issues can bias correlations"
+      "evidence": "DATA CARD Leakage Flag: 12.83B vs 2.62M exposures, ratio ~4892:1.",
+      "implication": "Any features from it may overfit future exposure; use only for hypothesis testing with explicit caveat, prefer log-derived counts.",
+      "leakage_safe": false,
+      "observation": "Video statistics table aggregates full-platform traffic (ratio ~4892:1 vs logged), observation periods exceed log span.",
+      "title": "Video stats table is leaky and noisy"
     },
     {
-      "evidence": "DATA CARD 'Rows per User' percentile and leakage risk note on user history features.",
-      "implication": "Build history features using only prior logged exposures per user to avoid future leakage.",
+      "evidence": "DATA CARD lists user features; history_features family is registered.",
+      "implication": "Item-conditioned history (e.g., user's long_view rate on similar video_type) can add rank signal without leakage.",
       "leakage_safe": true,
-      "observation": "Users have median 34 rows (p50), providing enough history for aggregates, but validation-period rows must be excluded from history computation.",
-      "title": "User history requires train-only prefix windows"
+      "observation": "Per-user long_view/click/like/follow history from train is fully available; user-only constants are useless for within-user but history features vary by item.",
+      "title": "User-side history is likely discriminative"
     }
   ],
   "iteration": 2,
   "plan": {
     "expected_artifacts": [
-      "long_view_rate_by_hour_tab_position.csv (train-only descriptive table).",
-      "user_history_correlation_report.csv (train-only windowed aggregates vs long_view).",
-      "video_feature_univariate_scores.txt (logistic regression coefficients, excluding leaky table initially).",
-      "eda_leakage_audit.md (documentation of any leaky table usage and mitigation decisions)."
+      "A compact EDA report (markdown) summarizing per-tab long_view trends and selected strong/uninformative features.",
+      "A leakage-aware feature candidate list with expected family compatibility and predicted primary metric impact.",
+      "A scatter/heatmap of video stats vs. observed long_view rates (train-only) to quantify noise.",
+      "A short recommendation for the next experiment (e.g., bpr with a new history feature or multi-task joint loss)."
     ],
     "feature_hypotheses": [
-      "Temporal features (hour, day-of-week, time since last exposure) and within-session position improve ranking due to recency and fatigue effects.",
-      "User historical long_view rate per tab and per video category (computed from train-only, prefixed windows) adds predictive signal for next exposure.",
-      "Video popularity from the leaky aggregate table (caveated with risk controls, e.g., min exposure count) can boost ranking without significant leakage if handled as a decaying feature.",
-      "Multi-task auxiliary labels (is_like, is_comment, is_forward) share latent user intent with long_view and can be exploited via a group_softmax or multi_task family without changing the primary label."
+      "Relative video popularity within a user's exposed set (rank-normalized view/long_view counts) is stable and adds gain under bpr.",
+      "User's historical long_view ratio on similar video types (video_type, upload_type) is predictive due to preference homogeneity.",
+      "Tab-specific long_view rates combined with position in user history encode context that is currently untapped.",
+      "Deriving normalized exposure frequency per video from the video stats table after log-scaling and centering reduces leakage-driven overfitting while preserving signal."
     ],
     "leakage_risks": [
-      "Video statistics aggregate spans a period 45-181 days longer than the interaction log, leaking future popularity into past ranking decisions.",
-      "Duplicate rows (15,609) and zero-duration videos (239) may bias correlation estimates if not removed before aggregation.",
-      "User history features computed from the full log, including the validation period, would leak future responses into training; must be strictly train-only or prefix-split.",
-      "Position and tab variables are confounded with user intent; naive correlations can mislead without within-user stratification."
+      "Any feature derived from the video statistics table includes future exposure counts; must be caveated and only used for hypothesis testing, not trusted for leak-free ranking.",
+      "Using video stats to compute per-user normalization could leak rank information across users if not strictly computed within the exposed set.",
+      "Duplicate rows (15,609) and zero-duration videos (239) may bias interaction-pattern summaries; need to exclude or explicitly account.",
+      "Hour/tab interactions may be confounded with position; must avoid using row order as a feature except as a historical sequence feature."
     ],
-    "objective": "Plan a leakage-safe EDA pass on KuaiRand-Pure to identify feature families and preprocessing choices that could lift within-user long_view ranking above baseline 0.6016, focusing on registered families and the known constraints.",
+    "objective": "Design a leakage-safe EDA pass to identify discriminative, within-user-rankable signals for long_view ranking, targeting GAUC/nDCG@5 improvement over baseline 0.6016.",
     "questions": [
-      "How does long_view rate vary by hour, day-of-week, tab, and within-user exposure position, controlling for user fixed effects?",
-      "What is the association between user history aggregates (past long_view/click rates per tab or video category) and future long_view in train?",
-      "Which video attributes (e.g., tags, categories, duration) show the strongest univariate correlation with long_view, after removing zero-duration and duplicate rows?",
-      "Do auxiliary labels (like/comment/forward) at the user-item level correlate with long_view enough to justify multi-task auxiliary objectives?"
+      "How do long_view rates vary by video/user interaction recency, dwell-time proxies, and sequential position within a user's session?",
+      "Which user-side signals (e.g., active degree, follow/comment history, long_view history) are most predictive when combined with video-side statistics in within-user rank?",
+      "Does the leaky video statistics table provide statistically separable signal after controlling for tab and hour?",
+      "What is the marginal rank predictive power of per-video exposure counts, tab affinity, and cross-video transition counts from the log itself?"
     ],
     "required_inputs": [
-      "Train and validation interaction logs (user_id, video_id, tab, position, timestamp/hour, all labels).",
-      "Video feature table and user profile table (for category/tag and user-level attributes).",
-      "Video statistics table (leaky) with explicit column names and observation period bounds.",
-      "Existing model config and candidate.py API from the current experiment family (bpr/group_softmax) to align feature engineering."
+      "Train and validation logs with existing features (user_active_degree, video_type, upload_type, tab, hourmin, duration, play metrics).",
+      "The video statistics aggregate table (explicitly caveated as leaky) for cross-tab exploration.",
+      "Precomputed per-user history features (clicks, long_view, like, follow) from train split only.",
+      "Current baseline config and registered family definitions (bpr, group_softmax, history_features, multi_task) for compatibility checks."
     ]
   },
   "report": {
     "feature_candidates": [
       {
-        "description": "Categorical interaction of tab (0-14) with binned hour (e.g., 4-hour buckets) to capture context-specific engagement patterns.",
-        "expected_impact": "High; tab alone has large rate differences, hour may add recency/fatigue effects.",
-        "family": "group_softmax",
-        "implementation_scope": "Add as a feature embedding in candidate.py; requires mapping tab and hourmin to bucket indices.",
-        "leakage_risk": "Low; tab and hour are observed at exposure time, no future info.",
-        "name": "tab_hour_bucket_interaction"
-      },
-      {
-        "description": "Train-only prefix-computed rate of user's past long_view per video category (or tag), updated per exposure.",
-        "expected_impact": "Moderate; captures user preferences and may improve ranking within user.",
+        "description": "Log-scaled normalized exposure count per video derived from leaky video stats, centered by tab mean.",
+        "expected_impact": "Potential small rank gain if exposure correlates with popularity, but risk of leakage-driven overfitting; likely flat once controlling for tab.",
         "family": "history_features",
-        "implementation_scope": "Compute on-the-fly during training using train-only interactions; store per-user, per-category counters.",
-        "leakage_risk": "High if computed over full log; must be strictly prefix (only prior exposures) to avoid future leakage.",
-        "name": "user_history_longview_rate_per_category"
+        "implementation_scope": "Compute per-video log count on train+valid; store as static feature; apply log1p and standardize; use only in hypothesis tests.",
+        "leakage_risk": "High: includes future exposure counts; must never be trusted for final ranking.",
+        "name": "log_video_exposure_count_scaled"
       },
       {
-        "description": "Use is_like, is_comment, is_forward as auxiliary targets in a multi-task loss to sharpen long_view representation.",
-        "expected_impact": "Moderate; auxiliary labels share user intent and could regularize the main objective.",
-        "family": "multi_task",
-        "implementation_scope": "Add auxiliary heads and combine losses; available labels in train; no change to primary label.",
-        "leakage_risk": "Low; labels are contemporaneous with long_view and do not include future info.",
-        "name": "multi_task_auxiliary_labels"
+        "description": "Per-user historical long_view ratio over video_type or upload_type categories, smoothed with prior.",
+        "expected_impact": "Moderate positive gain by capturing preference homogeneity; avoids user-only constant issue.",
+        "family": "history_features",
+        "implementation_scope": "Compute from train log only: group by user + video_type, count long_view/total; add smoothing (e.g., Bayesian prior).",
+        "leakage_risk": "Low if derived strictly from train; no future info.",
+        "name": "user_videotype_longview_ratio"
+      },
+      {
+        "description": "Encoded tab with relative position (e.g., rank of exposure within user's tab sequence) to capture recency-context.",
+        "expected_impact": "Small gain by capturing position effects that are not user-constant; but must avoid raw row order leakage.",
+        "family": "history_features",
+        "implementation_scope": "From train log, compute per-user sequential index per tab and normalize; embed as numeric/embedding feature.",
+        "leakage_risk": "Low if computed from train sequence; do not use raw row order beyond training period.",
+        "name": "tab_interaction_position"
       }
     ],
     "findings": [
       {
-        "evidence": "DATA CARD tab breakdown (train) shows wide rate differences across tabs.",
-        "implication": "Including tab as a categorical feature (or per-tab user history) should improve ranking significantly.",
+        "evidence": "DATA CARD Tab Breakdown shows long_view rates 38.61% (tab1), 4.22% (tab0), 48.93% (tab4).",
+        "implication": "A tab-context feature could help rank within user, but careful with sparse tab handling and confounds with position.",
         "leakage_safe": true,
-        "observation": "Long_view rate varies dramatically by tab: tab 4 at 48.93%, tab 1 at 38.61%, tab 0 at 4.22% (train).",
-        "title": "Tab position is a strong categorical predictor"
+        "observation": "Long_view rate varies strongly by tab (e.g., tab 4 ~49%, tab 0 ~4%), but tabs are sparse (top 3 tabs cover ~96% of rows).",
+        "title": "Tab-driven long_view rate separation"
       },
       {
-        "evidence": "DATA CARD 'Data Quality' section lists zero-duration and duplicate counts.",
-        "implication": "Univariate correlation analyses should exclude or flag these rows to avoid spurious estimates.",
-        "leakage_safe": true,
-        "observation": "239 videos with zero duration (24,076 rows) and 15,609 exact duplicate rows exist in train log.",
-        "title": "Data quality issues can bias correlations"
+        "evidence": "DATA CARD Leakage Flag: 12.83B vs 2.62M exposures, ratio ~4892:1.",
+        "implication": "Any features from it may overfit future exposure; use only for hypothesis testing with explicit caveat, prefer log-derived counts.",
+        "leakage_safe": false,
+        "observation": "Video statistics table aggregates full-platform traffic (ratio ~4892:1 vs logged), observation periods exceed log span.",
+        "title": "Video stats table is leaky and noisy"
       },
       {
-        "evidence": "DATA CARD 'Rows per User' percentile and leakage risk note on user history features.",
-        "implication": "Build history features using only prior logged exposures per user to avoid future leakage.",
+        "evidence": "DATA CARD lists user features; history_features family is registered.",
+        "implication": "Item-conditioned history (e.g., user's long_view rate on similar video_type) can add rank signal without leakage.",
         "leakage_safe": true,
-        "observation": "Users have median 34 rows (p50), providing enough history for aggregates, but validation-period rows must be excluded from history computation.",
-        "title": "User history requires train-only prefix windows"
+        "observation": "Per-user long_view/click/like/follow history from train is fully available; user-only constants are useless for within-user but history features vary by item.",
+        "title": "User-side history is likely discriminative"
       }
     ],
-    "recommended_next_focus": "Run a univariate logistic regression on cleaned train data (excluding leaky video stats) to confirm tab and hour effects, then implement tab interaction and prefix-based history features.",
-    "summary": "EDA plan focuses on leakage-safe analysis of tab/hour/user-history features and multi-task auxiliary labels to lift within-user long_view ranking from 0.6016, using train-only aggregates and cleaning duplicate/zero-duration rows.",
+    "recommended_next_focus": "Run bpr with user-side history features (e.g., user_videotype_longview_ratio) and tab context embedding, leaving video stats out to avoid leakage; validate against baseline 0.6016.",
+    "summary": "Explore leakage-safe within-user long_view EDA using train-only signals; focus on per-tab rate structure, video_stats caveats, and history features for bpr/multi_task.",
     "ui_notes": [
-      "Tab 4 (48.93% long_view) vs tab 0 (4.22%) is a huge gap; consider separate tab embeddings.",
-      "Remove zero-duration and duplicate rows before any correlation analysis to avoid bias.",
-      "Do not use the leaky video stats table until designing a decaying popularity feature with exposure-count controls."
+      "Visualize per-tab long_view rate heatmap for top 5 tabs to confirm structure.",
+      "Scatter log video stats vs train long_view rate to see noise; annotate leakage caveat.",
+      "Show per-user history coverage to guide feature engineering."
     ]
   },
   "status": "completed"

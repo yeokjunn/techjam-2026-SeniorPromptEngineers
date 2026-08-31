@@ -1,0 +1,21 @@
+{
+  "candidate_id": "hist_prior_days_var_gs2_3b9a",
+  "files": [
+    {
+      "lines_added": 188,
+      "lines_deleted": 79,
+      "path": "candidate.py",
+      "status": "modified"
+    },
+    {
+      "lines_added": 36,
+      "lines_deleted": 49,
+      "path": "test_candidate.py",
+      "status": "modified"
+    }
+  ],
+  "iteration": 3,
+  "lines_added": 224,
+  "lines_deleted": 128,
+  "patch_path": "changes/003_hist_prior_days_var_gs2_3b9a.patch"
+}

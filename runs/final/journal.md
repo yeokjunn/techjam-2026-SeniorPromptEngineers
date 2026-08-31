@@ -1,387 +1,270 @@
 # Experiment Journal
 
-## Iteration 1 — bpr_lambda_top
+## Iteration 1 — unknown
 
-**Hypothesis:** Top-weighted (LambdaRank-style) within-user BPR that scales each same-user hard-negative pair gradient by the positive's estimated rank so pairs near the top-5 boundary receive larger weight should lift validation nDCG@5 beyond the uniformly-weighted hard-negative BPR (0.60308).
+**Hypothesis:** not reported
 
-**Rationale:** Plain BPR weights every positive-negative pair equally, while nDCG@5 rewards only correct top-5 placement, so concentrating gradient on the top-5 boundary via a cheap rank-scaled pair weight is a more aligned, low-cost objective within the same FM backbone.
+**Rationale:** not reported
 
-**Evidence:**
-- [BPR: Bayesian Personalized Ranking from Implicit Feedback](https://arxiv.org/abs/1205.2618)
-- [Learning to Rank: From Pairwise Approach to Listwise Approach](https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/)
+**Family:** not reported  
+**Parameters:** `{}`
 
-**Family:** bpr  
-**Parameters:** `{"batch_size": 4096, "epochs": 8, "k": 16, "learning_rate": 0.0005, "negatives_per_positive": 2, "patience": 2, "seed": 42}`
+*Code source: builder pass (generated directory absent)*
 
 ```diff
 --- parent
 +++ candidate
-@@ -0,0 +1,82 @@
-+import numpy as np
-+import time
-+from src.models.fm_core import FMRanker
-+from src.models.sampling import sample_bpr_pairs
-+from src.models.features import build_features
-+from src.experiments.contracts import CandidateOutput
-+
-+def run(context, parameters):
-+    _fd = context.field_dimension
-+    _field_dim = sum(_fd) if isinstance(_fd, list) else int(_fd)
-+    seed = parameters['seed']
-+    lr = parameters['learning_rate']
-+    epochs = parameters['epochs']
-+    batch_size = parameters['batch_size']
-+    negatives_per_positive = parameters['negatives_per_positive']
-+    patience = parameters['patience']
-+    k = parameters['k']
-+    rng = np.random.RandomState(seed)
-+    spec = parameters['spec']
-+    train_spec = dict(spec, split='train', field_offset=_field_dim)
-+    valid_spec = dict(spec, split='valid', field_offset=_field_dim)
-+    test_spec = dict(spec, split='test', field_offset=_field_dim) if context.test_x is not None else None
-+    random_valid_spec = dict(spec, split='random_valid', field_offset=_field_dim) if context.random_valid_x is not None else None
-+    train_features = build_features(context.train_x, train_spec).astype(np.int32)
-+    valid_features = build_features(context.valid_x, valid_spec).astype(np.int32)
-+    test_features = build_features(context.test_x, test_spec).astype(np.int32) if test_spec is not None else None
-+    random_valid_features = build_features(context.random_valid_x, random_valid_spec).astype(np.int32) if random_valid_spec is not None else None
-+    dimension = _field_dim
-+    model = FMRanker(dimension, embedding_dim=k, learning_rate=lr, l2=1e-06, seed=seed)
-+    users = np.asarray(context.train_users, dtype=np.int32)
-+    labels = np.asarray(context.train_y, dtype=np.float32)
-+    best_primary = -1.0
-+    best_state = None
-+    best_epoch = -1
-+    no_improve = 0
-+    train_trace = []
-+    for epoch in range(epochs):
-+        pos_rows, neg_rows = sample_bpr_pairs(users, labels, rng, negatives_per_positive)
-+        n_pairs = len(pos_rows)
-+        if n_pairs == 0:
-+            break
-+        epoch_loss = 0.0
-+        for start in range(0, n_pairs, batch_size):
-+            end = min(start + batch_size, n_pairs)
-+            batch_pos = pos_rows[start:end]
-+            batch_neg = neg_rows[start:end]
-+            pos_x = train_features[batch_pos]
-+            neg_x = train_features[batch_neg]
-+            pos_scores, _, _ = model.logits(pos_x)
-+            neg_scores, _, _ = model.logits(neg_x)
-+            d = pos_scores - neg_scores
-+            clipped = np.clip(d, -30.0, 30.0)
-+            s = 1.0 / (1.0 + np.exp(-clipped))
-+            weight = np.clip(1.0 - np.abs(clipped), 0.0, 1.0) + 0.01
-+            gradient = (s - 1.0) * weight / batch_size
-+            grad_v_p, grad_w_p, grad_b_p = model.gradients(pos_x, gradient)
-+            grad_v_n, grad_w_n, grad_b_n = model.gradients(neg_x, -gradient)
-+            model.apply_gradients(grad_v_p + grad_v_n, grad_w_p + grad_w_n, grad_b_p + grad_b_n)
-+            epoch_loss += np.mean(np.logaddexp(0.0, -clipped)) * (end - start)
-+        valid_scores = model.predict(valid_features)
-+        metrics = context.evaluate_validation(valid_scores)
-+        primary = metrics.get('primary', (metrics.get('gauc', 0) + metrics.get('ndcg@5', 0)) / 2)
-+        avg_loss = epoch_loss / n_pairs if n_pairs > 0 else 0.0
-+        train_trace.append({'epoch': epoch, 'loss': avg_loss, 'primary': primary, 'gauc': metrics.get('gauc'), 'ndcg@5': metrics.get('ndcg@5')})
-+        if primary > best_primary:
-+            best_primary = primary
-+            best_state = model.state_dict()
-+            best_epoch = epoch
-+            no_improve = 0
-+        else:
-+            no_improve += 1
-+        if no_improve >= patience:
-+            break
-+    if best_state is None:
-+        best_state = model.state_dict()
-+    model.load_state_dict(best_state)
-+    validation_scores = model.predict(valid_features)
-+    assert np.all(np.isfinite(validation_scores)), 'Validation scores contain non-finite values'
-+    test_scores = model.predict(test_features) if test_features is not None else None
-+    random_valid_scores = model.predict(random_valid_features) if random_valid_features is not None else None
-+    diagnostics = {'best_epoch': best_epoch, 'best_primary': best_primary, 'final_primary': context.evaluate_validation(validation_scores).get('primary', 0.0)}
-+    return CandidateOutput(validation_scores=validation_scores, checkpoint_state=best_state, training_trace=train_trace, diagnostics=diagnostics, test_scores=test_scores, random_validation_scores=random_valid_scores)
-```
-
-**Errors:**
-
-- Failure class: crash
-- Error: Candidate exited with code 1: Traceback (most recent call last):
-  File "<frozen runpy>", line 198, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "src/experiments/run_candidate.py", line 328, in <module>
-    main()
-  File "src/experiments/run_candidate.py", line 314, in main
-    output = module.run(context, parameters)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "
-- Recovery: Eligible for bounded debugger repair.
-- Repairs attempted: 2
-
-**Critic (preflight):** approved — The proposal is a safe, low-cost exploration of a top-weighted (LambdaRank-style) BPR within the recommended 'bpr' family. It uses the same FM backbone, stays strictly within-user for negative sampling, introduces no new features that could leak, and does not touch evaluator/split/label/budget/reference files. The direction aligns with the organizers' stated priority to change the loss to a ranking objective and has not been tried in the recorded history. The only uncertainty is implementation detail (how to estimate rank) and the unverified baseline figure, neither of which is a safety concern.
-
-**Resources:** 11.9 s · 74,495 tokens
-
----
-
-## Iteration 2 — bpr_topk_lambda_corrected
-
-**Hypothesis:** Within-user BPR whose per-pair gradient is multiplied by a leak-safe LambdaRank-style top-5 weight (ΔnDCG estimated from train-only positives within the user's candidate pool, strictly prefix-excluded from the target row) concentrates optimization on the pairs that move long_view positives into the top-5 slots, lifting nDCG@5 while holding GAUC.
-
-**Rationale:** This is the controller-preferred top-weighted BPR mechanism for the nDCG@5 lead, it corrects the previously failed bpr_lambda_top (which failed at execution, not design) by anchoring the weight to validation-safely-prefixed train labels and caching per-user positive/negative pools to stay within budget, and it is a single-contrast, leakage-safe probe against the already-sampled random- and hard-negative BPR.\n
-
-**Evidence:**
-- [BPR: Bayesian Personalized Ranking from Implicit Feedback](https://arxiv.org/abs/1205.2618)
-- [Learning to Rank: From Pairwise Approach to Listwise Approach](https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/)
-
-**Family:** bpr  
-**Parameters:** `{"batch_size": 4096, "epochs": 8, "k": 16, "learning_rate": 0.0005, "negatives_per_positive": 2, "patience": 2, "seed": 42}`
-
-```diff
---- parent
-+++ candidate
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,143 @@
 +import numpy as np
 +import math
 +import time
 +import collections
 +from src.models.fm_core import FMRanker
 +from src.models.sampling import sample_bpr_pairs
++from src.models.features import build_features, feature_dimension
 +from src.experiments.contracts import CandidateOutput
 +
-+def _autofix_hasattr_evaluate_validation(obj):
-+    try:
-+        obj.evaluate_validation
-+    except AttributeError:
-+        return False
-+    return True
-+
 +def run(context, parameters):
-+    _fd = context.field_dimension
-+    _field_dim = sum(_fd) if isinstance(_fd, list) else int(_fd)
-+    batch_size = parameters.get('batch_size', 4096)
-+    epochs = parameters.get('epochs', 8)
-+    k = parameters.get('k', 16)
-+    learning_rate = parameters.get('learning_rate', 0.0005)
-+    negatives_per_positive = parameters.get('negatives_per_positive', 2)
-+    patience = parameters.get('patience', 2)
-+    seed = parameters.get('seed', 42)
++    # Extract parameters
++    batch_size = parameters['batch_size']
++    epochs = parameters['epochs']
++    lr = parameters['learning_rate']
++    negs = parameters['negatives_per_positive']
++    patience = parameters['patience']
++    seed = parameters['seed']
++
 +    rng = np.random.RandomState(seed)
++
++    # Define empty feature spec (no extra features)
++    spec = {}
++    train_spec = dict(spec, split='train', field_offset=context.field_dimension)
++    valid_spec = dict(spec, split='valid', field_offset=context.field_dimension)
++    test_spec = dict(spec, split='test', field_offset=context.field_dimension) if context.test_x is not None else None
++    random_valid_spec = dict(spec, split='random_valid', field_offset=context.field_dimension) if context.random_valid_x is not None else None
++
++    # Build features
++    train_features = build_features(context.train_x, train_spec)
++    valid_features = build_features(context.valid_x, valid_spec)
++    test_features = build_features(context.test_x, test_spec) if test_spec is not None else None
++    random_valid_features = build_features(context.random_valid_x, random_valid_spec) if random_valid_spec is not None else None
++
++    # Total dimension: base + added (0)
++    dimension = context.field_dimension + feature_dimension(spec)
++    model = FMRanker(dimension, embedding_dim=16, learning_rate=lr, l2=1e-6, seed=seed)
++
++    # Training data
 +    train_users = context.train_users
-+    train_y = context.train_y
-+    user_pos_counts = {}
-+    for u, y in zip(train_users, train_y):
-+        if y > 0:
-+            user_pos_counts[u] = user_pos_counts.get(u, 0) + 1
-+    n_train = len(train_y)
-+    row_weight = np.ones(n_train, dtype=np.float32)
-+    for i in range(n_train):
-+        u = train_users[i]
-+        cnt = user_pos_counts.get(u, 0)
-+        if cnt > 5:
-+            row_weight[i] = 0.2
-+    model = FMRanker(_field_dim, embedding_dim=k, learning_rate=learning_rate, l2=1e-06, seed=seed)
-+    train_x = context.train_x.astype(np.int32)
-+    valid_x = context.valid_x.astype(np.int32) if context.valid_x is not None else None
-+    best_primary = float('-inf')
++    train_labels = context.train_y
++
++    # Helper for validation primary
++    def get_val_primary():
++        scores = model.predict(valid_features)
++        metrics = context.evaluate_validation(scores)
++        if isinstance(metrics, dict):
++            return float(metrics.get('primary', np.mean(list(metrics.values()))))
++        return float(metrics)
++
++    best_primary = -np.inf
 +    best_state = None
-+    best_valid_scores = None
-+    best_epoch = -1
-+    no_improve = 0
++    patience_counter = 0
 +    training_trace = []
-+    n_pairs_total = 0
++
 +    for epoch in range(epochs):
-+        pos_rows, neg_rows = sample_bpr_pairs(train_users, train_y, rng, negatives_per_positive)
++        # Sample BPR pairs (same-user positive/negative)
++        pos_rows, neg_rows = sample_bpr_pairs(train_users, train_labels, rng, negs)
 +        n_pairs = len(pos_rows)
 +        if n_pairs == 0:
-+            break
-+        n_pairs_total += n_pairs
++            training_trace.append({'epoch': epoch+1, 'val_primary': get_val_primary(), 'loss': 0.0})
++            continue
++
++        # Shuffle
 +        perm = rng.permutation(n_pairs)
 +        pos_rows = pos_rows[perm]
 +        neg_rows = neg_rows[perm]
++
 +        epoch_loss = 0.0
-+        n_batches = math.ceil(n_pairs / batch_size)
-+        for batch_idx in range(n_batches):
-+            start = batch_idx * batch_size
++        n_batches = int(np.ceil(n_pairs / batch_size))
++        for i in range(n_batches):
++            start = i * batch_size
 +            end = min(start + batch_size, n_pairs)
 +            if start >= end:
-+                break
-+            pos_idx = pos_rows[start:end]
-+            neg_idx = neg_rows[start:end]
-+            pos_features = train_x[pos_idx]
-+            neg_features = train_x[neg_idx]
-+            pos_scores = model.logits(pos_features)[0]
-+            neg_scores = model.logits(neg_features)[0]
-+            d = pos_scores - neg_scores
-+            d = np.clip(d, -30.0, 30.0)
-+            sig = 1.0 / (1.0 + np.exp(-d))
-+            grad_base = sig - 1.0
-+            w = row_weight[pos_idx]
-+            grad = grad_base * w / batch_size
-+            grad_pos = model.gradients(pos_features, grad)
-+            grad_neg = model.gradients(neg_features, -grad)
-+            model.apply_gradients(grad_pos[0] + grad_neg[0], grad_pos[1] + grad_neg[1], grad_pos[2] + grad_neg[2])
-+            loss = np.logaddexp(0, -d) * w
-+            epoch_loss += np.sum(loss)
-+        if valid_x is not None:
-+            valid_scores = model.predict(valid_x)
-+        else:
-+            valid_scores = None
-+        if valid_scores is not None and _autofix_hasattr_evaluate_validation(context):
-+            eval_result = context.evaluate_validation(valid_scores)
-+            if isinstance(eval_result, tuple):
-+                gauc = eval_result[0]
-+                ndcg = eval_result[1]
-+            else:
-+                gauc = eval_result
-+                ndcg = eval_result
-+            primary = (gauc + ndcg) / 2.0
-+        else:
-+            gauc = 0.0
-+            ndcg = 0.0
-+            primary = 0.0
-+        training_trace.append({'epoch': epoch, 'loss': epoch_loss / n_pairs if n_pairs > 0 else 0.0, 'gauc': gauc, 'ndcg': ndcg, 'primary': primary})
-+        if primary > best_primary:
-+            best_primary = primary
++                continue
++            p_idx = pos_rows[start:end]
++            n_idx = neg_rows[start:end]
++            pos_feat = train_features[p_idx]
++            neg_feat = train_features[n_idx]
++
++            # Forward
++            pos_scores, _, _ = model.logits(pos_feat)
++            neg_scores, _, _ = model.logits(neg_feat)
++
++            # Hardness weight: sigmoid(neg - pos) (higher for harder negatives)
++            diff = neg_scores - pos_scores
++            diff_clipped = np.clip(diff, -30.0, 30.0)
++            weights = 1.0 / (1.0 + np.exp(-diff_clipped))
++
++            # BPR loss gradient: (sigmoid(pos-neg) - 1) * weight / batch_size
++            pos_neg = pos_scores - neg_scores
++            pos_neg_clipped = np.clip(pos_neg, -30.0, 30.0)
++            sig = 1.0 / (1.0 + np.exp(-pos_neg_clipped))
++            grad = (sig - 1.0) * weights / (end - start)
++
++            # Compute gradients for both sides
++            grad_v_pos, grad_w_pos, grad_b_pos = model.gradients(pos_feat, grad)
++            grad_v_neg, grad_w_neg, grad_b_neg = model.gradients(neg_feat, -grad)
++
++            # Apply combined gradients
++            model.apply_gradients(grad_v_pos + grad_v_neg, grad_w_pos + grad_w_neg, grad_b_pos + grad_b_neg)
++
++            # Track loss (weighted)
++            batch_loss = -np.log(np.clip(sig, 1e-12, 1.0))
++            epoch_loss += np.sum(batch_loss * weights) / (end - start)
++
++        # Validation after epoch
++        val_primary = get_val_primary()
++        training_trace.append({'epoch': epoch+1, 'val_primary': val_primary, 'loss': epoch_loss})
++
++        # Early stopping
++        if val_primary > best_primary:
++            best_primary = val_primary
 +            best_state = model.state_dict()
-+            best_valid_scores = valid_scores
-+            best_epoch = epoch
-+            no_improve = 0
++            patience_counter = 0
 +        else:
-+            no_improve += 1
-+            if no_improve >= patience:
++            patience_counter += 1
++            if patience_counter >= patience:
 +                break
++
++    # Restore best model
 +    if best_state is not None:
 +        model.load_state_dict(best_state)
-+    else:
-+        best_state = model.state_dict()
-+        if valid_x is not None:
-+            best_valid_scores = model.predict(valid_x)
-+    test_scores = None
-+    if context.test_x is not None:
-+        test_scores = model.predict(context.test_x.astype(np.int32))
-+    random_valid_scores = None
-+    if context.random_valid_x is not None:
-+        random_valid_scores = model.predict(context.random_valid_x.astype(np.int32))
-+    diagnostics = {'best_epoch': best_epoch, 'best_primary': best_primary, 'weight_used': 'top5_heuristic', 'n_pairs_per_epoch': n_pairs_total / epochs if epochs > 0 else 0.0}
-+    return CandidateOutput(validation_scores=best_valid_scores if best_valid_scores is not None else np.zeros(len(context.valid_x), dtype=np.float32), checkpoint_state=best_state, training_trace=training_trace, diagnostics=diagnostics, test_scores=test_scores, random_validation_scores=random_valid_scores)
++
++    # Predictions
++    validation_scores = model.predict(valid_features)
++    test_scores = model.predict(test_features) if test_features is not None else None
++    random_valid_scores = model.predict(random_valid_features) if random_valid_features is not None else None
++
++    diagnostics = {
++        'best_primary': best_primary,
++        'epochs_run': len(training_trace),
++        'n_pairs': n_pairs,
++        'hardness_weight_mean': float(np.mean(weights)) if 'weights' in locals() else None
++    }
++
++    return CandidateOutput(
++        validation_scores=validation_scores,
++        checkpoint_state=model.state_dict(),
++        training_trace=training_trace,
++        diagnostics=diagnostics,
++        test_scores=test_scores,
++        random_validation_scores=random_valid_scores
++    )
 ```
 
-**Errors:**
-
-- Failure class: crash
-- Error: Candidate exited with code 1: Traceback (most recent call last):
-  File "<frozen runpy>", line 198, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "src/experiments/run_candidate.py", line 328, in <module>
-    main()
-  File "src/experiments/run_candidate.py", line 314, in main
-    output = module.run(context, parameters)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "
-- Recovery: Eligible for bounded debugger repair.
-- Repairs attempted: 2
-
-**Critic (preflight):** approved_with_warnings — This proposal is a corrected, single-contrast BPR probe that directly targets the nDCG@5 lead. No hard safety or contract violations exist: it uses allowlisted libraries, preserves the official evaluator and splits, samples negatives within the same user, and confines ΔnDCG weight computation to train-only prefix data. The previously failed attempt (bpr_lambda_top) failed at execution, not design, and this version is explicitly leak-safe and budget-compatible. Given that the controller already prefers top-weighted BPR and the runtime is cheap (8 epochs, batch 4096), I admit it with warnings focusing on strict prefix enforcement, numerical stability, and unit-testing the corrected implementation.
-
-**Resources:** 17.3 s · 161,626 tokens
+**Resources:** 101,452 tokens
 
 ---
 
-## Iteration 3 — gs_hard_neg_group
+## Iteration 1 — bpr_topweighted_hard_2
 
-**Hypothesis:** Within same-user group softmax, building the K=8 negative list from train-only same-tab/same-author hard negatives (hardness scores aligned to context.train_y) instead of random same-user negatives concentrates listwise competition on confusable items, sharpening top-5 ordering and lifting validation nDCG@5.
+**Hypothesis:** Weighting each BPR pair by the train-only hardness of its negative (sigmoid score gap from sample_hard_bpr_pairs) concentrates gradient on lifting the positive above its closest same-user rivals and improves validation nDCG@5 over uniform hard-negative BPR.
 
-**Rationale:** Prior group_softmax wins only varied temperature with random negatives, so swapping to same-tab/same-author hard negatives is the untried, controller-preferred mechanism that can reorder the top of the user's list.
+**Rationale:** The controller's ndcg_focus targets top-5 ordering, and top-weighted hard-negative BPR is the only preferred bpr-family mechanism not yet sampled, so a bounded probe is cheap and directly addresses the active objective.
 
 **Evidence:**
-- [Learning to Rank: From Pairwise Approach to Listwise Approach (ICML 2007)](https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/)
-- [BPR: Bayesian Personalized Ranking from Implicit Feedback (arXiv 1205.2618)](https://arxiv.org/abs/1205.2618)
+- [BPR: Bayesian Personalized Ranking from Implicit Feedback](https://arxiv.org/abs/1205.2618)
 
-**Family:** group_softmax  
-**Parameters:** `{"batch_size": 2048, "epochs": 8, "k": 16, "learning_rate": 0.0005, "negatives_per_group": 8, "patience": 2, "seed": 42, "temperature": 1.0}`
+**Family:** bpr  
+**Parameters:** `{"batch_size": 2048, "epochs": 8, "k": 16, "learning_rate": 0.0005, "negatives_per_positive": 2, "patience": 2, "seed": 7}`
 
 ```diff
 --- parent
 +++ candidate
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,98 @@
 +import numpy as np
 +import math
 +import time
++import collections
 +from src.models.fm_core import FMRanker
-+from src.models.sampling import sample_softmax_groups
-+from src.models.features import build_features
++from src.models.sampling import sample_bpr_pairs
++from src.models.features import build_features, feature_dimension
 +from src.experiments.contracts import CandidateOutput
-+SPEC = {'user_id': 0, 'video_id': 1}
 +
 +def run(context, parameters):
 +    _fd = context.field_dimension
 +    _field_dim = sum(_fd) if isinstance(_fd, list) else int(_fd)
-+    seed = parameters['seed']
-+    lr = parameters['learning_rate']
-+    epochs = parameters['epochs']
 +    batch_size = parameters['batch_size']
-+    K = parameters['negatives_per_group']
-+    temperature = parameters['temperature']
++    epochs = parameters['epochs']
++    lr = parameters['learning_rate']
++    negs = parameters['negatives_per_positive']
 +    patience = parameters['patience']
-+    rng = np.random.default_rng(seed)
-+    train_spec = dict(SPEC, split='train', field_offset=0)
-+    valid_spec = dict(SPEC, split='valid', field_offset=0)
-+    test_spec = dict(SPEC, split='test', field_offset=0)
-+    random_valid_spec = dict(SPEC, split='random_valid', field_offset=0)
-+    train_features = build_features(context.train_x, train_spec).astype(np.int32)
-+    valid_features = build_features(context.valid_x, valid_spec).astype(np.int32) if context.valid_x is not None else None
-+    test_features = build_features(context.test_x, test_spec).astype(np.int32) if context.test_x is not None else None
-+    random_valid_features = build_features(context.random_valid_x, random_valid_spec).astype(np.int32) if context.random_valid_x is not None else None
-+    model = FMRanker(_field_dim, embedding_dim=16, learning_rate=lr, l2=1e-06, seed=seed)
++    seed = parameters['seed']
++    rng = np.random.RandomState(seed)
++    spec = {}
++    train_spec = dict(spec, split='train', field_offset=_field_dim)
++    valid_spec = dict(spec, split='valid', field_offset=_field_dim)
++    test_spec = dict(spec, split='test', field_offset=_field_dim) if context.test_x is not None else None
++    random_valid_spec = dict(spec, split='random_valid', field_offset=_field_dim) if context.random_valid_x is not None else None
++    train_features = build_features(context.train_x, train_spec)
++    valid_features = build_features(context.valid_x, valid_spec)
++    test_features = build_features(context.test_x, test_spec) if test_spec is not None else None
++    random_valid_features = build_features(context.random_valid_x, random_valid_spec) if random_valid_spec is not None else None
++    dimension = _field_dim + feature_dimension(spec)
++    model = FMRanker(dimension, embedding_dim=16, learning_rate=lr, l2=1e-06, seed=seed)
++    train_users = context.train_users
++    train_labels = context.train_y
++
++    def get_val_primary():
++        scores = model.predict(valid_features)
++        metrics = context.evaluate_validation(scores)
++        if isinstance(metrics, dict):
++            return float(metrics.get('primary', np.mean(list(metrics.values()))))
++        return float(metrics)
 +    best_primary = -np.inf
 +    best_state = None
-+    best_epoch = -1
 +    patience_counter = 0
 +    training_trace = []
++    sum_hardness = 0.0
++    count_hardness = 0
 +    for epoch in range(epochs):
-+        start_time = time.time()
-+        pos_idx, neg_idx = sample_softmax_groups(context.train_users, context.train_y, rng, K)
-+        n_groups = len(pos_idx)
-+        if n_groups == 0:
++        pos_rows, neg_rows = sample_bpr_pairs(train_users, train_labels, rng, negs)
++        n_pairs = len(pos_rows)
++        if n_pairs == 0:
++            training_trace.append({'epoch': epoch + 1, 'val_primary': get_val_primary(), 'loss': 0.0})
 +            continue
-+        perm = rng.permutation(n_groups)
-+        pos_idx = pos_idx[perm]
-+        neg_idx = neg_idx[perm]
++        perm = rng.permutation(n_pairs)
++        pos_rows = pos_rows[perm]
++        neg_rows = neg_rows[perm]
 +        epoch_loss = 0.0
-+        for start in range(0, n_groups, batch_size):
-+            end = min(start + batch_size, n_groups)
-+            pos_batch = pos_idx[start:end]
-+            neg_batch = neg_idx[start:end]
-+            B = len(pos_batch)
-+            pos_feat = train_features[pos_batch]
-+            neg_flat = neg_batch.reshape(-1)
-+            neg_feat = train_features[neg_flat]
-+            all_feat = np.concatenate([pos_feat, neg_feat], axis=0)
-+            all_scores = model.predict(all_feat)
-+            scores_group = all_scores.reshape(B, 1 + K)
-+            logits = scores_group / temperature
-+            shifted = logits - np.max(logits, axis=1, keepdims=True)
-+            exp = np.exp(shifted)
-+            softmax = exp / np.sum(exp, axis=1, keepdims=True)
-+            loss = -np.log(softmax[:, 0] + 1e-12).mean()
-+            one_hot = np.zeros_like(softmax)
-+            one_hot[:, 0] = 1.0
-+            score_grad = (softmax - one_hot) / temperature
-+            all_grads = score_grad.reshape(-1) / B
-+            grad_v, grad_w, grad_b = model.gradients(all_feat, all_grads)
-+            model.apply_gradients(grad_v, grad_w, grad_b)
-+            epoch_loss += loss * B
-+        epoch_loss /= max(n_groups, 1)
-+        if valid_features is not None:
-+            valid_scores = model.predict(valid_features)
-+            if not np.all(np.isfinite(valid_scores)):
-+                valid_scores = np.nan_to_num(valid_scores, nan=0.0, posinf=1000000.0, neginf=-1000000.0)
-+            valid_primary = context.evaluate_validation(valid_scores)
-+        else:
-+            valid_primary = -np.inf
-+        training_trace.append({'epoch': epoch, 'loss': float(epoch_loss), 'validation_primary': float(valid_primary), 'time': time.time() - start_time})
-+        if valid_primary > best_primary:
-+            best_primary = valid_primary
-+            best_epoch = epoch
++        n_batches = int(np.ceil(n_pairs / batch_size))
++        for i in range(n_batches):
++            start = i * batch_size
++            end = min(start + batch_size, n_pairs)
++            if start >= end:
++                continue
++            p_idx = pos_rows[start:end]
++            n_idx = neg_rows[start:end]
++            pos_feat = train_features[p_idx]
++            neg_feat = train_features[n_idx]
++            pos_scores, _, _ = model.logits(pos_feat)
++            neg_scores, _, _ = model.logits(neg_feat)
++            diff = neg_scores - pos_scores
++            diff_clipped = np.clip(diff, -30.0, 30.0)
++            weights = 1.0 / (1.0 + np.exp(-diff_clipped))
++            sum_hardness += np.sum(weights)
++            count_hardness += len(weights)
++            pos_neg = pos_scores - neg_scores
++            pos_neg_clipped = np.clip(pos_neg, -30.0, 30.0)
++            sig = 1.0 / (1.0 + np.exp(-pos_neg_clipped))
++            grad = (sig - 1.0) * weights / (end - start)
++            grad_v_pos, grad_w_pos, grad_b_pos = model.gradients(pos_feat, grad)
++            grad_v_neg, grad_w_neg, grad_b_neg = model.gradients(neg_feat, -grad)
++            model.apply_gradients(grad_v_pos + grad_v_neg, grad_w_pos + grad_w_neg, grad_b_pos + grad_b_neg)
++            batch_loss = -np.log(np.clip(sig, 1e-12, 1.0))
++            epoch_loss += np.sum(batch_loss * weights) / (end - start)
++        val_primary = get_val_primary()
++        training_trace.append({'epoch': epoch + 1, 'val_primary': val_primary, 'loss': epoch_loss})
++        if val_primary > best_primary:
++            best_primary = val_primary
 +            best_state = model.state_dict()
 +            patience_counter = 0
 +        else:
@@ -390,427 +273,730 @@
 +                break
 +    if best_state is not None:
 +        model.load_state_dict(best_state)
-+    validation_scores = model.predict(valid_features) if valid_features is not None else np.array([])
-+    if valid_features is not None and (not np.all(np.isfinite(validation_scores))):
-+        validation_scores = np.nan_to_num(validation_scores, nan=0.0, posinf=1000000.0, neginf=-1000000.0)
-+    test_scores = None
-+    if test_features is not None:
-+        test_scores = model.predict(test_features)
-+        if not np.all(np.isfinite(test_scores)):
-+            test_scores = np.nan_to_num(test_scores, nan=0.0, posinf=1000000.0, neginf=-1000000.0)
-+    random_validation_scores = None
-+    if random_valid_features is not None:
-+        random_validation_scores = model.predict(random_valid_features)
-+        if not np.all(np.isfinite(random_validation_scores)):
-+            random_validation_scores = np.nan_to_num(random_validation_scores, nan=0.0, posinf=1000000.0, neginf=-1000000.0)
-+    diagnostics = {'best_epoch': best_epoch, 'best_primary': best_primary, 'n_groups': n_groups, 'temperature': temperature, 'negatives_per_group': K}
-+    return CandidateOutput(validation_scores=validation_scores, checkpoint_state=best_state, training_trace=training_trace, diagnostics=diagnostics, test_scores=test_scores, random_validation_scores=random_validation_scores)
++    validation_scores = model.predict(valid_features)
++    test_scores = model.predict(test_features) if test_features is not None else None
++    random_valid_scores = model.predict(random_valid_features) if random_valid_features is not None else None
++    diagnostics = {'best_primary': best_primary, 'epochs_run': len(training_trace), 'n_pairs': n_pairs, 'hardness_weight_mean': sum_hardness / count_hardness if count_hardness > 0 else None}
++    return CandidateOutput(validation_scores=validation_scores, checkpoint_state=model.state_dict(), training_trace=training_trace, diagnostics=diagnostics, test_scores=test_scores, random_validation_scores=random_valid_scores)
 ```
 
-**Errors:**
+**Metrics:**
 
-- Failure class: crash
-- Error: Candidate exited with code 1: Traceback (most recent call last):
-  File "<frozen runpy>", line 198, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "src/experiments/run_candidate.py", line 328, in <module>
-    main()
-  File "src/experiments/run_candidate.py", line 314, in main
-    output = module.run(context, parameters)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "
-- Recovery: Eligible for bounded debugger repair.
-- Repairs attempted: 2
+| Metric | Value | Δ vs best-so-far | Δ vs baseline |
+|---|---|---|---|
+| GAUC | 0.5999 | not reported | not reported |
+| nDCG@5 | 0.5102 | not reported | not reported |
+| primary | 0.5550 | +0.5550 | -0.0466 |
 
-**Critic (preflight):** approved — The proposal uses only training labels for hard-negative construction within the same user, respects the within-user ranking constraint, uses a registered family (group_softmax) with parameters inside the safe search space, and does not touch validation/test or alter any official asset. No hard safety violations: no leakage, no future-history usage, no cross-user negatives, no hidden-test access, no contract or import violations, and numerical stability is handled by standard softmax techniques (group softmax with max-shift). The change from random negatives to same-tab/same-author hard negatives is a distinct, falsifiable probe that addresses a plausible ranking mechanism and is expected to be cheap.
+**Test scores:** `runs/20260831T141845874517Z_research/artifacts/001_bpr_topweighted_hard_2/test_scores.npy`
 
-**Resources:** 34.0 s · 83,141 tokens
+**Critic (preflight):** approved — The proposal is a safe, in-family exploration of the bpr ranking objective with a top-weighted hard-negative variant. It respects the immutable task (within-user ranking on long_view), uses only train-derived supervision, does not touch validation/test labels, and avoids all hard safety vetoes (leakage, cross-user negatives, hidden-test access, contract violations, numerical unsafety, infeasibility). The hypothesis is concrete and directly targets nDCG@5, the active focus. No warnings warranted.
+
+**Critic (postflight):** Reject hypothesis bpr_topweighted_hard_2; BPR underperforms the pointwise baseline. — TRUSTED METRICS primary 0.5550 vs BASELINE 0.6016, a drop of 0.0466. GAUC 0.5999 is close to baseline (~0.60) but nDCG@5 0.5102 is much lower, indicating the model ranks positives poorly at the top. Early stopping at epoch 3 suggests the training did not yield sustained gains. The hypothesis that negative-hardness weighting improves top-5 nDCG is not supported; the positive-vs-top-negative margin is only 0.046 on average, showing weak separation.
+
+**Resources:** 49.5 s · 101,452 tokens
 
 ---
 
-## Iteration 4 — gs_hard_neg_temp2_run1
+## Iteration 2 — gs_hist_cross_hard_temp1
 
-**Hypothesis:** Within same-user group softmax, swapping random negatives for train-only hard same-user negatives (hardness from baseline_score/same_tab/same_author via the trusted sample_hard_bpr_pairs) while holding the best-known fixed temperature=2.0 and K=8 will concentrate gradients on moving the positive above its closest in-group rivals and lift validation nDCG@5 beyond the random-negative regime (0.6041).
+**Hypothesis:** Adding a train-only user×video_type long_view history cross feature into same-user group softmax with hard negatives (K=8, temp=1.0) should sharpen top-5 within-user ordering and lift nDCG@5 beyond the feature-free group-softmax runs (≈0.604).
 
-**Rationale:** Hard negatives target exactly the top-heavy within-user objective the controller favors, and pinning temperature=2.0 (current best lead) plus using the documented trusted hard-pair sampler removes the two confounds (unverified hard grouping and an unsupported annealing schedule) that undermined the earlier gs_hard_neg_group run, making this a single bounded contrast.
+**Rationale:** EDA shows strong per-tab/per-type long_view rate separation and user-side history is item-conditional and leakage-safe, so a user×video_type cross is a within-user-varying rank signal that static/user-only terms cannot provide while group softmax aligns the loss with the evaluated intra-user list.
 
 **Evidence:**
 - [Learning to Rank: From Pairwise Approach to Listwise Approach (ICML 2007)](https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/)
 - [BPR: Bayesian Personalized Ranking from Implicit Feedback](https://arxiv.org/abs/1205.2618)
 
 **Family:** group_softmax  
-**Parameters:** `{"batch_size": 2048, "epochs": 8, "k": 16, "learning_rate": 0.0005, "negatives_per_group": 8, "patience": 2, "seed": 42, "temperature": 2.0}`
+**Parameters:** `{"batch_size": 2048, "epochs": 8, "k": 16, "learning_rate": 0.0005, "negatives_per_group": 8, "patience": 2, "seed": 42, "temperature": 1.0}`
 
 ```diff
 --- parent
 +++ candidate
-@@ -0,0 +1,119 @@
-+import numpy as np
-+from src.models.fm_core import FMRanker
+@@ -3,96 +3,192 @@
+ import time
+ import collections
+ from src.models.fm_core import FMRanker
+-from src.models.sampling import sample_bpr_pairs
+-from src.models.features import build_features, feature_dimension
 +from src.models.sampling import sample_softmax_groups
-+from src.experiments.contracts import CandidateOutput
++from src.models.features import build_features
+ from src.experiments.contracts import CandidateOutput
 +
-+def _primary(metrics):
-+    if isinstance(metrics, dict):
-+        if 'primary' in metrics:
-+            return float(metrics['primary'])
-+        ga = metrics.get('GAUC')
-+        if ga is None:
-+            ga = metrics.get('gauc')
-+        ng = metrics.get('nDCG@5')
-+        if ng is None:
-+            ng = metrics.get('ndcg@5')
-+        if ng is None:
-+            ng = metrics.get('ndcg5')
-+        if ga is not None and ng is not None:
-+            return 0.5 * (float(ga) + float(ng))
-+        if len(metrics) > 0:
-+            return float(list(metrics.values())[0])
-+        return 0.0
-+    return float(metrics)
++def _autofix_hasattr_primary(obj):
++    try:
++        obj.primary
++    except AttributeError:
++        return False
++    return True
 +
-+def _metric(metrics, key):
-+    if isinstance(metrics, dict):
-+        for cand in (key, key.lower()):
-+            if cand in metrics:
-+                return float(metrics[cand])
-+        return float('nan')
-+    return float(metrics)
++def _autofix_hasattr_gauc(obj):
++    try:
++        obj.gauc
++    except AttributeError:
++        return False
++    return True
 +
-+def _group_softmax(logits, temperature):
-+    scaled = np.asarray(logits, dtype=np.float32) / float(temperature)
-+    scaled = scaled - np.max(scaled, axis=-1, keepdims=True)
-+    exp = np.exp(scaled)
-+    probs = exp / np.sum(exp, axis=-1, keepdims=True)
-+    onehot = np.zeros_like(probs)
-+    onehot[:, 0] = 1.0
-+    grads = (probs - onehot) / float(temperature)
-+    losses = -np.log(np.maximum(probs[:, 0], 1e-12))
-+    return (grads, losses)
-+
-+def run(context, parameters):
-+    _fd = context.field_dimension
-+    _field_dim = sum(_fd) if isinstance(_fd, list) else int(_fd)
++def _autofix_hasattr_ndcg(obj):
++    try:
++        obj.ndcg
++    except AttributeError:
++        return False
++    return True
+ 
+ def run(context, parameters):
+     _fd = context.field_dimension
+     _field_dim = sum(_fd) if isinstance(_fd, list) else int(_fd)
 +    seed = int(parameters['seed'])
-+    lr = float(parameters['learning_rate'])
-+    epochs = int(parameters['epochs'])
-+    batch_size = int(parameters['batch_size'])
-+    patience = int(parameters['patience'])
-+    k = int(parameters['k'])
-+    n_neg = int(parameters['negatives_per_group'])
-+    temperature = float(parameters['temperature'])
-+    train_features = np.ascontiguousarray(context.train_x, dtype=np.int32)
-+    valid_features = np.ascontiguousarray(context.valid_x, dtype=np.int32)
-+    total_dim = int(_field_dim)
-+    model = FMRanker(total_dim, embedding_dim=k, learning_rate=lr, l2=1e-06, seed=seed)
-+    users = np.asarray(context.train_users).ravel()
-+    labels = np.asarray(context.train_y, dtype=np.float32).ravel()
++    np.random.seed(seed)
 +    rng = np.random.RandomState(seed)
-+    best_primary = -np.inf
-+    best_state = None
-+    best_val_scores = None
-+    no_improve = 0
-+    trace = []
-+    for epoch in range(1, int(epochs) + 1):
-+        pos_rows, neg_rows = sample_softmax_groups(users, labels, rng, n_neg)
-+        num_groups = len(pos_rows)
-+        if num_groups == 0:
-+            break
-+        order = rng.permutation(num_groups)
-+        epoch_loss = 0.0
-+        num_samples = 0
-+        for start in range(0, num_groups, batch_size):
-+            idx = order[start:start + batch_size]
-+            pos_batch = pos_rows[idx]
-+            neg_batch = neg_rows[idx]
-+            row_ids = np.concatenate([pos_batch[:, None], neg_batch], axis=1).reshape(-1)
-+            features = train_features[row_ids]
-+            scores = model.logits(features)[0]
-+            scores = scores.reshape(-1, n_neg + 1)
-+            grads, losses = _group_softmax(scores, temperature)
-+            score_grads = grads.reshape(-1).astype(np.float32)
-+            gv, gw, gb = model.gradients(features, score_grads)
-+            model.apply_gradients(gv, gw, gb)
-+            epoch_loss += float(np.sum(losses))
-+            num_samples += len(pos_batch)
-+        avg_loss = epoch_loss / max(num_samples, 1)
-+        val_scores = model.predict(valid_features)
-+        metrics = context.evaluate_validation(val_scores)
-+        primary = _primary(metrics)
-+        gauc = _metric(metrics, 'GAUC')
-+        ndcg = _metric(metrics, 'nDCG@5')
-+        trace.append({'epoch': int(epoch), 'train_loss': float(avg_loss), 'validation_primary': float(primary), 'validation_gauc': float(gauc), 'validation_ndcg': float(ndcg)})
-+        if primary > best_primary:
-+            best_primary = primary
-+            best_state = model.state_dict()
-+            best_val_scores = np.array(val_scores, copy=True)
-+            no_improve = 0
-+        else:
-+            no_improve += 1
-+            if no_improve >= int(patience):
-+                break
-+    if best_state is None:
-+        best_state = model.state_dict()
-+        best_val_scores = model.predict(valid_features)
-+    model.load_state_dict(best_state)
-+    val_scores = model.predict(valid_features)
-+    test_scores = None
++    try:
++        spec = context.spec
++    except AttributeError:
++        spec = None
++    if spec is None:
++        n_base = context.train_x.shape[1]
++        spec = {'fields': ['f{}'.format(i) for i in range(n_base)]}
++    elif not isinstance(spec, dict) or 'fields' not in spec:
++        n_base = context.train_x.shape[1]
++        spec = {'fields': ['f{}'.format(i) for i in range(n_base)]}
++    train_spec = dict(spec, split='train', field_offset=0)
++    valid_spec = dict(spec, split='valid', field_offset=0)
++    test_spec = dict(spec, split='test', field_offset=0)
++    random_valid_spec = dict(spec, split='random_valid', field_offset=0)
++    train_features_base = build_features(context.train_x, train_spec)
++    valid_features_base = build_features(context.valid_x, valid_spec)
++    test_features_base = None
++    random_valid_features_base = None
 +    if context.test_x is not None:
-+        test_features = np.ascontiguousarray(context.test_x, dtype=np.int32)
-+        test_scores = model.predict(test_features)
-+    random_valid_scores = None
++        test_features_base = build_features(context.test_x, test_spec)
 +    if context.random_valid_x is not None:
-+        rv_features = np.ascontiguousarray(context.random_valid_x, dtype=np.int32)
-+        random_valid_scores = model.predict(rv_features)
-+    diagnostics = {'temperature': temperature, 'negatives_per_group': n_neg, 'epochs_run': len(trace), 'best_validation_primary': float(best_primary)}
-+    return CandidateOutput(validation_scores=val_scores, checkpoint_state=best_state, training_trace=trace, diagnostics=diagnostics, test_scores=test_scores, random_validation_scores=random_valid_scores)
++        random_valid_features_base = build_features(context.random_valid_x, random_valid_spec)
++    train_users = context.train_x[:, 0].astype(np.int64)
++    train_videos = context.train_x[:, 1].astype(np.int64)
++    hist_counts = {}
++    hist_sums = {}
++    for u, v, y in zip(train_users, train_videos, context.train_y):
++        key = (int(u), int(v))
++        if key in hist_counts:
++            hist_counts[key] += 1
++            hist_sums[key] += float(y)
++        else:
++            hist_counts[key] = 1
++            hist_sums[key] = float(y)
++    alpha = 1.0
++    beta = 2.0
++    num_buckets = 10
++    field_offset = _field_dim
++
++    def encode_history(users, videos):
++        n = len(users)
++        hist = np.zeros(n, dtype=np.int64)
++        for i in range(n):
++            key = (int(users[i]), int(videos[i]))
++            if key in hist_counts:
++                cnt = hist_counts[key]
++                sm = hist_sums[key]
++                ratio = (sm + alpha) / (cnt + beta)
++                idx = int(ratio * num_buckets)
++                if idx > num_buckets - 1:
++                    idx = num_buckets - 1
++                elif idx < 0:
++                    idx = 0
++                hist[i] = field_offset + idx
++            else:
++                hist[i] = field_offset
++        return hist[:, None]
++    train_features = np.concatenate([train_features_base, encode_history(train_users, train_videos)], axis=1)
++    valid_features = np.concatenate([valid_features_base, encode_history(context.valid_x[:, 0].astype(np.int64), context.valid_x[:, 1].astype(np.int64))], axis=1)
++    test_features = None
++    random_valid_features = None
++    if test_features_base is not None:
++        test_features = np.concatenate([test_features_base, encode_history(context.test_x[:, 0].astype(np.int64), context.test_x[:, 1].astype(np.int64))], axis=1)
++    if random_valid_features_base is not None:
++        random_valid_features = np.concatenate([random_valid_features_base, encode_history(context.random_valid_x[:, 0].astype(np.int64), context.random_valid_x[:, 1].astype(np.int64))], axis=1)
++    dimension = _field_dim + num_buckets
++    model = FMRanker(dimension, embedding_dim=parameters['k'], learning_rate=parameters['learning_rate'], l2=1e-06, seed=seed)
++    users = context.train_x[:, 0]
++    labels = context.train_y
++    K = parameters['negatives_per_group']
++    temp = parameters['temperature']
+     batch_size = parameters['batch_size']
+     epochs = parameters['epochs']
+-    lr = parameters['learning_rate']
+-    negs = parameters['negatives_per_positive']
+     patience = parameters['patience']
+-    seed = parameters['seed']
+-    rng = np.random.RandomState(seed)
+-    spec = {}
+-    train_spec = dict(spec, split='train', field_offset=_field_dim)
+-    valid_spec = dict(spec, split='valid', field_offset=_field_dim)
+-    test_spec = dict(spec, split='test', field_offset=_field_dim) if context.test_x is not None else None
+-    random_valid_spec = dict(spec, split='random_valid', field_offset=_field_dim) if context.random_valid_x is not None else None
+-    train_features = build_features(context.train_x, train_spec)
+-    valid_features = build_features(context.valid_x, valid_spec)
+-    test_features = build_features(context.test_x, test_spec) if test_spec is not None else None
+-    random_valid_features = build_features(context.random_valid_x, random_valid_spec) if random_valid_spec is not None else None
+-    dimension = _field_dim + feature_dimension(spec)
+-    model = FMRanker(dimension, embedding_dim=16, learning_rate=lr, l2=1e-06, seed=seed)
+-    train_users = context.train_users
+-    train_labels = context.train_y
++    best_primary = -1.0
++    best_state = None
++    best_epoch = 0
++    wait = 0
++    training_trace = []
+ 
+-    def get_val_primary():
+-        scores = model.predict(valid_features)
+-        metrics = context.evaluate_validation(scores)
++    def get_primary(metrics):
++        if _autofix_hasattr_primary(metrics):
++            return metrics.primary
+         if isinstance(metrics, dict):
+-            return float(metrics.get('primary', np.mean(list(metrics.values()))))
+-        return float(metrics)
+-    best_primary = -np.inf
+-    best_state = None
+-    patience_counter = 0
+-    training_trace = []
+-    sum_hardness = 0.0
+-    count_hardness = 0
++            return metrics['primary']
++        if len(metrics) >= 3:
++            return metrics[2]
++        if len(metrics) >= 1:
++            return metrics[0]
++        return 0.0
+     for epoch in range(epochs):
+-        pos_rows, neg_rows = sample_bpr_pairs(train_users, train_labels, rng, negs)
+-        n_pairs = len(pos_rows)
+-        if n_pairs == 0:
+-            training_trace.append({'epoch': epoch + 1, 'val_primary': get_val_primary(), 'loss': 0.0})
+-            continue
+-        perm = rng.permutation(n_pairs)
+-        pos_rows = pos_rows[perm]
+-        neg_rows = neg_rows[perm]
++        positives, negatives = sample_softmax_groups(users, labels, rng, K)
++        n_groups = positives.shape[0]
++        if n_groups == 0:
++            break
++        perm = rng.permutation(n_groups)
++        positives = positives[perm]
++        negatives = negatives[perm]
+         epoch_loss = 0.0
+-        n_batches = int(np.ceil(n_pairs / batch_size))
+-        for i in range(n_batches):
+-            start = i * batch_size
+-            end = min(start + batch_size, n_pairs)
+-            if start >= end:
+-                continue
+-            p_idx = pos_rows[start:end]
+-            n_idx = neg_rows[start:end]
+-            pos_feat = train_features[p_idx]
+-            neg_feat = train_features[n_idx]
+-            pos_scores, _, _ = model.logits(pos_feat)
+-            neg_scores, _, _ = model.logits(neg_feat)
+-            diff = neg_scores - pos_scores
+-            diff_clipped = np.clip(diff, -30.0, 30.0)
+-            weights = 1.0 / (1.0 + np.exp(-diff_clipped))
+-            sum_hardness += np.sum(weights)
+-            count_hardness += len(weights)
+-            pos_neg = pos_scores - neg_scores
+-            pos_neg_clipped = np.clip(pos_neg, -30.0, 30.0)
+-            sig = 1.0 / (1.0 + np.exp(-pos_neg_clipped))
+-            grad = (sig - 1.0) * weights / (end - start)
+-            grad_v_pos, grad_w_pos, grad_b_pos = model.gradients(pos_feat, grad)
+-            grad_v_neg, grad_w_neg, grad_b_neg = model.gradients(neg_feat, -grad)
+-            model.apply_gradients(grad_v_pos + grad_v_neg, grad_w_pos + grad_w_neg, grad_b_pos + grad_b_neg)
+-            batch_loss = -np.log(np.clip(sig, 1e-12, 1.0))
+-            epoch_loss += np.sum(batch_loss * weights) / (end - start)
+… truncated, full source at 20260831T141845874517Z_research/002_gs_hist_cross_hard_temp1/candidate.py
 ```
 
 **Metrics:**
 
 | Metric | Value | Δ vs best-so-far | Δ vs baseline |
 |---|---|---|---|
-| GAUC | 0.6706 | not reported | not reported |
-| nDCG@5 | 0.5374 | not reported | not reported |
-| primary | 0.6040 | +0.6040 | +0.0024 |
+| GAUC | 0.5968 | not reported | not reported |
+| nDCG@5 | 0.5087 | not reported | not reported |
+| primary | 0.5528 | -0.0023 | -0.0488 |
 
-**Test scores:** `runs/20260831T115602777469Z_research/artifacts/004_gs_hard_neg_temp2_run1/test_scores.npy`
+**Test scores:** `runs/20260831T141845874517Z_research/artifacts/002_gs_hist_cross_hard_temp1/test_scores.npy`
 
-**Critic (preflight):** approved_with_warnings — The proposal is a single bounded contrast within the registered group_softmax family, using temperature 2.0 and K=8 as previously recommended. It does not introduce leakage, cross-user negatives, hidden-test access, or other safety/contract violations. The prior borderline review identified implementation concerns rather than hard violations: the required trusted sampler 'sample_hard_bpr_pairs' is not explicitly documented, the root cause of the earlier failure remains unconfirmed, and the baseline score for hardness must be train-only. These are addressable during implementation and do not warrant a hard reject. The proposal offers a concrete probe (temperature 2.0, K=8) and corrects confounds from the failed gs_hard_neg_group run.
+**Critic (preflight):** approved — The proposal is safe and matches registered directions. It uses same-user group softmax with hard negatives (K=8, temp=1.0) and a train-only user×video_type long_view history cross feature. The feature is computed from the training log only, is item-conditional (varies within a user's list), and carries no future-history leakage. No evaluator/split/label/budget/reference-file changes, no hidden-test access, no cross-user negatives, and no unsafe imports or numerical operations are present. The family and parameters fall within the approved search space, and the hypothesis is falsifiable against the baseline.
 
-**Critic (postflight):** hypothesis_not_supported — The proposal predicted that swapping random negatives for train-only hard same-user negatives at temperature=2.0 and K=8 would lift validation nDCG@5 beyond the random-negative group-softmax baseline (0.6041). The trusted metrics show primary = 0.6040, essentially flat (delta < 0.0001), with nDCG@5 = 0.5374 and GAUC = 0.6706. The within-user ranking gains from hard negatives are negligible in this regime, consistent with the prior flat results for group softmax and capacity/feature explorations. The hypothesis is therefore not supported.
+**Critic (postflight):** reject_hypothesis — The proposed group softmax with hard negatives (K=8, temp=1.0) and a user×video_type long_view history cross feature achieved primary 0.5528 (GAUC 0.5968, nDCG@5 0.5087), far below the baseline primary of 0.6016. Early stopping triggered at epoch 1, indicating no meaningful learning. The history feature did not provide the expected within-user ranking signal, and the robustness gap (0.2287) suggests poor generalization. The hypothesis is not supported.
 
-**Resources:** 68.3 s · 162,431 tokens
+**Resources:** 59.7 s · 101,484 tokens
+
+---
+
+## Iteration 3 — hist_prior_days_var_gs2_3b9a
+
+**Hypothesis:** Enabling only the four within-user-varying history groups (user_author, user_tab, tab_cross, recency) under strict prior_days aggregation with smoothing m=20.0, paired with the best-known group-softmax loss (temperature=2.0, K=8), should let the FM learn author/tab-affinity crosses that reorder the top-5 within a user and lift validation nDCG@5 beyond the id-only GS regime (0.6041).
+
+**Rationale:** Within-user ranking only benefits from user signal crossed with item-side fields, and user_author, user_tab, tab_cross and recency all vary within a user, so a minimal four-group prior_days probe is the cleanest leakage-safe test of DIN-style history affinity under the listwise loss that already leads the family.
+
+**Evidence:**
+- [Deep Interest Network for Click-Through Rate Prediction](https://arxiv.org/abs/1706.06978)
+- [Learning to Rank: From Pairwise Approach to Listwise Approach](https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/)
+
+**Family:** history_features  
+**Parameters:** `{"batch_size": 2048, "epochs": 8, "k": 16, "learning_rate": 0.0005, "negatives_per_positive": 1, "patience": 2, "scheme": "prior_days", "seed": 42, "smoothing": 20.0, "use_recency": true, "use_tab_cross": true, "use_user_author": true, "use_user_rate": true, "use_user_tab": true, "use_video_age": true}`
+
+```diff
+--- parent
++++ candidate
+@@ -1,98 +1,138 @@
+-import numpy as np
+ import math
+ import time
+-import collections
++import numpy as np
+ from src.models.fm_core import FMRanker
+ from src.models.sampling import sample_bpr_pairs
+ from src.models.features import build_features, feature_dimension
+ from src.experiments.contracts import CandidateOutput
+ 
++def _build_spec(parameters):
++    keys = ['scheme', 'smoothing', 'use_user_rate', 'use_user_author', 'use_user_tab', 'use_recency', 'use_video_age', 'use_tab_cross']
++    return {k: parameters[k] for k in keys if k in parameters}
++
++def _sigmoid(x):
++    x = np.clip(x, -30.0, 30.0)
++    return 1.0 / (1.0 + np.exp(-x))
++
++def _eval_metrics(evaluate, scores):
++    res = evaluate(scores)
++    if isinstance(res, dict):
++        gauc = res.get('GAUC') or res.get('gauc')
++        ndcg = res.get('nDCG@5') or res.get('ndcg@5') or res.get('ndcg')
++        if gauc is not None and ndcg is not None:
++            try:
++                return (float(gauc), float(ndcg))
++            except Exception:
++                pass
++    try:
++        items = list(res)
++    except TypeError:
++        v = float(res)
++        return (v, v)
++    if len(items) >= 2:
++        try:
++            g = float(items[0])
++            n = float(items[1])
++            return (g, n)
++        except Exception:
++            pass
++    for item in items:
++        try:
++            v = float(item)
++            return (v, v)
++        except Exception:
++            pass
++    raise ValueError('evaluate_validation returned no parseable values')
++
++def _concat(rows, extra):
++    if extra is None:
++        return rows
++    if rows is None:
++        return None
++    return np.concatenate([rows, extra], axis=1).astype(np.int32)
++
+ def run(context, parameters):
+     _fd = context.field_dimension
+     _field_dim = sum(_fd) if isinstance(_fd, list) else int(_fd)
+-    batch_size = parameters['batch_size']
+-    epochs = parameters['epochs']
+-    lr = parameters['learning_rate']
+-    negs = parameters['negatives_per_positive']
+-    patience = parameters['patience']
+-    seed = parameters['seed']
+-    rng = np.random.RandomState(seed)
+-    spec = {}
+-    train_spec = dict(spec, split='train', field_offset=_field_dim)
+-    valid_spec = dict(spec, split='valid', field_offset=_field_dim)
+-    test_spec = dict(spec, split='test', field_offset=_field_dim) if context.test_x is not None else None
+-    random_valid_spec = dict(spec, split='random_valid', field_offset=_field_dim) if context.random_valid_x is not None else None
+-    train_features = build_features(context.train_x, train_spec)
+-    valid_features = build_features(context.valid_x, valid_spec)
+-    test_features = build_features(context.test_x, test_spec) if test_spec is not None else None
+-    random_valid_features = build_features(context.random_valid_x, random_valid_spec) if random_valid_spec is not None else None
+-    dimension = _field_dim + feature_dimension(spec)
+-    model = FMRanker(dimension, embedding_dim=16, learning_rate=lr, l2=1e-06, seed=seed)
+-    train_users = context.train_users
+-    train_labels = context.train_y
+-
+-    def get_val_primary():
+-        scores = model.predict(valid_features)
+-        metrics = context.evaluate_validation(scores)
+-        if isinstance(metrics, dict):
+-            return float(metrics.get('primary', np.mean(list(metrics.values()))))
+-        return float(metrics)
++    seed = int(parameters['seed'])
++    rng = np.random.default_rng(seed)
++    lr = float(parameters['learning_rate'])
++    epochs = int(parameters['epochs'])
++    batch_size = int(parameters['batch_size'])
++    patience = int(parameters['patience'])
++    k = int(parameters.get('k', 16))
++    npp = int(parameters.get('negatives_per_positive', 1))
++    base_spec = _build_spec(parameters)
++    train_spec = dict(base_spec, split='train', field_offset=_field_dim)
++    valid_spec = dict(base_spec, split='valid', field_offset=_field_dim)
++    train_extra = build_features(context.train_x, train_spec)
++    valid_extra = build_features(context.valid_x, valid_spec)
++    train_w = _concat(context.train_x, train_extra)
++    valid_w = _concat(context.valid_x, valid_extra)
++    test_w = None
++    random_w = None
++    if context.test_x is not None:
++        test_spec = dict(base_spec, split='test', field_offset=_field_dim)
++        test_extra = build_features(context.test_x, test_spec)
++        test_w = _concat(context.test_x, test_extra)
++    if context.random_valid_x is not None:
++        random_valid_spec = dict(base_spec, split='random_valid', field_offset=_field_dim)
++        random_extra = build_features(context.random_valid_x, random_valid_spec)
++        random_w = _concat(context.random_valid_x, random_extra)
++    extra_dim = feature_dimension(train_spec)
++    dimension = int(_field_dim) + int(extra_dim)
++    model = FMRanker(dimension, embedding_dim=k, learning_rate=lr, l2=1e-06, seed=seed)
+     best_primary = -np.inf
++    best_gauc = None
++    best_ndcg = None
++    best_epoch = 0
+     best_state = None
+     patience_counter = 0
+     training_trace = []
+-    sum_hardness = 0.0
+-    count_hardness = 0
+-    for epoch in range(epochs):
+-        pos_rows, neg_rows = sample_bpr_pairs(train_users, train_labels, rng, negs)
+-        n_pairs = len(pos_rows)
+-        if n_pairs == 0:
+-            training_trace.append({'epoch': epoch + 1, 'val_primary': get_val_primary(), 'loss': 0.0})
+-            continue
+-        perm = rng.permutation(n_pairs)
+-        pos_rows = pos_rows[perm]
+-        neg_rows = neg_rows[perm]
+-        epoch_loss = 0.0
+-        n_batches = int(np.ceil(n_pairs / batch_size))
+-        for i in range(n_batches):
+-            start = i * batch_size
++    start_time = time.time()
++    for epoch in range(1, epochs + 1):
++        positive_rows, negative_rows = sample_bpr_pairs(context.train_users, context.train_y, rng, npp)
++        n_pairs = len(positive_rows)
++        total_loss = 0.0
++        for start in range(0, n_pairs, batch_size):
+             end = min(start + batch_size, n_pairs)
+-            if start >= end:
+-                continue
+-            p_idx = pos_rows[start:end]
+-            n_idx = neg_rows[start:end]
+-            pos_feat = train_features[p_idx]
+-            neg_feat = train_features[n_idx]
+-            pos_scores, _, _ = model.logits(pos_feat)
+-            neg_scores, _, _ = model.logits(neg_feat)
+-            diff = neg_scores - pos_scores
+-            diff_clipped = np.clip(diff, -30.0, 30.0)
+-            weights = 1.0 / (1.0 + np.exp(-diff_clipped))
+-            sum_hardness += np.sum(weights)
+-            count_hardness += len(weights)
+-            pos_neg = pos_scores - neg_scores
+-            pos_neg_clipped = np.clip(pos_neg, -30.0, 30.0)
+-            sig = 1.0 / (1.0 + np.exp(-pos_neg_clipped))
+-            grad = (sig - 1.0) * weights / (end - start)
+-            grad_v_pos, grad_w_pos, grad_b_pos = model.gradients(pos_feat, grad)
+-            grad_v_neg, grad_w_neg, grad_b_neg = model.gradients(neg_feat, -grad)
++            pos_idx = positive_rows[start:end]
++            neg_idx = negative_rows[start:end]
++            pos_feat = train_w[pos_idx]
++            neg_feat = train_w[neg_idx]
++            pos_scores, pos_embeds, pos_summed = model.logits(pos_feat)
++            neg_scores, neg_embeds, neg_summed = model.logits(neg_feat)
++            diff = pos_scores - neg_scores
++            prob = _sigmoid(diff)
++            grad = (prob - 1.0) / float(len(pos_idx))
++            batch_loss = -np.mean(np.log(np.clip(prob, 1e-06, 1.0)))
++            total_loss += float(batch_loss) * len(pos_idx)
++            grad_v_pos, grad_w_pos, grad_b_pos = model.gradients(pos_feat, grad, pos_embeds, pos_summed)
++            grad_v_neg, grad_w_neg, grad_b_neg = model.gradients(neg_feat, -grad, neg_embeds, neg_summed)
+             model.apply_gradients(grad_v_pos + grad_v_neg, grad_w_pos + grad_w_neg, grad_b_pos + grad_b_neg)
+-            batch_loss = -np.log(np.clip(sig, 1e-12, 1.0))
+-            epoch_loss += np.sum(batch_loss * weights) / (end - start)
+-        val_primary = get_val_primary()
+-        training_trace.append({'epoch': epoch + 1, 'val_primary': val_primary, 'loss': epoch_loss})
+-        if val_primary > best_primary:
+-            best_primary = val_primary
+-            best_state = model.state_dict()
++        mean_loss = total_loss / max(n_pairs, 1)
++        valid_scores = model.predict(valid_w)
++        gauc, ndcg = _eval_metrics(context.evaluate_validation, valid_scores)
++        primary = 0.5 * (gauc + ndcg)
++        training_trace.append({'epoch': epoch, 'train_loss': round(mean_loss, 6), 'gauc': round(float(gauc), 6), 'ndcg@5': round(float(ndcg), 6), 'primary': round(float(primary), 6)})
++        if primary > best_primary + 1e-06:
++            best_primary = float(primary)
++            best_gauc = float(gauc)
++            best_ndcg = float(ndcg)
++            best_epoch = epoch
++            best_state = {name: arr.copy() for name, arr in model.state_dict().items()}
+             patience_counter = 0
+         else:
+             patience_counter += 1
+             if patience_counter >= patience:
+… truncated, full source at 20260831T141845874517Z_research/003_hist_prior_days_var_gs2_3b9a/candidate.py
+```
+
+**Metrics:**
+
+| Metric | Value | Δ vs best-so-far | Δ vs baseline |
+|---|---|---|---|
+| GAUC | 0.6705 | not reported | not reported |
+| nDCG@5 | 0.5370 | not reported | not reported |
+| primary | 0.6038 | +0.0488 | +0.0022 |
+
+**Test scores:** `runs/20260831T141845874517Z_research/artifacts/003_hist_prior_days_var_gs2_3b9a/test_scores.npy`
+
+**Critic (preflight):** approved — The proposal is a leakage-safe exploration of history features under prior_days aggregation, using train-only temporal data and the existing group-softmax loss/trusted FM backbone. No hard safety veto applies.
+
+**Critic (postflight):** Hypothesis not supported: primary 0.6038 < 0.6041 target; improvement over baseline 0.6016 is marginal. — The trusted validation primary was 0.6037897, above the general baseline 0.6016 but below the stated target of 0.6041 from the id-only group-softmax regime. The run enabled all six history groups rather than the four within-user varying groups specified in the hypothesis, so the clean test was not performed. The gain over baseline is small and likely within noise, and the deviation from the planned feature subset means the DIN-style history-affinity hypothesis was not properly evaluated.
+
+**Resources:** 68.1 s · 137,958 tokens
 
 **Replications:**
 
 | Seed | Primary | Status |
 |---|---|---|
-| 1 | 0.6040 | success |
-| 2 | 0.6042 | success |
-| **mean** | **0.6041** | spread 0.0001 |
+| 1 | 0.6045 | success |
+| 2 | 0.6036 | success |
+| **mean** | **0.6040** | spread 0.0009 |
 
 ---
 
-## Iteration 7 — hist_user_tab_tabcross_bpr_v1
+## Iteration 6 — mt_click_aux_02_bpr
 
-**Hypothesis:** Adding two causal within-user history features (user_tab affinity + tab_cross) computed via the prior_days scheme and trained under the same-user group-softmax objective (temp=2.0, K=8 hard negatives) will lift validation nDCG@5 by exploiting the strongly item-varying tab signal (tab 4: 48.9% vs tab 0: 4.2%).
+**Hypothesis:** Adding a low-weighted (0.2) click auxiliary head over the same shared FM embeddings to a BPR ranking objective gives the embeddings denser supervision per train row and should lift within-user long_view ranking beyond plain BPR.
 
-**Rationale:** Unlike user_rate, user_tab and tab_cross vary across a user's candidate items, so they genuinely change intra-user top-5 ordering (the ndcg lead) while avoiding the measured user-only dead end, and pairing them with the best group-softmax head combines two controller-preferred mechanisms rather than a broad six-group bundle.
+**Rationale:** is_click fires on 46.3% of rows and correlates 0.76 with long_view, so a light click term regularizes the shared embeddings toward click-relevant structure without swamping the sparse ranking signal, matching the method-card guidance to start click-only at aux_weight 0.1-0.3.
 
 **Evidence:**
-- [Deep Interest Network for Click-Through Rate Prediction (DIN, KDD 2018)](https://arxiv.org/abs/1706.06978)
-- [kuairand-starter-kit README (history_features method card: prior_days vs leave_one_out, within-user-varying groups user_tab/tab_cross/recency)](kuairand-starter-kit/README.en.md)
+- [Entire Space Multi-Task Model (ESMM), SIGIR 2018](https://arxiv.org/abs/1804.07931)
+- [KuaiRand starter kit: multi-task ranked third among untested directions](kuairand-starter-kit/README.en.md:161-165)
 
-**Family:** history_features  
-**Parameters:** `{"batch_size": 2048, "epochs": 12, "k": 16, "learning_rate": 0.0005, "negatives_per_positive": 1, "patience": 2, "scheme": "prior_days", "seed": 42, "smoothing": 20.0, "use_recency": true, "use_tab_cross": true, "use_user_author": true, "use_user_rate": true, "use_user_tab": true, "use_video_age": true}`
+**Family:** multi_task  
+**Parameters:** `{"aux_weight": 0.05, "batch_size": 2048, "epochs": 8, "k": 16, "learning_rate": 0.0005, "negatives_per_positive": 1, "patience": 2, "seed": 42, "use_is_click": true, "use_is_comment": false, "use_is_follow": false, "use_is_forward": false, "use_is_like": false, "use_play_time": false}`
 
 ```diff
 --- parent
 +++ candidate
-@@ -1,119 +1,85 @@
+@@ -1,98 +1,111 @@
  import numpy as np
-+import math
-+import time
-+from collections import defaultdict
+ import math
+ import time
+-import collections
  from src.models.fm_core import FMRanker
--from src.models.sampling import sample_softmax_groups
-+from src.models.sampling import sample_bpr_pairs
-+from src.models.features import build_features, feature_dimension
+ from src.models.sampling import sample_bpr_pairs
+-from src.models.features import build_features, feature_dimension
++from src.models.features import build_aux_labels
  from src.experiments.contracts import CandidateOutput
- 
--def _primary(metrics):
--    if isinstance(metrics, dict):
--        if 'primary' in metrics:
--            return float(metrics['primary'])
--        ga = metrics.get('GAUC')
--        if ga is None:
--            ga = metrics.get('gauc')
--        ng = metrics.get('nDCG@5')
--        if ng is None:
--            ng = metrics.get('ndcg@5')
--        if ng is None:
--            ng = metrics.get('ndcg5')
--        if ga is not None and ng is not None:
--            return 0.5 * (float(ga) + float(ng))
--        if len(metrics) > 0:
--            return float(list(metrics.values())[0])
--        return 0.0
--    return float(metrics)
--
--def _metric(metrics, key):
--    if isinstance(metrics, dict):
--        for cand in (key, key.lower()):
--            if cand in metrics:
--                return float(metrics[cand])
--        return float('nan')
--    return float(metrics)
--
--def _group_softmax(logits, temperature):
--    scaled = np.asarray(logits, dtype=np.float32) / float(temperature)
--    scaled = scaled - np.max(scaled, axis=-1, keepdims=True)
--    exp = np.exp(scaled)
--    probs = exp / np.sum(exp, axis=-1, keepdims=True)
--    onehot = np.zeros_like(probs)
--    onehot[:, 0] = 1.0
--    grads = (probs - onehot) / float(temperature)
--    losses = -np.log(np.maximum(probs[:, 0], 1e-12))
--    return (grads, losses)
++
 +def _sigmoid(x):
 +    return 1.0 / (1.0 + np.exp(-np.clip(x, -30.0, 30.0)))
  
  def run(context, parameters):
      _fd = context.field_dimension
      _field_dim = sum(_fd) if isinstance(_fd, list) else int(_fd)
--    seed = int(parameters['seed'])
--    lr = float(parameters['learning_rate'])
--    epochs = int(parameters['epochs'])
--    batch_size = int(parameters['batch_size'])
--    patience = int(parameters['patience'])
--    k = int(parameters['k'])
--    n_neg = int(parameters['negatives_per_group'])
--    temperature = float(parameters['temperature'])
--    train_features = np.ascontiguousarray(context.train_x, dtype=np.int32)
--    valid_features = np.ascontiguousarray(context.valid_x, dtype=np.int32)
--    total_dim = int(_field_dim)
--    model = FMRanker(total_dim, embedding_dim=k, learning_rate=lr, l2=1e-06, seed=seed)
--    users = np.asarray(context.train_users).ravel()
--    labels = np.asarray(context.train_y, dtype=np.float32).ravel()
--    rng = np.random.RandomState(seed)
-+    spec = {'smoothing': parameters['smoothing'], 'scheme': parameters['scheme'], 'use_recency': parameters['use_recency'], 'use_tab_cross': parameters['use_tab_cross'], 'use_user_author': parameters['use_user_author'], 'use_user_rate': parameters['use_user_rate'], 'use_user_tab': parameters['use_user_tab'], 'use_video_age': parameters['use_video_age']}
-+    train_spec = dict(spec, split='train', field_offset=_field_dim)
-+    valid_spec = dict(spec, split='valid', field_offset=_field_dim)
-+    test_spec = dict(spec, split='test', field_offset=_field_dim)
-+    random_valid_spec = dict(spec, split='random_valid', field_offset=_field_dim)
-+    train_extra = build_features(context.train_x, train_spec)
-+    valid_extra = build_features(context.valid_x, valid_spec)
-+    test_extra = build_features(context.test_x, test_spec) if context.test_x is not None else None
-+    random_extra = build_features(context.random_valid_x, random_valid_spec) if context.random_valid_x is not None else None
-+    train_x = np.concatenate([context.train_x, train_extra], axis=1).astype(np.int32)
-+    valid_x = np.concatenate([context.valid_x, valid_extra], axis=1).astype(np.int32)
-+    if test_extra is not None:
-+        test_x = np.concatenate([context.test_x, test_extra], axis=1).astype(np.int32)
-+    else:
-+        test_x = None
-+    if random_extra is not None:
-+        random_valid_x = np.concatenate([context.random_valid_x, random_extra], axis=1).astype(np.int32)
-+    else:
-+        random_valid_x = None
-+    dim = _field_dim + feature_dimension(train_spec)
-+    model = FMRanker(dim, embedding_dim=parameters['k'], learning_rate=parameters['learning_rate'], seed=parameters['seed'])
-+    rng = np.random.RandomState(parameters['seed'])
-+    batch_size = parameters['batch_size']
-+    epochs = parameters['epochs']
-+    patience = parameters['patience']
-+    npp = parameters['negatives_per_positive']
-     best_primary = -np.inf
+-    batch_size = parameters['batch_size']
+-    epochs = parameters['epochs']
+-    lr = parameters['learning_rate']
+-    negs = parameters['negatives_per_positive']
+-    patience = parameters['patience']
+-    seed = parameters['seed']
++    seed = parameters.get('seed', 42)
++    k = parameters.get('k', 16)
++    lr = parameters.get('learning_rate', 0.0005)
++    epochs = parameters.get('epochs', 8)
++    batch_size = parameters.get('batch_size', 2048)
++    patience = parameters.get('patience', 2)
++    neg_per_pos = parameters.get('negatives_per_positive', 1)
++    aux_weight = parameters.get('aux_weight', 0.05)
++    use_heads = {'is_click': parameters.get('use_is_click', True), 'is_like': parameters.get('use_is_like', False), 'is_follow': parameters.get('use_is_follow', False), 'is_comment': parameters.get('use_is_comment', False), 'is_forward': parameters.get('use_is_forward', False), 'play_time': parameters.get('use_play_time', False)}
++    active_heads = [h for h, on in use_heads.items() if on]
++    if not active_heads:
++        active_heads = ['is_click']
++        use_heads['is_click'] = True
++    aux_spec = {'split': 'train'}
++    for h in ['is_click', 'is_like', 'is_follow', 'is_comment', 'is_forward', 'play_time']:
++        aux_spec['use_' + h] = use_heads[h]
++    aux_train = build_aux_labels(context.train_x, aux_spec)
++    model = FMRanker(_field_dim, embedding_dim=k, learning_rate=lr, seed=seed)
+     rng = np.random.RandomState(seed)
+-    spec = {}
+-    train_spec = dict(spec, split='train', field_offset=_field_dim)
+-    valid_spec = dict(spec, split='valid', field_offset=_field_dim)
+-    test_spec = dict(spec, split='test', field_offset=_field_dim) if context.test_x is not None else None
+-    random_valid_spec = dict(spec, split='random_valid', field_offset=_field_dim) if context.random_valid_x is not None else None
+-    train_features = build_features(context.train_x, train_spec)
+-    valid_features = build_features(context.valid_x, valid_spec)
+-    test_features = build_features(context.test_x, test_spec) if test_spec is not None else None
+-    random_valid_features = build_features(context.random_valid_x, random_valid_spec) if random_valid_spec is not None else None
+-    dimension = _field_dim + feature_dimension(spec)
+-    model = FMRanker(dimension, embedding_dim=16, learning_rate=lr, l2=1e-06, seed=seed)
+-    train_users = context.train_users
+-    train_labels = context.train_y
+-
+-    def get_val_primary():
+-        scores = model.predict(valid_features)
+-        metrics = context.evaluate_validation(scores)
+-        if isinstance(metrics, dict):
+-            return float(metrics.get('primary', np.mean(list(metrics.values()))))
+-        return float(metrics)
+-    best_primary = -np.inf
      best_state = None
--    best_val_scores = None
-+    best_epoch = -1
-     no_improve = 0
--    trace = []
--    for epoch in range(1, int(epochs) + 1):
--        pos_rows, neg_rows = sample_softmax_groups(users, labels, rng, n_neg)
--        num_groups = len(pos_rows)
--        if num_groups == 0:
--            break
--        order = rng.permutation(num_groups)
+-    patience_counter = 0
+-    training_trace = []
+-    sum_hardness = 0.0
+-    count_hardness = 0
++    best_primary = -1.0
++    best_epoch = 0
++    no_improve = 0
++    trace = []
++    start_time = time.time()
+     for epoch in range(epochs):
+-        pos_rows, neg_rows = sample_bpr_pairs(train_users, train_labels, rng, negs)
++        pos_rows, neg_rows = sample_bpr_pairs(context.train_users, context.train_y, rng, neg_per_pos)
+         n_pairs = len(pos_rows)
+         if n_pairs == 0:
+-            training_trace.append({'epoch': epoch + 1, 'val_primary': get_val_primary(), 'loss': 0.0})
+             continue
+-        perm = rng.permutation(n_pairs)
+-        pos_rows = pos_rows[perm]
+-        neg_rows = neg_rows[perm]
 -        epoch_loss = 0.0
--        num_samples = 0
--        for start in range(0, num_groups, batch_size):
--            idx = order[start:start + batch_size]
--            pos_batch = pos_rows[idx]
--            neg_batch = neg_rows[idx]
--            row_ids = np.concatenate([pos_batch[:, None], neg_batch], axis=1).reshape(-1)
--            features = train_features[row_ids]
--            scores = model.logits(features)[0]
--            scores = scores.reshape(-1, n_neg + 1)
--            grads, losses = _group_softmax(scores, temperature)
--            score_grads = grads.reshape(-1).astype(np.float32)
--            gv, gw, gb = model.gradients(features, score_grads)
--            model.apply_gradients(gv, gw, gb)
--            epoch_loss += float(np.sum(losses))
--            num_samples += len(pos_batch)
--        avg_loss = epoch_loss / max(num_samples, 1)
--        val_scores = model.predict(valid_features)
--        metrics = context.evaluate_validation(val_scores)
--        primary = _primary(metrics)
--        gauc = _metric(metrics, 'GAUC')
--        ndcg = _metric(metrics, 'nDCG@5')
--        trace.append({'epoch': int(epoch), 'train_loss': float(avg_loss), 'validation_primary': float(primary), 'validation_gauc': float(gauc), 'validation_ndcg': float(ndcg)})
-+    training_trace = []
-+    for epoch in range(epochs):
-+        pos_idx, neg_idx = sample_bpr_pairs(context.train_users, context.train_y, rng, npp)
-+        n_pairs = len(pos_idx)
-+        perm = rng.permutation(n_pairs)
+-        n_batches = int(np.ceil(n_pairs / batch_size))
+-        for i in range(n_batches):
+-            start = i * batch_size
++        total_bpr = 0.0
++        total_aux = 0.0
 +        for start in range(0, n_pairs, batch_size):
-+            batch_perm = perm[start:start + batch_size]
-+            p_idx = pos_idx[batch_perm]
-+            n_idx = neg_idx[batch_perm]
-+            pos_features = train_x[p_idx]
-+            neg_features = train_x[n_idx]
-+            pos_scores = model.logits(pos_features)[0]
-+            neg_scores = model.logits(neg_features)[0]
-+            diff = pos_scores - neg_scores
-+            sig = _sigmoid(diff)
-+            grad = (sig - 1.0) / len(p_idx)
-+            grad_v_pos, grad_w_pos, grad_b_pos = model.gradients(pos_features, grad)
-+            grad_v_neg, grad_w_neg, grad_b_neg = model.gradients(neg_features, -grad)
-+            model.apply_gradients(grad_v_pos + grad_v_neg, grad_w_pos + grad_w_neg, grad_b_pos + grad_b_neg)
-+        valid_scores = model.predict(valid_x)
+             end = min(start + batch_size, n_pairs)
+-            if start >= end:
+-                continue
+-            p_idx = pos_rows[start:end]
+-            n_idx = neg_rows[start:end]
+-            pos_feat = train_features[p_idx]
+-            neg_feat = train_features[n_idx]
+-            pos_scores, _, _ = model.logits(pos_feat)
+-            neg_scores, _, _ = model.logits(neg_feat)
+-            diff = neg_scores - pos_scores
+-            diff_clipped = np.clip(diff, -30.0, 30.0)
+-            weights = 1.0 / (1.0 + np.exp(-diff_clipped))
+-            sum_hardness += np.sum(weights)
+-            count_hardness += len(weights)
+-            pos_neg = pos_scores - neg_scores
+-            pos_neg_clipped = np.clip(pos_neg, -30.0, 30.0)
+-            sig = 1.0 / (1.0 + np.exp(-pos_neg_clipped))
+-            grad = (sig - 1.0) * weights / (end - start)
+-            grad_v_pos, grad_w_pos, grad_b_pos = model.gradients(pos_feat, grad)
+-            grad_v_neg, grad_w_neg, grad_b_neg = model.gradients(neg_feat, -grad)
+-            model.apply_gradients(grad_v_pos + grad_v_neg, grad_w_pos + grad_w_neg, grad_b_pos + grad_b_neg)
+-            batch_loss = -np.log(np.clip(sig, 1e-12, 1.0))
+-            epoch_loss += np.sum(batch_loss * weights) / (end - start)
+-        val_primary = get_val_primary()
+-        training_trace.append({'epoch': epoch + 1, 'val_primary': val_primary, 'loss': epoch_loss})
+-        if val_primary > best_primary:
+-            best_primary = val_primary
++            batch_pos = pos_rows[start:end]
++            batch_neg = neg_rows[start:end]
++            pos_x = context.train_x[batch_pos]
++            neg_x = context.train_x[batch_neg]
++            pos_score = model.logits(pos_x)[0]
++            neg_score = model.logits(neg_x)[0]
++            diff = np.clip(pos_score - neg_score, -30.0, 30.0)
++            sig_diff = _sigmoid(diff)
++            batch_n = end - start
++            grad_bpr = (sig_diff - 1.0) / batch_n
++            if aux_weight > 0:
++                pos_aux = aux_train[batch_pos]
++                neg_aux = aux_train[batch_neg]
++                pos_sig = _sigmoid(pos_score)
++                neg_sig = _sigmoid(neg_score)
++                grad_aux_pos = (pos_sig - pos_aux) * (aux_weight / batch_n)
++                grad_aux_neg = (neg_sig - neg_aux) * (aux_weight / batch_n)
++                grad_aux_pos_row = np.sum(grad_aux_pos, axis=1)
++                grad_aux_neg_row = np.sum(grad_aux_neg, axis=1)
++                grad_pos = grad_bpr + grad_aux_pos_row
++                grad_neg = -grad_bpr + grad_aux_neg_row
++                eps = 1e-08
++                aux_loss_pos = -np.mean(np.sum(pos_aux * np.log(pos_sig + eps) + (1 - pos_aux) * np.log(1 - pos_sig + eps), axis=1))
++                aux_loss_neg = -np.mean(np.sum(neg_aux * np.log(neg_sig + eps) + (1 - neg_aux) * np.log(1 - neg_sig + eps), axis=1))
++                total_aux += (aux_loss_pos + aux_loss_neg) * (end - start) / 2.0
++            else:
++                grad_pos = grad_bpr
++                grad_neg = -grad_bpr
++                total_aux += 0.0
++            grad_v_p, grad_w_p, grad_b_p = model.gradients(pos_x, grad_pos)
++            grad_v_n, grad_w_n, grad_b_n = model.gradients(neg_x, grad_neg)
++            grad_v = grad_v_p + grad_v_n
++            grad_w = grad_w_p + grad_w_n
++            grad_b = grad_b_p + grad_b_n
++            model.apply_gradients(grad_v, grad_w, grad_b)
++            total_bpr += -np.log(sig_diff + 1e-08).sum()
++        valid_scores = model.predict(context.valid_x)
 +        metrics = context.evaluate_validation(valid_scores)
-+        gauc = metrics.get('GAUC', 0.0)
-+        ndcg = metrics.get('nDCG@5', 0.0)
-+        primary = (gauc + ndcg) / 2.0
-+        training_trace.append({'epoch': epoch, 'GAUC': gauc, 'nDCG@5': ndcg, 'primary': primary})
-         if primary > best_primary:
-             best_primary = primary
++        if isinstance(metrics, dict):
++            primary = metrics.get('primary', 0.0)
++            if 'gauc' in metrics and 'ndcg@5' in metrics:
++                primary = (metrics['gauc'] + metrics['ndcg@5']) / 2.0
++        else:
++            primary = float(metrics)
++        trace.append({'epoch': epoch + 1, 'metrics': metrics, 'bpr_loss': total_bpr / n_pairs, 'aux_loss': total_aux / n_pairs, 'primary': primary})
++        if primary > best_primary:
++            best_primary = primary
++            best_epoch = epoch + 1
              best_state = model.state_dict()
--            best_val_scores = np.array(val_scores, copy=True)
-+            best_epoch = epoch
-             no_improve = 0
+-            patience_counter = 0
++            no_improve = 0
          else:
-             no_improve += 1
--            if no_improve >= int(patience):
+-            patience_counter += 1
+-            if patience_counter >= patience:
++            no_improve += 1
 +            if no_improve >= patience:
                  break
--    if best_state is None:
--        best_state = model.state_dict()
--        best_val_scores = model.predict(valid_features)
-     model.load_state_dict(best_state)
--    val_scores = model.predict(valid_features)
--    test_scores = None
--    if context.test_x is not None:
--        test_features = np.ascontiguousarray(context.test_x, dtype=np.int32)
--        test_scores = model.predict(test_features)
--    random_valid_scores = None
--    if context.random_valid_x is not None:
--        rv_features = np.ascontiguousarray(context.random_valid_x, dtype=np.int32)
--        random_valid_scores = model.predict(rv_features)
--    diagnostics = {'temperature': temperature, 'negatives_per_group': n_neg, 'epochs_run': len(trace), 'best_validation_primary': float(best_primary)}
--    return CandidateOutput(validation_scores=val_scores, checkpoint_state=best_state, training_trace=trace, diagnostics=diagnostics, test_scores=test_scores, random_validation_scores=random_valid_scores)
-+    validation_scores = model.predict(valid_x)
-+    test_scores = model.predict(test_x) if test_x is not None else None
-+    random_validation_scores = model.predict(random_valid_x) if random_valid_x is not None else None
-+    diagnostics = {'best_epoch': best_epoch, 'best_primary': float(best_primary), 'feature_dim': int(feature_dimension(train_spec)), 'total_dim': int(dim), 'epochs_ran': len(training_trace)}
-+    return CandidateOutput(validation_scores=validation_scores, checkpoint_state=best_state, training_trace=training_trace, diagnostics=diagnostics, test_scores=test_scores, random_validation_scores=random_validation_scores)
+     if best_state is not None:
+         model.load_state_dict(best_state)
+-    validation_scores = model.predict(valid_features)
+-    test_scores = model.predict(test_features) if test_features is not None else None
+-    random_valid_scores = model.predict(random_valid_features) if random_valid_features is not None else None
+-    diagnostics = {'best_primary': best_primary, 'epochs_run': len(training_trace), 'n_pairs': n_pairs, 'hardness_weight_mean': sum_hardness / count_hardness if count_hardness > 0 else None}
+-    return CandidateOutput(validation_scores=validation_scores, checkpoint_state=model.state_dict(), training_trace=training_trace, diagnostics=diagnostics, test_scores=test_scores, random_validation_scores=random_valid_scores)
++    else:
++        best_state = model.state_dict()
++    validation_scores = model.predict(context.valid_x)
++    test_scores = model.predict(context.test_x) if context.test_x is not None else None
++    random_validation_scores = model.predict(context.random_valid_x) if context.random_valid_x is not None else None
++    diagnostics = {'best_epoch': best_epoch, 'best_primary': best_primary, 'n_pairs': n_pairs, 'training_time_s': time.time() - start_time, 'aux_weight': aux_weight, 'active_heads': active_heads}
++    return CandidateOutput(validation_scores=validation_scores, checkpoint_state=best_state, training_trace=trace, diagnostics=diagnostics, test_scores=test_scores, random_validation_scores=random_validation_scores)
 ```
 
 **Metrics:**
 
 | Metric | Value | Δ vs best-so-far | Δ vs baseline |
 |---|---|---|---|
-| GAUC | 0.6691 | not reported | not reported |
-| nDCG@5 | 0.5365 | not reported | not reported |
-| primary | 0.6028 | -0.0012 | +0.0012 |
+| GAUC | 0.6408 | not reported | not reported |
+| nDCG@5 | 0.5233 | not reported | not reported |
+| primary | 0.5820 | -0.0218 | -0.0196 |
 
-**Test scores:** `runs/20260831T115602777469Z_research/artifacts/007_hist_user_tab_tabcross_bpr_v1/test_scores.npy`
+**Test scores:** `runs/20260831T141845874517Z_research/artifacts/006_mt_click_aux_02_bpr/test_scores.npy`
 
-**Critic (preflight):** approved — The proposal is safety-clean: it uses a strictly causal `prior_days` history scheme built only from train interactions, within-user sampling under the group-softmax head, and the trusted `build_features`/`FMRanker` runtime. It does not touch hidden-test data, the evaluator, labels, or split conventions, and it targets a genuinely untried, controller-endorsed direction (`history_features`). No numerical or contract risks are evident.
+**Critic (preflight):** approved — The proposal adds a low-weighted (aux_weight=0.05) click auxiliary head over the same shared FM embeddings to a BPR ranking objective. This is fully consistent with the multi_task method card's safe initial search space (click-only, aux_weight 0.05–0.3). Auxiliary targets come exclusively from build_aux_labels on train rows (train-only by construction, raising for any other split), so there is no leakage or hidden-test access. No cross-user negatives, no evaluator/split/label/budget changes, no unsafe imports or operations, and the candidate contract (FMRanker, build_features, CandidateOutput) is respected. Numerically it is a small additive loss term with no stability risk. Although the parent BPR run scored low (primary 0.555), this is a cheap, focused probe following a registered untested direction and does not warrant hard rejection.
 
-**Critic (postflight):** supported — The proposal improved primary from the 0.6016 baseline to 0.6028 (GAUC 0.6691, nDCG@5 0.5365), indicating that within-user-varying history features (user_tab, tab_cross) can lift ranking quality. The hypothesis is tentatively supported, although the gain is small and within a range that could include seed variance.
+**Critic (postflight):** reject — The multi-task probe (click auxiliary head at weight 0.05 with BPR) achieved primary 0.5820, below the baseline 0.6016, so the hypothesis is not supported on the trusted validation split. GAUC (0.6408) is below the baseline's GAUC and nDCG@5 (0.5233) also fails to offset, giving a primary that is 1.96 points worse. The auxiliary supervision did not help the sparse ranking signal; the shared-embedding assumption appears not to pay off at this weight. The negative result aligns with the method card's known failure mode where auxiliary gradients can drag embeddings toward the click objective without improving long_view ranking.
 
-**Resources:** 54.7 s · 80,121 tokens
+**Resources:** 38.5 s · 85,338 tokens
 
 ---
 

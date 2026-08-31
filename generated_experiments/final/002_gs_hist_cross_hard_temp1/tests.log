@@ -1,0 +1,7 @@
+
+test_run_returns_valid_candidate_output (test_candidate.TestCandidateRun.test_run_returns_valid_candidate_output) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.026s
+
+OK

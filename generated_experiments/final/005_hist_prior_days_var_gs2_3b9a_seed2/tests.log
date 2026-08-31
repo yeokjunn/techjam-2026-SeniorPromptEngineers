@@ -1,0 +1,11 @@
+
+test_concat_preserves_order (test_candidate.TestCandidateContract.test_concat_preserves_order) ... ok
+test_eval_metrics_parses_dict (test_candidate.TestCandidateContract.test_eval_metrics_parses_dict) ... ok
+test_eval_metrics_parses_tuple (test_candidate.TestCandidateContract.test_eval_metrics_parses_tuple) ... ok
+test_run_is_callable (test_candidate.TestCandidateContract.test_run_is_callable) ... ok
+test_sigmoid_stable_extremes (test_candidate.TestCandidateContract.test_sigmoid_stable_extremes) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.034s
+
+OK

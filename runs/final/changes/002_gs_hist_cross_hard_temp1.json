@@ -1,0 +1,21 @@
+{
+  "candidate_id": "gs_hist_cross_hard_temp1",
+  "files": [
+    {
+      "lines_added": 192,
+      "lines_deleted": 79,
+      "path": "candidate.py",
+      "status": "modified"
+    },
+    {
+      "lines_added": 42,
+      "lines_deleted": 47,
+      "path": "test_candidate.py",
+      "status": "modified"
+    }
+  ],
+  "iteration": 2,
+  "lines_added": 234,
+  "lines_deleted": 126,
+  "patch_path": "changes/002_gs_hist_cross_hard_temp1.patch"
+}

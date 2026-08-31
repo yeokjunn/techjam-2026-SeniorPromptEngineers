@@ -346,7 +346,7 @@ evidence.
 ## Final submission run (committed)
 
 The designated final run is committed at [`runs/final/`](runs/final/) — a copy of
-run `20260831T115602777469Z_research` with local absolute paths rewritten to
+run `20260831T141845874517Z_research` with local absolute paths rewritten to
 repo-relative form for publication; provenance paths inside its JSON records
 still reference that original run id. Model checkpoints (`artifacts/`, `*.npz`)
 are deliberately excluded; everything else ships: the full iteration ledger,
@@ -354,41 +354,52 @@ per-role prompts and outputs, candidate patches, stdout, rendered reports, and
 the submission CSV. The agent-generated code for every iteration is committed at
 [`generated_experiments/final/`](generated_experiments/final/).
 
-The run completed with `stop_reason: converged` at **iteration 7 of 50** under
+The run completed with `stop_reason: converged` at **iteration 6 of 50** under
 the official ε = 0.002, patience-3 rule — before the 50-iteration and six-hour
 limits. It was driven by `deepseek-v4-flash` on an OpenAI-compatible endpoint
 (frozen in [`runs/final/run_config.json`](runs/final/run_config.json)).
-Recorded resource use: **579,031 LLM tokens** (427,391 input / 151,640
-output / 314,880 cached), **1,906 s (0.53 h) wall-clock**, 11 training attempts,
-11 proposal attempts, **0 GPU-hours**, and **0 manual interventions**
+Recorded resource use: **446,210 LLM tokens** (311,696 input / 134,514
+output / 230,144 cached), **1,772 s (0.49 h) wall-clock**, 8 training attempts,
+7 proposal attempts, **0 GPU-hours**, and **0 manual interventions**
 ([`resources.json`](runs/final/resources.json)).
 
 | Iteration | Candidate | Family | Status | Primary |
 |---:|---|---|---|---:|
-| 1 | `bpr_lambda_top` | bpr | failed after 2 bounded repairs | — |
-| 2 | `bpr_topk_lambda_corrected` | bpr | failed after 2 bounded repairs | — |
-| 3 | `gs_hard_neg_group` | group_softmax | failed after 2 bounded repairs | — |
-| 4 | `gs_hard_neg_temp2_run1` | group_softmax | success | 0.6040 |
-| 5 | `gs_hard_neg_temp2_run1_seed1` | group_softmax | success (seed replication) | 0.6040 |
-| 6 | `gs_hard_neg_temp2_run1_seed2` | group_softmax | success (seed replication) | **0.6042** |
-| 7 | `hist_user_tab_tabcross_bpr_v1` | history_features | success — third stagnant success; convergence latched | 0.6028 |
+| 1 | `bpr_topweighted_hard_2` | bpr | success | 0.5550 |
+| 2 | `gs_hist_cross_hard_temp1` | group_softmax | success | 0.5528 |
+| 3 | `hist_prior_days_var_gs2_3b9a` | history_features | success | 0.6038 |
+| 4 | `hist_prior_days_var_gs2_3b9a_seed1` | history_features | success (seed replication) | **0.6045** |
+| 5 | `hist_prior_days_var_gs2_3b9a_seed2` | history_features | success (seed replication) | 0.6036 |
+| 6 | `mt_click_aux_02_bpr` | multi_task | success — third stagnant success; convergence latched | 0.5820 |
+
+Iterations 1–2 landed far below the FM baseline; the loop then found the
+prior-days history-feature family — its candidates use the split-specific
+feature specs pinned by the new `history_features` Builder contract —
+replicated it across two more seeds, and converged. The first proposal of
+iteration 1 was reworked in-iteration before any code ran (`results.md`:
+0 failed iterations, 0 rejected before code).
 
 Validation results against the official baseline (GAUC 0.6674 / nDCG@5 0.5357 /
 primary 0.6016):
 
 | Checkpoint | GAUC | nDCG@5 | Primary | Δ primary |
 |---|---:|---:|---:|---:|
-| Best single (`gs_hard_neg_temp2_run1_seed2`) | 0.6710 | 0.5374 | 0.6042 | +0.0026 |
-| 4-candidate blended ensemble — designated submission | 0.6717 | 0.5379 | **0.6048** | **+0.0032** |
+| Best single (`hist_prior_days_var_gs2_3b9a_seed1`) | 0.6707 | 0.5382 | 0.6045 | +0.0029 |
+| 4-candidate blend — designated submission | 0.6711 | 0.5383 | **0.6047** | **+0.0031** |
 
-Applying the judging formula on validation, the ensemble scores
-mean(ΔGAUC +0.0043, ΔnDCG@5 +0.0022) = **+0.0032**. Hidden-test deltas are not
+Applying the judging formula on validation, the blend scores
+mean(ΔGAUC +0.0037, ΔnDCG@5 +0.0026) = **+0.0032**; the single best scores
+**+0.0029**. The blend is weight-constrained and dominated by the best
+checkpoint (weight 0.939, with 0.044 group-softmax and 0.017 multi-task). A
+previous live run (`20260831T115602777469Z_research`, not committed) reached a
+statistically indistinguishable blend of 0.6048; this run is designated for its
+stronger single checkpoint and leaner resource use. Hidden-test deltas are not
 computable locally — the official hidden-test baseline is primary 0.5946
 (GAUC 0.6610 / nDCG@5 0.5282) — and no hidden-test signal guided selection.
 
 The designated submission is [`runs/final/submission.csv`](runs/final/submission.csv):
 the blended-ensemble scores on all 170,588 test rows, gate-checked label-free
-(SHA-256 `dcdfc43d…85218c2`, see [`gate_done.json`](runs/final/gate_done.json);
+(SHA-256 `ffda31d4…ca6e`, see [`gate_done.json`](runs/final/gate_done.json);
 the gate never reads test labels — `scored: false`).
 
 Render the report bundle locally:

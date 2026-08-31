@@ -1,0 +1,8 @@
+
+test_run_returns_valid_outputs (test_candidate.TestCandidate.test_run_returns_valid_outputs)
+Verify run returns a CandidateOutput with finite scores. ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.031s
+
+OK

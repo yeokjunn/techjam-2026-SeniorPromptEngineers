@@ -23,28 +23,29 @@ Training uses only the organizer-provided KuaiRand-Pure dataset and starter kit.
 ## Verified results and resources
 
 All numbers below come from the committed final run [`runs/final/`](../runs/final/results.md)
-(a copy of live run `20260831T115602777469Z_research` with local absolute paths
+(a copy of live run `20260831T141845874517Z_research` with local absolute paths
 rewritten to repo-relative form). Validation metrics, scored against the official
 baseline (GAUC 0.6674 / nDCG@5 0.5357 / primary 0.6016):
 
 | Checkpoint | GAUC | nDCG@5 | Primary | Δ primary vs 0.6016 |
 |---|---:|---:|---:|---:|
-| Best single checkpoint (`gs_hard_neg_temp2_run1_seed2`) | 0.6710 | 0.5374 | 0.6042 | +0.0026 |
-| 4-candidate blended ensemble — designated submission | 0.6717 | 0.5379 | 0.6048 | +0.0032 |
+| Best single checkpoint (`hist_prior_days_var_gs2_3b9a_seed1`) | 0.6707 | 0.5382 | 0.6045 | +0.0029 |
+| 4-candidate blend — designated submission | 0.6711 | 0.5383 | 0.6047 | +0.0031 |
 
-The run converged at **iteration 7 of 50** under the official ε = 0.002 /
+The run converged at **iteration 6 of 50** under the official ε = 0.002 /
 patience-3 rule, before the 50-iteration and six-hour limits. Resource use:
-**579,031 LLM tokens** (427,391 input / 151,640 output), **1,906 seconds
-(0.53 h) wall-clock**, 11 training attempts, 11 proposal attempts, **0
-GPU-hours**, and **0 manual interventions**. Three of seven iterations failed
-and were handled autonomously by bounded, hypothesis-preserving debugger
-repairs; the run then recovered and converged. The label-free submission gate
-passed on all 170,588 test rows: the designated submission is
+**446,210 LLM tokens** (311,696 input / 134,514 output), **1,772 seconds
+(0.49 h) wall-clock**, 8 training attempts, 7 proposal attempts, **0
+GPU-hours**, and **0 manual interventions**, with 0 failed iterations. The loop
+first tried two below-baseline objectives (top-weighted BPR, group-softmax with
+history crossing), then found the prior-days history-feature family, replicated
+it across two seeds, and converged on a multi-task probe. The label-free
+submission gate passed on all 170,588 test rows: the designated submission is
 [`runs/final/submission.csv`](../runs/final/submission.csv) (SHA-256
-`dcdfc43d…85218c2`), which encodes the blended-ensemble test scores. Hidden-test
-scores are unknown by construction and did not guide model selection; the
-official hidden-test baseline is primary 0.5946.
+`ffda31d4…ca6e`), which encodes the blended test scores. Hidden-test scores are
+unknown by construction and did not guide model selection; the official
+hidden-test baseline is primary 0.5946.
 
 ## Limitations and next steps
 
-The final committed run converged and passed the label-free submission gate, but hidden-test score remains unknown and must not guide model selection. Validation lift is still modest (+0.0032 primary over the official baseline, close to seed variance), so next priorities are more diverse leakage-safe history contrast, more robust generated multi-task implementations, and score blending that reduces baseline over-weighting without changing the official GAUC/nDCG@5 criteria.
+The final committed run converged and passed the label-free submission gate, but hidden-test score remains unknown and must not guide model selection. Validation lift is still modest (+0.0031 primary over the official baseline, close to seed variance), so next priorities are more diverse leakage-safe history contrast, more robust generated multi-task implementations, and score blending that reduces baseline over-weighting without changing the official GAUC/nDCG@5 criteria.

@@ -60,6 +60,18 @@ not yet tried over another point on a grid you have already sampled, unless the 
 specifically justifies repeating it."""
 
 
+HISTORY_FEATURE_SPLIT_CONTRACT = """For history_features only: src.models.features.build_features defaults to split='train'.
+Always pass an explicit split-specific spec:
+  train_spec = dict(spec, split='train', field_offset=context.field_dimension)
+  valid_spec = dict(spec, split='valid', field_offset=context.field_dimension)
+  test_spec = dict(spec, split='test', field_offset=context.field_dimension)
+  random_valid_spec = dict(spec, split='random_valid', field_offset=context.field_dimension)
+Call build_features(context.train_x, train_spec), build_features(context.valid_x, valid_spec),
+and build_features(context.test_x, test_spec) when test_x is not None. Use feature_dimension(spec)
+for the added FM index width, not train_extra.shape[1]. Build random-validation features with
+random_valid_spec when context.random_valid_x is not None."""
+
+
 BASE_CANDIDATE_CONTRACT = """candidate.py must define `run(context, parameters) -> CandidateOutput`.
 Use only numpy, collections, math, time, src.models.fm_core.FMRanker, src.models.sampling,
 src.models.features, and src.experiments.contracts.CandidateOutput. The context provides train_x, train_y, train_users,

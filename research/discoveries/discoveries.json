@@ -1,6 +1,1361 @@
 {
   "discoveries": [
     {
+      "created_at": "2026-08-31T14:44:50.180923+00:00",
+      "delta_vs_baseline": -0.019572445487976098,
+      "discovery_id": "549d86f3fda56772",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "Entire Space Multi-Task Model (ESMM), SIGIR 2018",
+          "url": "https://arxiv.org/abs/1804.07931"
+        },
+        {
+          "method_card_id": "multi_task",
+          "title": "KuaiRand starter kit: multi-task ranked third among untested directions",
+          "url": "kuairand-starter-kit/README.en.md:161-165"
+        }
+      ],
+      "experiment_id": "mt_click_aux_02_bpr",
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 6,
+      "hypothesis": "Adding a low-weighted (0.2) click auxiliary head over the same shared FM embeddings to a BPR ranking objective gives the embeddings denser supervision per train row and should lift within-user long_view ranking beyond plain BPR.",
+      "hypothesis_id": "mt_click_aux_02_bpr",
+      "last_iteration": 6,
+      "metrics": {
+        "GAUC": 0.6407928466796875,
+        "nDCG@5": 0.5232622623443604,
+        "primary": 0.5820275545120239,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "is_click fires on 46.3% of rows and correlates 0.76 with long_view, so a light click term regularizes the shared embeddings toward click-relevant structure without swamping the sparse ranking signal, matching the method-card guidance to start click-only at aux_weight 0.1-0.3.",
+      "rejection": null,
+      "run_id": "20260831T141845874517Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T14:48:16.957910+00:00"
+    },
+    {
+      "created_at": "2026-08-31T14:44:13.580518+00:00",
+      "delta_vs_baseline": 0.001988521480560279,
+      "discovery_id": "4749efdd7c81cd62",
+      "evidence": [],
+      "experiment_id": "hist_prior_days_var_gs2_3b9a_seed2",
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 5,
+      "hypothesis": "Exact replication of hist_prior_days_var_gs2_3b9a with seed 2.",
+      "hypothesis_id": "hist_prior_days_var_gs2_3b9a",
+      "last_iteration": 5,
+      "metrics": {
+        "GAUC": 0.6704866886138916,
+        "nDCG@5": 0.536690354347229,
+        "primary": 0.6035885214805603,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 2,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 0,
+      "rationale": "Deterministic replication required after a meaningful validation improvement.",
+      "rejection": null,
+      "run_id": "20260831T141845874517Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T14:44:13.585653+00:00"
+    },
+    {
+      "created_at": "2026-08-31T14:42:59.167698+00:00",
+      "delta_vs_baseline": 0.0028650077819823982,
+      "discovery_id": "7afeb280de59e8a4",
+      "evidence": [],
+      "experiment_id": "hist_prior_days_var_gs2_3b9a_seed1",
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 4,
+      "hypothesis": "Exact replication of hist_prior_days_var_gs2_3b9a with seed 1.",
+      "hypothesis_id": "hist_prior_days_var_gs2_3b9a",
+      "last_iteration": 4,
+      "metrics": {
+        "GAUC": 0.6707127690315247,
+        "nDCG@5": 0.538217306137085,
+        "primary": 0.6044650077819824,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 1,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 0,
+      "rationale": "Deterministic replication required after a meaningful validation improvement.",
+      "rejection": null,
+      "run_id": "20260831T141845874517Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T14:42:59.174974+00:00"
+    },
+    {
+      "created_at": "2026-08-31T14:36:15.333837+00:00",
+      "delta_vs_baseline": 0.0021896871566772225,
+      "discovery_id": "f93e93b983d7fa77",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Deep Interest Network for Click-Through Rate Prediction",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "history_features",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": "hist_prior_days_var_gs2_3b9a",
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Enabling only the four within-user-varying history groups (user_author, user_tab, tab_cross, recency) under strict prior_days aggregation with smoothing m=20.0, paired with the best-known group-softmax loss (temperature=2.0, K=8), should let the FM learn author/tab-affinity crosses that reorder the top-5 within a user and lift validation nDCG@5 beyond the id-only GS regime (0.6041).",
+      "hypothesis_id": "hist_prior_days_var_gs2_3b9a",
+      "last_iteration": 3,
+      "metrics": {
+        "GAUC": 0.6705414652824402,
+        "nDCG@5": 0.5370378494262695,
+        "primary": 0.6037896871566772,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "Within-user ranking only benefits from user signal crossed with item-side fields, and user_author, user_tab, tab_cross and recency all vary within a user, so a minimal four-group prior_days probe is the cleanest leakage-safe test of DIN-style history affinity under the listwise loss that already leads the family.",
+      "rejection": null,
+      "run_id": "20260831T141845874517Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T14:41:36.961246+00:00"
+    },
+    {
+      "created_at": "2026-08-31T14:35:35.425486+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "54c3579f99b0987e",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Deep Interest Network for Click-Through Rate Prediction",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "bpr",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Adding train-only prior-days smoothed within-user history crosses (user_author and tab_cross only, smoothing m=20, prior_days scheme) as extra FM fields under a same-user hard-negative BPR objective should lift within-user nDCG@5 beyond the id-only baseline, because author affinity and tab-by-duration propensity vary across a user's candidate list while user-static terms cannot.",
+      "hypothesis_id": "hist_author_tabcross_bpr_hard",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 11,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "The controller's ndcg_focus and EDA both single out user_author and tab_cross as the within-user-varying history signals most likely to reorder a user's top-5, so a tight two-group probe avoids the known dead end of the full six-group bundle and the user-static user_rate term that is constant within a user.",
+      "rejection": null,
+      "run_id": "20260831T141845874517Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T14:35:35.425486+00:00"
+    },
+    {
+      "created_at": "2026-08-31T14:34:42.330338+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "8fbed4963fc03aca",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Deep Interest Network for Click-Through Rate Prediction",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "history_features",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Adding only the three within-user-varying history cross groups (user_author, user_tab, tab_cross) under a BPR ranking loss with prior_days smoothing will lift validation nDCG@5 by letting the model learn per-user affinities that reorder the top of each user's list, avoiding the six-group bundle and the user-only recency/user_rate noise that cannot change intra-user order.",
+      "hypothesis_id": "hist_bpr_user_author_tab_cross_prior_days",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "Because ndcg_focus is active and user-only features are constant within a user, the decisive history signal must come through crosses with item fields (author/tab/dur_bucket), so a minimal three-group prior_days probe is the cheapest way to isolate that mechanism against the failed six-group gs_hist_cross_hard_temp1 (primary 0.5528).",
+      "rejection": null,
+      "run_id": "20260831T141845874517Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T14:34:42.330338+00:00"
+    },
+    {
+      "created_at": "2026-08-31T14:27:49.352640+00:00",
+      "delta_vs_baseline": -0.04883474979400637,
+      "discovery_id": "d515f591dd034a82",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach (ICML 2007)",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        },
+        {
+          "method_card_id": "group_softmax",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": "gs_hist_cross_hard_temp1",
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 2,
+      "hypothesis": "Adding a train-only user\u00d7video_type long_view history cross feature into same-user group softmax with hard negatives (K=8, temp=1.0) should sharpen top-5 within-user ordering and lift nDCG@5 beyond the feature-free group-softmax runs (\u22480.604).",
+      "hypothesis_id": "gs_hist_cross_hard_temp1",
+      "last_iteration": 2,
+      "metrics": {
+        "GAUC": 0.5967944264411926,
+        "nDCG@5": 0.5087361335754395,
+        "primary": 0.5527652502059937,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 1.0
+      },
+      "proposed_count": 1,
+      "rationale": "EDA shows strong per-tab/per-type long_view rate separation and user-side history is item-conditional and leakage-safe, so a user\u00d7video_type cross is a within-user-varying rank signal that static/user-only terms cannot provide while group softmax aligns the loss with the evaluated intra-user list.",
+      "rejection": null,
+      "run_id": "20260831T141845874517Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T14:33:36.427966+00:00"
+    },
+    {
+      "created_at": "2026-08-31T14:23:29.995460+00:00",
+      "delta_vs_baseline": -0.046563097572326684,
+      "discovery_id": "87746bb8e1fa86dd",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": "bpr_topweighted_hard_2",
+      "failure": null,
+      "family": "bpr",
+      "first_iteration": 1,
+      "hypothesis": "Weighting each BPR pair by the train-only hardness of its negative (sigmoid score gap from sample_hard_bpr_pairs) concentrates gradient on lifting the positive above its closest same-user rivals and improves validation nDCG@5 over uniform hard-negative BPR.",
+      "hypothesis_id": "bpr_topweighted_hard_2",
+      "last_iteration": 1,
+      "metrics": {
+        "GAUC": 0.5998915433883667,
+        "nDCG@5": 0.5101822018623352,
+        "primary": 0.5550369024276733,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "seed": 7
+      },
+      "proposed_count": 1,
+      "rationale": "The controller's ndcg_focus targets top-5 ordering, and top-weighted hard-negative BPR is the only preferred bpr-family mechanism not yet sampled, so a bounded probe is cheap and directly addresses the active objective.",
+      "rejection": null,
+      "run_id": "20260831T141845874517Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T14:26:46.316838+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:25:14.903433+00:00",
+      "delta_vs_baseline": 0.0012196811676025154,
+      "discovery_id": "e677c86a79b3d843",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Deep Interest Network for Click-Through Rate Prediction (DIN, KDD 2018)",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "history_features",
+          "title": "kuairand-starter-kit README (history_features method card: prior_days vs leave_one_out, within-user-varying groups user_tab/tab_cross/recency)",
+          "url": "kuairand-starter-kit/README.en.md"
+        }
+      ],
+      "experiment_id": "hist_user_tab_tabcross_bpr_v1",
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 7,
+      "hypothesis": "Adding two causal within-user history features (user_tab affinity + tab_cross) computed via the prior_days scheme and trained under the same-user group-softmax objective (temp=2.0, K=8 hard negatives) will lift validation nDCG@5 by exploiting the strongly item-varying tab signal (tab 4: 48.9% vs tab 0: 4.2%).",
+      "hypothesis_id": "hist_user_tab_tabcross_gs_v1",
+      "last_iteration": 7,
+      "metrics": {
+        "GAUC": 0.6691275238990784,
+        "nDCG@5": 0.5365117788314819,
+        "primary": 0.6028196811676025,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 12,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "Unlike user_rate, user_tab and tab_cross vary across a user's candidate items, so they genuinely change intra-user top-5 ordering (the ndcg lead) while avoiding the measured user-only dead end, and pairing them with the best group-softmax head combines two controller-preferred mechanisms rather than a broad six-group bundle.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T12:27:48.262529+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:23:37.764251+00:00",
+      "delta_vs_baseline": 0.002570143604278541,
+      "discovery_id": "b982f60c208a35c2",
+      "evidence": [],
+      "experiment_id": "gs_hard_neg_temp2_run1_seed2",
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 6,
+      "hypothesis": "Exact replication of gs_hard_neg_temp2_run1 with seed 2.",
+      "hypothesis_id": "gs_hard_neg_temp2",
+      "last_iteration": 6,
+      "metrics": {
+        "GAUC": 0.6709824800491333,
+        "nDCG@5": 0.5373578071594238,
+        "primary": 0.6041701436042786,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 2,
+        "temperature": 2.0
+      },
+      "proposed_count": 0,
+      "rationale": "Deterministic replication required after a meaningful validation improvement.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T12:23:37.772864+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:22:22.718783+00:00",
+      "delta_vs_baseline": 0.0024254831314086678,
+      "discovery_id": "71ad471fb0d60845",
+      "evidence": [],
+      "experiment_id": "gs_hard_neg_temp2_run1_seed1",
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 5,
+      "hypothesis": "Exact replication of gs_hard_neg_temp2_run1 with seed 1.",
+      "hypothesis_id": "gs_hard_neg_temp2",
+      "last_iteration": 5,
+      "metrics": {
+        "GAUC": 0.6705456972122192,
+        "nDCG@5": 0.5375052094459534,
+        "primary": 0.6040254831314087,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 1,
+        "temperature": 2.0
+      },
+      "proposed_count": 0,
+      "rationale": "Deterministic replication required after a meaningful validation improvement.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T12:22:22.730295+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:16:13.801229+00:00",
+      "delta_vs_baseline": 0.0024176749229430916,
+      "discovery_id": "42ae2fa26da328ac",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach (ICML 2007)",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        },
+        {
+          "method_card_id": "bpr",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": "gs_hard_neg_temp2_run1",
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 4,
+      "hypothesis": "Within same-user group softmax, swapping random negatives for train-only hard same-user negatives (hardness from baseline_score/same_tab/same_author via the trusted sample_hard_bpr_pairs) while holding the best-known fixed temperature=2.0 and K=8 will concentrate gradients on moving the positive above its closest in-group rivals and lift validation nDCG@5 beyond the random-negative regime (0.6041).",
+      "hypothesis_id": "gs_hard_neg_temp2",
+      "last_iteration": 4,
+      "metrics": {
+        "GAUC": 0.6706309914588928,
+        "nDCG@5": 0.5374043583869934,
+        "primary": 0.6040176749229431,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 2.0
+      },
+      "proposed_count": 1,
+      "rationale": "Hard negatives target exactly the top-heavy within-user objective the controller favors, and pinning temperature=2.0 (current best lead) plus using the documented trusted hard-pair sampler removes the two confounds (unverified hard grouping and an unsupported annealing schedule) that undermined the earlier gs_hard_neg_group run, making this a single bounded contrast.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T12:21:05.367128+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:15:35.744595+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "58cbec3b7532cbe8",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 4,
+      "hypothesis": "Within same-user group softmax, annealing temperature from 2.0 down to 0.5 across the 8 training epochs (soft early for stable gradients, sharp late to focus the listwise competition on top-5) should lift validation nDCG@5 beyond any single fixed temperature we already sampled (0.5/1.0/2.0 all plateau near 0.604).",
+      "hypothesis_id": "gs_temp_anneal_soft2sharp",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 2.0
+      },
+      "proposed_count": 1,
+      "rationale": "All fixed-temperature group-softmax runs converged to the same primary, so the untested lever is the loss schedule itself, which the family supports and which directly sharpens top-5 ordering late in training.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T12:15:35.744595+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:14:40.846112+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "cf599d943373343f",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Deep Interest Network for Click-Through Rate Prediction",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 4,
+      "hypothesis": "Isolating the two candidate-specific within-user history crosses (user_author DIN-affinity, tab_cross) with prior_days smoothing m=100 will reorder each user's top-5 list (lifting nDCG@5) without dilution from user-constant groups.",
+      "hypothesis_id": "hist_author_tabcross_m100",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "The critic correctly flagged that enabling all six groups with m=20 confounds attribution, so I restrict the probe to use_user_author and use_tab_cross (both vary within a user and are in the preferred nDCG@5 mechanism list), set smoothing=100 to avoid memorizing low-count (user,author) cells, keep the other four groups off, and use prior_days to stay strictly leakage-safe.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T12:14:40.846112+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:14:18.772056+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "3c28efd0fb20d6a3",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Deep Interest Network for Click-Through Rate Prediction (KDD 2018)",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "history_features",
+          "title": "history_features method card \u2014 user_author DIN affinity and candidate-specific within-user crosses",
+          "url": "https://kuairand-starter-kit/README.en.md"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 4,
+      "hypothesis": "Isolating the two candidate-specific within-user history crosses \u2014 DIN-style user_author long_view affinity and tab_cross (tab \u00d7 dur_bucket) \u2014 with prior_days smoothing (m=100) and LR 1e-3 will lift within-user top-5 nDCG@5 above the parent six-group bundle, which dilutes these top-heavy signals with mostly user-constant groups that cannot reorder a user's list.",
+      "hypothesis_id": "hist_minimal_din_author_tabcross",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.001,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "Within-user GAUC/nDCG ranking is invariant to user-constant first-order terms, so only candidate-specific history crosses (user_author, tab_cross) can move top-5 order, and a minimal prior_days probe with strong smoothing and higher LR isolates that mechanism while avoiding the low-count memorization and leave_one_out leakage of the broader parent config.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T12:14:18.772056+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:07:56.436617+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "aedf088916f9eba8",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach (ICML 2007)",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        },
+        {
+          "method_card_id": "group_softmax",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback (arXiv 1205.2618)",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": "gs_hard_neg_group",
+      "failure": "Candidate exited with code 1: Traceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/nathanpua/Desktop/tt_techjam/src/experiments/run_candidate.py\", line 328, in <module>\n    main()\n  File \"/Users/nathanpua/Desktop/tt_techjam/src/experiments/run_candidate.py\", line 314, in main\n    output = module.run(context, parameters)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/nathanpua/Desktop/tt_techjam/generated_experiments/20260831T115602777469Z_research/003_gs_hard_neg_group/candidate.py\", line 76, in run\n    training_trace.append({'epoch': epoch, 'loss': float(epoch_loss), 'validation_primary': float(valid_primary), 'time': time.time() - start_time})\n                                                                                            ^^^^^^^^^^^^^^^^^^^^\nTypeError: float() argument must be a string or a real number, not 'dict'\n",
+      "family": "group_softmax",
+      "first_iteration": 3,
+      "hypothesis": "Within same-user group softmax, building the K=8 negative list from train-only same-tab/same-author hard negatives (hardness scores aligned to context.train_y) instead of random same-user negatives concentrates listwise competition on confusable items, sharpening top-5 ordering and lifting validation nDCG@5.",
+      "hypothesis_id": "gs_hard_neg_group",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 1.0
+      },
+      "proposed_count": 1,
+      "rationale": "Prior group_softmax wins only varied temperature with random negatives, so swapping to same-tab/same-author hard negatives is the untried, controller-preferred mechanism that can reorder the top of the user's list.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "failed",
+      "updated_at": "2026-08-31T12:12:20.302157+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:03:05.131756+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "33ac403dd3b9332b",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        },
+        {
+          "method_card_id": "bpr",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": "bpr_topk_lambda_corrected",
+      "failure": "Candidate exited with code 1: Traceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/nathanpua/Desktop/tt_techjam/src/experiments/run_candidate.py\", line 328, in <module>\n    main()\n  File \"/Users/nathanpua/Desktop/tt_techjam/src/experiments/run_candidate.py\", line 314, in main\n    output = module.run(context, parameters)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/nathanpua/Desktop/tt_techjam/generated_experiments/20260831T115602777469Z_research/002_bpr_topk_lambda_corrected/candidate.py\", line 95, in run\n    primary = (gauc + ndcg) / 2.0\n               ~~~~~^~~~~~\nTypeError: unsupported operand type(s) for +: 'dict' and 'dict'\n",
+      "family": "bpr",
+      "first_iteration": 2,
+      "hypothesis": "Within-user BPR whose per-pair gradient is multiplied by a leak-safe LambdaRank-style top-5 weight (\u0394nDCG estimated from train-only positives within the user's candidate pool, strictly prefix-excluded from the target row) concentrates optimization on the pairs that move long_view positives into the top-5 slots, lifting nDCG@5 while holding GAUC.",
+      "hypothesis_id": "bpr_topk_lambda_corrected",
+      "last_iteration": 2,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "This is the controller-preferred top-weighted BPR mechanism for the nDCG@5 lead, it corrects the previously failed bpr_lambda_top (which failed at execution, not design) by anchoring the weight to validation-safely-prefixed train labels and caching per-user positive/negative pools to stay within budget, and it is a single-contrast, leakage-safe probe against the already-sampled random- and hard-negative BPR.\\n",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "failed",
+      "updated_at": "2026-08-31T12:07:02.915755+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:02:20.454722+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "dacd38f55ea91bd8",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach (ICML 2007)",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        },
+        {
+          "method_card_id": "bpr",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 2,
+      "hypothesis": "Within same-user group softmax (K=8, temp=1.0), replacing random same-user negatives with hard negatives mined from a strict train-only per-user prefix window \u2014 selecting other impressions from the same tab/author with the highest train-only baseline long_view propensity as distractors \u2014 will sharpen top-5 competition and lift validation nDCG@5/GAUC above the random-negative group_softmax runs already in memory.",
+      "hypothesis_id": "gsm_hard_neg_prefix",
+      "last_iteration": 2,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 1.0
+      },
+      "proposed_count": 1,
+      "rationale": "Because hard negatives (distractors) focus the listwise gradient on reordering the genuinely close competing impressions, and the clean random-negative group_softmax baseline (K=8, temp=1.0, primary 0.6028) plus temp ablations (0.5/2.0) are already recorded, so the untouched mechanism is negative-source quality rather than another temperature point.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T12:02:20.454722+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:01:54.106570+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "d748897d1891c34e",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        },
+        {
+          "method_card_id": "group_softmax",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 2,
+      "hypothesis": "Within same-user group softmax, replacing random same-user negatives in the K=8 candidate list with hard negatives (mined by same_tab / same_author / baseline_score, train-only) will concentrate the listwise gradient on hard-to-rank items and lift validation nDCG@5 over the random-negative group-softmax regimes already sampled.",
+      "hypothesis_id": "gs_hard_neg_k8",
+      "last_iteration": 2,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 1.0
+      },
+      "proposed_count": 1,
+      "rationale": "Hard negatives make the softmax list resemble the true within-user top-5 competition, sharpening the positive-to-top gradient where random negatives dilute it, which directly serves the active nDCG@5 objective.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T12:01:54.106570+00:00"
+    },
+    {
+      "created_at": "2026-08-31T12:01:15.320447+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "bcde220ef4087855",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        },
+        {
+          "method_card_id": "bpr",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 2,
+      "hypothesis": "Replacing random same-user negatives with same-user hard negatives (baseline_score / same_tab / same_author hardness from sample_hard_bpr_pairs) inside a group-softmax list will concentrate gradients on each user's hardest competitor item and lift within-user nDCG@5 over the random-negative temperature sweeps already sampled.",
+      "hypothesis_id": "gsm_hard_neg",
+      "last_iteration": 2,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 1.0
+      },
+      "proposed_count": 1,
+      "rationale": "Since the controller prioritizes top-5 reordering and discourages random negatives, hard-negative mining directly targets the hardest few competitor items per user without adding static features, which prior evidence shows contribute nothing within a user.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T12:01:15.320447+00:00"
+    },
+    {
+      "created_at": "2026-08-31T11:57:18.406664+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "bde5e7d6c7de4ac4",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        },
+        {
+          "method_card_id": "bpr",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": "bpr_lambda_top",
+      "failure": "Candidate exited with code 1: Traceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/nathanpua/Desktop/tt_techjam/src/experiments/run_candidate.py\", line 328, in <module>\n    main()\n  File \"/Users/nathanpua/Desktop/tt_techjam/src/experiments/run_candidate.py\", line 314, in main\n    output = module.run(context, parameters)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/nathanpua/Desktop/tt_techjam/generated_experiments/20260831T115602777469Z_research/001_bpr_lambda_top/candidate.py\", line 19, in run\n    spec = parameters['spec']\n           ~~~~~~~~~~^^^^^^^^\nKeyError: 'spec'\n",
+      "family": "bpr",
+      "first_iteration": 1,
+      "hypothesis": "Top-weighted (LambdaRank-style) within-user BPR that scales each same-user hard-negative pair gradient by the positive's estimated rank so pairs near the top-5 boundary receive larger weight should lift validation nDCG@5 beyond the uniformly-weighted hard-negative BPR (0.60308).",
+      "hypothesis_id": "b7f3a2c09d1e4",
+      "last_iteration": 1,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "Plain BPR weights every positive-negative pair equally, while nDCG@5 rewards only correct top-5 placement, so concentrating gradient on the top-5 boundary via a cheap rank-scaled pair weight is a more aligned, low-cost objective within the same FM backbone.",
+      "rejection": null,
+      "run_id": "20260831T115602777469Z_research",
+      "status": "failed",
+      "updated_at": "2026-08-31T12:00:15.125978+00:00"
+    },
+    {
+      "created_at": "2026-08-31T11:52:10.598303+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "9471da51bfc0d37d",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Deep Interest Network for Click-Through Rate Prediction",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "group_softmax",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Pairing the within-user-varying DIN-style history affinity crosses (user_author/user_tab/tab_cross/recency) with the validated top-heavy same-user group-softmax loss at temperature=0.5 should sharpen top-5 long_view ordering and lift nDCG@5 beyond either mechanism in isolation.",
+      "hypothesis_id": "hist-gsoft-topheavy-06",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "History features supply per-user candidate reordering signal while group-softmax listwise competition concentrates gradients on the positive, so combining them targets the nDCG@5 lead that both the current best history bundle and ranking probes leave on the table.",
+      "rejection": null,
+      "run_id": "20260831T113413137484Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T11:52:10.598303+00:00"
+    },
+    {
+      "created_at": "2026-08-31T11:51:07.390151+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "3a85b925fb7281aa",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Deep Interest Network for Click-Through Rate Prediction",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "bpr",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Isolating the two tab-conditional history groups (user_tab + tab_cross) with prior_days smoothing and feeding them through the same-user BPR sampler (rather than the full 6-group bundle + pointwise BCE) will sharpen within-user top-5 long_view ranking, because tab dominates long_view variance (tab 4 48.93% vs tab 0 4.22%) and these groups vary within a user while the other four groups stay mostly constant within a user.",
+      "hypothesis_id": "hist-tabaff-bpr-06",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "The prior history_features run (daed7c15c4c4645e) bundled all six groups with pointwise BCE; this bounded probe strips to exactly the within-user-varying, tab-conditioned signals the EDA flags as strongest and pairs them with a ranking loss that directly optimizes intra-user ordering for nDCG@5.",
+      "rejection": null,
+      "run_id": "20260831T113413137484Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T11:51:07.390151+00:00"
+    },
+    {
+      "created_at": "2026-08-31T11:50:06.748262+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "ffd56e092021ccac",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Deep Interest Network for Click-Through Rate Prediction",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Isolating history_features to ONLY the tab-conditioned within-user groups (use_user_tab + use_tab_cross, prior_days, m=20.0, lr=0.0005, batch 2048, k=16, one negative per positive) will make the tab-affinity hypothesis falsifiable and should rank within-user long_view better than the diluted six-group bundle (0.60265) because tab is the dominant conditioning variable (tab4 48.93% vs tab0 4.22%).",
+      "hypothesis_id": "hist-tabcond-ablate-06",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "The prior six-group history run cannot attribute its gain to tab-conditioned history because four constant-within-user/diluting groups were also enabled; EDA ranks tab as the strongest confounder, so a strictly-two-group ablation is the correct minimal falsifiable contrast.",
+      "rejection": null,
+      "run_id": "20260831T113413137484Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T11:50:06.748262+00:00"
+    },
+    {
+      "created_at": "2026-08-31T11:49:35.341871+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "49ae8c597843531a",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Deep Interest Network for Click-Through Rate Prediction (DIN)",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "history_features",
+          "title": "kuairand-starter-kit README (history_features method card)",
+          "url": "https://github.com/"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Isolating the tab-conditioned user-history signal (only user_tab + tab_cross groups, prior_days, m=20) will lift within-user top-5 long_view ranking over the diluted prior six-group bundle, because tab dominates long_view (tab 4 48.93% vs tab 0 4.22%) and per-user lagged tab affinity is the strongest within-user-varying history signal that can reorder a user's candidate list.",
+      "hypothesis_id": "hist-tabcond-lag-11",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "The only prior history_features run enabled all six groups (0.60265), diluting the one signal EDA ranks strongest; a single focused tab-conditioned history ablation is a cheaper, falsifiable contrast that directly tests the recommended 'validate tab-conditional user history' direction without repeating the prior parameter tuple.",
+      "rejection": null,
+      "run_id": "20260831T113413137484Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T11:49:35.341871+00:00"
+    },
+    {
+      "created_at": "2026-08-31T11:48:33.955320+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "41564afedf1e2866",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Deep Interest Network for Click-Through Rate Prediction",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "history_features",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Combining within-user-varying history features (user_author, user_tab, tab_cross, recency, prior_days, m=20) with same-user hard-negative BPR sampling (train-only same_tab/same_author hardness) will sharpen top-5 long_view ranking better than the all-six-group random-negative history baseline or hard-negative BPR without history signal.",
+      "hypothesis_id": "hist-hardneg-07",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "The prior history run (daed7c15c4c4645e) used all six groups with random negatives and gained only ~0.001, while the prior hard-negative BPR (60c8e45fed493588) lacked any history signal; this cross joins the controller's two preferred nDCG@5 mechanisms (same-user hard negatives + within-user-varying history) into one controlled probe.",
+      "rejection": null,
+      "run_id": "20260831T113413137484Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T11:48:33.955320+00:00"
+    },
+    {
+      "created_at": "2026-08-31T11:45:10.111042+00:00",
+      "delta_vs_baseline": 0.002454212570190406,
+      "discovery_id": "c98f357390b87a9c",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach (ICML 2007)",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": "gsoft-lowtemp-sharp-05",
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 2,
+      "hypothesis": "Within same-user group softmax, lowering the temperature to 0.5 (with K=8) sharpens the listwise softmax so gradients concentrate on moving the positive to the top of the user's candidate list, which should lift validation nDCG@5 over the softer temp=1.0/2.0 regimes already sampled.",
+      "hypothesis_id": "gsoft-lowtemp-sharp-05",
+      "last_iteration": 2,
+      "metrics": {
+        "GAUC": 0.6709744334220886,
+        "nDCG@5": 0.537134051322937,
+        "primary": 0.6040542125701904,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 0.5
+      },
+      "proposed_count": 1,
+      "rationale": "ndcg_focus is enabled and the sharper softmax (smaller temperature) directly over-weights the top-k competition that nDCG@5 measures, while keeping the same-user random-negative grouping the method card documents without relying on the unverified hard-negative sampler.",
+      "rejection": null,
+      "run_id": "20260831T113413137484Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T11:47:49.385234+00:00"
+    },
+    {
+      "created_at": "2026-08-31T11:44:13.105804+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "1d0a55c1b153e7df",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Learning to Rank: From Pairwise Approach to Listwise Approach",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        },
+        {
+          "method_card_id": "bpr",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 2,
+      "hypothesis": "Same-user group softmax at temperature 2.0 with K=8 but replacing random same-user negatives with train-only hard negatives (same_tab/same_author/baseline_score via sample_hard_bpr_pairs) will concentrate listwise gradient mass on confusable items that dominate top-5, lifting validation nDCG@5 over the random-negative group-softmax lead.",
+      "hypothesis_id": "gsm-hardneg-tab-01",
+      "last_iteration": 2,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 2.0
+      },
+      "proposed_count": 1,
+      "rationale": "The best group_softmax run (0.6041) and the hard-negative gains were only explored separately (hard negatives under BPR), so coupling hard negatives with a listwise softmax is a material new mechanism that targets the ndcg_focus top-5 objective.",
+      "rejection": null,
+      "run_id": "20260831T113413137484Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T11:44:13.105804+00:00"
+    },
+    {
+      "created_at": "2026-08-31T11:38:59.385510+00:00",
+      "delta_vs_baseline": 0.0014824184417724373,
+      "discovery_id": "60c8e45fed493588",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": "bpr-hardneg-sametab-04",
+      "failure": null,
+      "family": "bpr",
+      "first_iteration": 1,
+      "hypothesis": "With within-user BPR, replacing random same-user negatives with train-only hard negatives sampled via sample_hard_bpr_pairs (hardness sourced from baseline_score / same_tab / same_author, aligned to context.train_y) will sharpen top-5 ordering and lift validation nDCG@5 over the prior random-negative BPR.",
+      "hypothesis_id": "bpr-hardneg-sametab-04",
+      "last_iteration": 1,
+      "metrics": {
+        "GAUC": 0.6693568825721741,
+        "nDCG@5": 0.5368079543113708,
+        "primary": 0.6030824184417725,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "Hard negatives concentrate gradients on the confusable same-user candidates that actually sit in the top-5, directly matching the controller's ndcg_focus without touching user-only static features.",
+      "rejection": null,
+      "run_id": "20260831T113413137484Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T11:43:18.180510+00:00"
+    },
+    {
+      "created_at": "2026-08-31T11:36:57.435808+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "90c1146dcbc09e0f",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        },
+        {
+          "method_card_id": "data_card",
+          "title": "KuaiRand starter kit tab/label rate table",
+          "url": "https://github.com/kuairand/kuairand-starter-kit/blob/main/README.en.md"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "bpr",
+      "first_iteration": 1,
+      "hypothesis": "Using same-tab hard negatives (sampling negative items from the same tab as the positive within the user) for BPR will concentrate the ranking gradient on the surface effect that most separates long_view (tab 4 48.9% vs tab 0 4.2%), sharpening top-5 within-user order and raising nDCG@5 over random same-user negatives.",
+      "hypothesis_id": "7c2e94a1d58f03ab",
+      "last_iteration": 1,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "Prior BPR (0.6027) used random same-user negatives and saturated; tab is the dominant within-user surface signal, so tab-conditioned hard negatives are the cheapest unexplored way to reorder top-5 items without adding user-only (rank-invariant) features.",
+      "rejection": null,
+      "run_id": "20260831T113413137484Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T11:36:57.435808+00:00"
+    },
+    {
+      "created_at": "2026-08-31T11:34:52.470663+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "5e02786ee6534966",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "BPR: Bayesian Personalized Ranking from Implicit Feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "bpr",
+      "first_iteration": 1,
+      "hypothesis": "Top-weighting the same-user BPR update (scaling the softplus margin for positives near the top-5 competition) while drawing same-tab hard negatives will sharpen within-user top-5 long_view ordering, raising nDCG@5 without sacrificing GAUC.",
+      "hypothesis_id": "9f2c7b4a6d81e0b3",
+      "last_iteration": 1,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "Random same-user negatives spread gradient mass across all items, whereas hard same-tab negatives plus a top-heavy margin concentrate updates on the competitive top-5 cut that nDCG@5 actually rewards.",
+      "rejection": null,
+      "run_id": "20260831T113413137484Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T11:34:52.470663+00:00"
+    },
+    {
       "created_at": "2026-08-31T07:34:34.177669+00:00",
       "delta_vs_baseline": 0.0025345596313476326,
       "discovery_id": "a8b8675b03e7121c",
@@ -2037,5 +3392,5 @@
       "updated_at": "2026-08-31T05:21:40.674211+00:00"
     }
   ],
-  "updated_at": "2026-08-31T07:40:48.773696+00:00"
+  "updated_at": "2026-08-31T14:48:16.957924+00:00"
 }

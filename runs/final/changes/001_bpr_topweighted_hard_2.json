@@ -1,0 +1,21 @@
+{
+  "candidate_id": "bpr_topweighted_hard_2",
+  "files": [
+    {
+      "lines_added": 150,
+      "lines_deleted": 0,
+      "path": "candidate.py",
+      "status": "added"
+    },
+    {
+      "lines_added": 73,
+      "lines_deleted": 0,
+      "path": "test_candidate.py",
+      "status": "added"
+    }
+  ],
+  "iteration": 1,
+  "lines_added": 223,
+  "lines_deleted": 0,
+  "patch_path": "changes/001_bpr_topweighted_hard_2.patch"
+}

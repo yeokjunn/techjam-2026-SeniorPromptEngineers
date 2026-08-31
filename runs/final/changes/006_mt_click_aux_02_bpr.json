@@ -1,0 +1,21 @@
+{
+  "candidate_id": "mt_click_aux_02_bpr",
+  "files": [
+    {
+      "lines_added": 129,
+      "lines_deleted": 77,
+      "path": "candidate.py",
+      "status": "modified"
+    },
+    {
+      "lines_added": 54,
+      "lines_deleted": 32,
+      "path": "test_candidate.py",
+      "status": "modified"
+    }
+  ],
+  "iteration": 6,
+  "lines_added": 183,
+  "lines_deleted": 109,
+  "patch_path": "changes/006_mt_click_aux_02_bpr.patch"
+}

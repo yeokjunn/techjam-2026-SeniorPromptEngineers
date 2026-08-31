@@ -1,20 +1,20 @@
 {
   "agent_note": {
-    "best_experiment": "gs_hard_neg_temp2_run1_seed2",
+    "best_experiment": "hist_prior_days_var_gs2_3b9a_seed1",
     "decision": "Research run completed.",
     "stop_reason": "converged"
   },
   "attempt": 1,
   "change_summary": null,
-  "completed_at": "2026-08-31T12:28:27.363912+00:00",
+  "completed_at": "2026-08-31T14:49:13.740117+00:00",
   "error": null,
-  "event_id": "b28380b42f8f47cc957480bad8885bc0",
-  "experiment_id": "gs_hard_neg_temp2_run1_seed2",
-  "iteration": 7,
+  "event_id": "7f0b52dc27174abc804a95faa0ed559d",
+  "experiment_id": "hist_prior_days_var_gs2_3b9a_seed1",
+  "iteration": 6,
   "metrics": {
-    "GAUC": 0.6709824800491333,
-    "nDCG@5": 0.5373578071594238,
-    "primary": 0.6041701436042786,
+    "GAUC": 0.6707127690315247,
+    "nDCG@5": 0.538217306137085,
+    "primary": 0.6044650077819824,
     "rows": 124909.0,
     "users": 22377.0
   },
@@ -22,7 +22,7 @@
   "repair": null,
   "role": null,
   "stage": "completed",
-  "started_at": "2026-08-31T12:28:27.358172+00:00",
+  "started_at": "2026-08-31T14:49:13.738896+00:00",
   "status": "completed",
-  "updated_at": "2026-08-31T12:28:27.363912+00:00"
+  "updated_at": "2026-08-31T14:49:13.740117+00:00"
 }

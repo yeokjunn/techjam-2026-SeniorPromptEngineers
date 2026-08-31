@@ -93,6 +93,12 @@ def _minimal_environment() -> dict[str, str]:
         )
         if name in os.environ
     }
+    # submit.py's success banner is non-ASCII ("✓ ...", then Chinese). Without this the
+    # child encodes stdout with the console default -- cp1252 on Windows -- and dies with
+    # UnicodeEncodeError before it can report a *passing* check, so the gate reports
+    # check_failed on a submission that is actually valid. Must be paired with encoding="utf-8"
+    # on the subprocess.run below, or the parent then fails to decode what the child wrote.
+    environment["PYTHONIOENCODING"] = "utf-8"
     for name in (
         "OMP_NUM_THREADS",
         "OPENBLAS_NUM_THREADS",
@@ -176,6 +182,10 @@ def _run_gate(run_dir: Path, node_dir: Path, data_dir: Path, kit_dir: Path) -> G
             env=_minimal_environment(),
             capture_output=True,
             text=True,
+            # Decode what PYTHONIOENCODING made the child write. Without this the reader
+            # thread raises UnicodeDecodeError on the banner and stdout is lost silently.
+            encoding="utf-8",
+            errors="replace",
             timeout=CHECK_TIMEOUT_SECONDS,
             check=False,
         )

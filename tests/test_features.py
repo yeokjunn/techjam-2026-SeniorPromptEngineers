@@ -347,6 +347,140 @@ class RegistryContractTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     sanitize_parameters(name, {"learning_rate": 0.5})
 
+    def test_builder_brief_carries_the_real_call_signature(self):
+        """Naming a helper without its signature makes the Builder guess the argument order.
+
+        An observed DeepSeek run emitted sample_bpr_pairs(X, y, users, 1) and burned both
+        Debugger repairs on `unhashable type: numpy.ndarray`.
+        """
+        import inspect
+
+        from src.agent.families import builder_brief
+        from src.models import sampling
+
+        brief = builder_brief("bpr")
+        expected = str(inspect.signature(sampling.sample_bpr_pairs))
+        self.assertIn(f"sample_bpr_pairs{expected}", brief)
+        for parameter in ("users", "labels", "rng"):
+            self.assertIn(parameter, brief)
+
+    def test_builder_brief_signatures_cover_every_required_call(self):
+        from src.agent.families import FAMILIES, builder_brief, required_call_groups
+
+        for name in FAMILIES:
+            brief = builder_brief(name)
+            for group in required_call_groups(name):
+                for call in group:
+                    with self.subTest(family=name, call=call):
+                        # every mandatory helper appears with an argument list, not a bare ()
+                        self.assertIn(f"{call}(", brief)
+                        self.assertNotIn(f"{call}()", brief)
+
+    def test_builder_brief_states_the_candidate_id_rule(self):
+        """An observed run lost an iteration to a dot in candidate_id; the prompt now says so."""
+        import re
+
+        from src.agent.families import FAMILIES, builder_brief
+        from src.agent.safety import SafetyViolation, validate_identifier
+
+        for name in FAMILIES:
+            with self.subTest(family=name):
+                self.assertIn("[A-Za-z0-9_-]", builder_brief(name))
+        # and the rule stated is the rule enforced
+        validate_identifier("bpr_seed42_lr5e-4")
+        with self.assertRaises(SafetyViolation):
+            validate_identifier("gsm_1_seed42_k16_lr5e-4_neg4_T1.0")
+
+    def test_builder_brief_states_the_sampler_return_shapes(self):
+        """The 2-D negatives array was reshaped by an agent and cost an iteration."""
+        from src.agent.families import FAMILIES, builder_brief
+
+        gs = builder_brief("group_softmax")
+        self.assertIn("(n_groups, negatives_per_group)", gs)
+        self.assertIn("do NOT reshape", gs)
+        self.assertIn("(n_pairs,)", builder_brief("bpr"))
+        # the feature families call a sampler but never see bpr.md / group_softmax.md
+        for name in ("history_features", "multi_task"):
+            with self.subTest(family=name):
+                self.assertIn("row indices", builder_brief(name))
+
+    def test_sampler_cards_document_the_real_return_shapes(self):
+        """Card text must match what the samplers actually return."""
+        import numpy as np
+
+        from src.models.sampling import sample_bpr_pairs, sample_softmax_groups
+
+        users = ["a", "a", "a", "b", "b"]
+        labels = np.array([1, 1, 0, 1, 0], dtype=np.float32)
+        pos, neg = sample_bpr_pairs(users, labels, np.random.default_rng(0), 2)
+        self.assertEqual(pos.ndim, 1)
+        self.assertEqual(neg.shape, pos.shape)          # parallel 1-D, as bpr.md says
+        gpos, gneg = sample_softmax_groups(users, labels, np.random.default_rng(0), 4)
+        self.assertEqual(gneg.shape, (len(gpos), 4))     # already 2-D, as group_softmax.md says
+
+        card = (Path(__file__).resolve().parents[1] / "research/methods/group_softmax.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("(n_groups, negatives_per_group)", card)
+        self.assertIn("do not reshape it", card)
+
+    def test_candidate_contract_matches_the_real_fmranker_api(self):
+        """Agents guessed model.w0/.w/.v and crashed; the contract must track the real API."""
+        from src.agent.roles import BASE_CANDIDATE_CONTRACT
+        from src.models.fm_core import FMRanker
+
+        for method in ("logits", "gradients", "apply_gradients", "predict",
+                       "state_dict", "load_state_dict"):
+            with self.subTest(method=method):
+                self.assertTrue(hasattr(FMRanker, method))
+                self.assertIn(method, BASE_CANDIDATE_CONTRACT)
+        for attribute in ("V", "W", "b"):
+            with self.subTest(attribute=attribute):
+                self.assertIn(f"model.{attribute}", BASE_CANDIDATE_CONTRACT)
+        # and the attributes that do not exist are called out by name
+        model = FMRanker(8, embedding_dim=2)
+        for wrong in ("w0", "v"):
+            with self.subTest(wrong=wrong):
+                self.assertFalse(hasattr(model, wrong))
+        collapsed = " ".join(BASE_CANDIDATE_CONTRACT.split())
+        self.assertIn("no model.w0, model.w or model.v", collapsed)
+
+    def test_contract_warns_that_state_dict_returns_copies(self):
+        """Iteration 2 hand-rolled a restore: state_dict() copies, and b is 0-dimensional."""
+        import numpy as np
+
+        from src.agent.roles import BASE_CANDIDATE_CONTRACT
+        from src.models.fm_core import FMRanker
+
+        model = FMRanker(8, embedding_dim=2)
+        state = model.state_dict()
+        self.assertEqual(state["b"].ndim, 0)             # so state["b"][:] = v is an IndexError
+        with self.assertRaises(IndexError):
+            state["b"][:] = 1.0
+        state["V"][:] = 99.0                             # writing a copy leaves the model alone
+        self.assertFalse(np.allclose(model.V, 99.0))
+        collapsed = " ".join(BASE_CANDIDATE_CONTRACT.split())
+        self.assertIn("returns copies, not views", collapsed)
+        self.assertIn("load_state_dict", collapsed)
+
+    def test_contract_lists_the_real_candidate_output_fields(self):
+        """Two iterations died on invented kwargs (valid_primary, train_trace)."""
+        import dataclasses
+
+        from src.agent.roles import BASE_CANDIDATE_CONTRACT
+        from src.experiments.contracts import CandidateOutput
+
+        collapsed = " ".join(BASE_CANDIDATE_CONTRACT.split())
+        real = {f.name for f in dataclasses.fields(CandidateOutput)}
+        for name in real:
+            with self.subTest(field=name):
+                self.assertIn(name, collapsed)
+        # names the agents invented must not be real, and must be called out
+        for invented in ("valid_primary", "train_trace"):
+            with self.subTest(invented=invented):
+                self.assertNotIn(invented, real)
+                self.assertIn(invented, collapsed)
+
     def test_feature_families_are_in_required_coverage(self):
         self.assertEqual(
             coverage_families(),

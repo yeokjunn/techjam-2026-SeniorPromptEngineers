@@ -11,13 +11,26 @@ from .activity import ActivityHandle, redact_text, safe_value, utc_now
 from .llm import LLMCallResult
 
 
-def _replace_atomic(temporary: Path, path: Path) -> None:
-    for attempt in range(5):
+def _replace_atomic(temporary: Path, path: Path, attempts: int = 5) -> None:
+    """``os.replace``, retried while a reader holds the destination open.
+
+    POSIX replaces an open file happily; Windows raises ``PermissionError`` (WinError 5)
+    because Python's ``open()`` does not request ``FILE_SHARE_DELETE``. The read-only
+    dashboard polls ``activity.json`` every ``active_refresh_seconds`` (``app.py`` runs the
+    fragment every 5 s), so following the documented two-terminal workflow in
+    ``docs/UI_QUICKSTART.md`` makes writer and reader collide by design. An observed
+    production run lost 2 of 7 iterations to exactly this, classified as harness_error.
+
+    The reader holds the file only for the length of one small read, so a short backoff
+    clears it; the final attempt is allowed to raise so a genuine permission fault is
+    still reported rather than silently swallowed.
+    """
+    for attempt in range(attempts):
         try:
             os.replace(temporary, path)
             return
         except PermissionError:
-            if attempt == 4:
+            if attempt == attempts - 1:
                 raise
             time.sleep(0.005 * (2 ** attempt))
 
@@ -28,6 +41,14 @@ class ResearchAudit:
         self.run_dir.mkdir(parents=True, exist_ok=resume)
         self.passes_dir = run_dir / "passes"
         self.passes_dir.mkdir(exist_ok=True)
+
+    @staticmethod
+    def _replace_with_retry(temporary: Path, path: Path, attempts: int = 5) -> None:
+        """Retrying replace, kept as a method so callers/tests can pass ``attempts``.
+
+        Delegates to :func:`_replace_atomic`; see that function for why the retry exists.
+        """
+        _replace_atomic(temporary, path, attempts)
 
     @staticmethod
     def write_json_atomic(path: Path, value: Any) -> None:

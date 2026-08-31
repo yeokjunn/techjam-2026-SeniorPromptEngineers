@@ -53,6 +53,34 @@ TRUSTED_CALL_MODULES = {
     "sample_softmax_groups": "src.models.sampling",
     "build_features": "src.models.features",
     "build_aux_labels": "src.models.features",
+    "FMRanker": "src.models.fm_core",
+}
+
+# Return shapes for the mandatory helpers. The method cards carry the full contract, but a
+# family is only ever shown its *own* card -- history_features and multi_task call the samplers
+# without seeing bpr.md or group_softmax.md -- so the shape that actually gets mis-guessed
+# travels with the signature instead. An observed run called .reshape(-1, K) on the already-2-D
+# negatives array and lost the iteration to "cannot reshape array of size 184".
+TRUSTED_CALL_RETURNS = {
+    "sample_bpr_pairs": (
+        "returns (positives, negatives), both int64 row indices of shape (n_pairs,), parallel "
+        "and 1-D"
+    ),
+    "sample_softmax_groups": (
+        "returns (positives, negatives) row indices: positives (n_groups,), negatives "
+        "(n_groups, negatives_per_group) -- already 2-D, do NOT reshape"
+    ),
+    "build_features": (
+        "returns (len(rows), enabled_groups) int32, already offset by field_offset. Call once "
+        "per split with spec['split'] matching the rows you pass: the row count is checked "
+        "against the trusted split"
+    ),
+    "build_aux_labels": "returns (len(rows), enabled_heads) float32 in [0, 1], train split only",
+    "FMRanker": (
+        "the trusted FM: sparse field-index gather plus Adam. Do NOT re-implement it with a "
+        "dense one-hot matrix -- that overflows to NaN and breaks attribution against the "
+        "official baseline"
+    ),
 }
 
 TRUSTED_CALL_SIGNATURES = {
@@ -71,6 +99,7 @@ AUX_HEADS = ("is_click", "is_like", "is_follow", "is_comment", "is_forward", "pl
 #: Either trusted sampler satisfies the loss requirement for the feature-side families -- the
 #: loss is not what they vary, so both are legitimate.
 _EITHER_SAMPLER = ("sample_bpr_pairs", "sample_softmax_groups")
+
 
 FAMILIES: dict[str, Family] = {
     "bpr": Family(
@@ -176,6 +205,41 @@ def _qualified(call: str) -> str:
     return f"{module}.{call}" if module else call
 
 
+def _signature(call: str) -> str:
+    """Render ``module.call(args)`` with the *real* signature, read at prompt time.
+
+    Naming a mandatory helper without its signature makes the Builder guess the argument
+    order, and a wrong guess costs the whole iteration: an observed run called
+    ``sample_bpr_pairs(X, y, users, 1)`` instead of ``(users, labels, rng, n)``, which fails
+    deep inside trusted code with ``unhashable type: 'numpy.ndarray'`` and burned both
+    Debugger repairs. Reading the signature from the function keeps the prompt correct by
+    construction rather than by a hand-copied string that can drift.
+
+    The import is deliberately lazy: ``types.py`` imports this module, so module-level
+    imports here must stay light. ``builder_brief`` only runs while building a prompt, by
+    which time numpy is loaded anyway.
+
+    ``TRUSTED_CALL_SIGNATURES`` is the fallback when the function cannot be imported (a
+    missing optional dependency, say): a hand-maintained argument list can drift from the
+    source, so it is only consulted once introspection has failed.
+    """
+    qualified = _qualified(call)
+    fallback = f"{qualified}{TRUSTED_CALL_SIGNATURES.get(call, '()')}"
+    module_name = TRUSTED_CALL_MODULES.get(call)
+    if not module_name:
+        return fallback
+    try:
+        import importlib
+        import inspect
+
+        function = getattr(importlib.import_module(module_name), call)
+        rendered = f"{qualified}{inspect.signature(function)}"
+    except Exception:
+        return fallback
+    returns = TRUSTED_CALL_RETURNS.get(call)
+    return f"{rendered} -- {returns}" if returns else rendered
+
+
 def _render_grid_value(value: Any) -> str:
     if isinstance(value, range):
         return f"{value.start}-{value.stop - 1}"
@@ -188,12 +252,15 @@ def builder_brief(name: str) -> str:
     Consumed by ``roles.py`` so no role prompt has to track the family list by hand.
     """
     entry = FAMILIES[name]
-    lines = []
+    lines = [
+        # safety.validate_identifier turns candidate_id into a directory name and allows only
+        # [A-Za-z0-9_-]. An observed run proposed 'gsm_1_seed42_k16_lr5e-4_neg4_T1.0' and lost
+        # the whole iteration to SafetyViolation, because nothing in the prompt said so.
+        "candidate_id must match [A-Za-z0-9_-]{1,80} -- letters, digits, underscore and hyphen "
+        "only. No dots, spaces or other punctuation (it becomes a directory name).",
+    ]
     for group in required_call_groups(name):
-        rendered = ", ".join(
-            f"{_qualified(call)}{TRUSTED_CALL_SIGNATURES.get(call, '()')}"
-            for call in group
-        )
+        rendered = ", ".join(_signature(call) for call in group)
         if len(group) == 1:
             lines.append(f"You must call {rendered}.")
         else:

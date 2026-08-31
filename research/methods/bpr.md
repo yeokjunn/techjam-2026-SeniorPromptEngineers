@@ -23,6 +23,29 @@ loss = softplus(-d) = -log(sigmoid(d))
 
 The derivative with respect to `d` is `sigmoid(d) - 1`.
 
+`src.models.sampling.sample_bpr_pairs` is mandatory, and it returns **row indices**, not rows:
+
+```text
+positives, negatives = sample_bpr_pairs(train_users, train_y, rng, negatives_per_positive)
+
+positives   int64, shape (n_pairs,)   index into context.train_x / train_y / train_users
+negatives   int64, shape (n_pairs,)   parallel to positives: same user, label 0
+n_pairs   = (eligible positives) * negatives_per_positive
+```
+
+The two arrays are parallel and one-dimensional; pair `k` is `(positives[k], negatives[k])`.
+Gather features with `context.train_x[positives]` and `context.train_x[negatives]`, each
+`(n_pairs, n_fields)`.
+
+Three properties to design around rather than assert against:
+
+- Users without **both** a positive and a negative row are skipped entirely, so `positives`
+  does not cover every user, nor every positive row. A test asserting full coverage will fail.
+- When a user's negative pool is smaller than `negatives_per_positive`, negatives are drawn
+  with replacement, so repeated indices are expected and are not a bug.
+- With no eligible user at all, both arrays are empty with shape `(0,)`. Guard the division
+  when averaging a loss over pairs.
+
 ## Safe initial search space
 
 - Same-user negative sampling only

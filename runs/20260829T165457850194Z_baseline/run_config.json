@@ -1,0 +1,47 @@
+{
+  "name": "kuairand-pure-baseline-ladder",
+  "data_dir": "data/KuaiRand-Pure/data",
+  "run_root": "runs",
+  "official_validation_baseline": 0.6016,
+  "budgets": {
+    "max_iterations": 3,
+    "max_wall_clock_seconds": 21600,
+    "experiment_timeout_seconds": 900
+  },
+  "convergence": {
+    "epsilon": 0.002,
+    "patience": 3
+  },
+  "experiments": [
+    {
+      "id": "random_seed0",
+      "kind": "random",
+      "hypothesis": "Random scores should reproduce the evaluator sanity-check rung near 0.4834 validation primary.",
+      "parameters": {
+        "seed": 0
+      }
+    },
+    {
+      "id": "item_popularity",
+      "kind": "popularity",
+      "hypothesis": "Smoothed training-only item popularity should reproduce the trivial validation rung near 0.5807 primary.",
+      "parameters": {
+        "prior": 20.0
+      }
+    },
+    {
+      "id": "official_fm_seed0",
+      "kind": "fm",
+      "hypothesis": "The untouched starter-kit FM configuration should reproduce the official validation baseline near 0.6016 primary.",
+      "parameters": {
+        "seed": 0,
+        "k": 16,
+        "learning_rate": 0.001,
+        "epochs": 40,
+        "batch_size": 8192,
+        "patience": 4
+      }
+    }
+  ]
+}
+

@@ -28,6 +28,19 @@ class _Transformer(ast.NodeTransformer):
                 and node.args[0].func.attr == "evaluate_validation"):
             self.evaluation = True
             return ast.copy_location(ast.Call(ast.Name("_autofix_primary", ast.Load()), node.args, []), node)
+
+        # Guard against FMRanker(dimension=train_x.shape[1])
+        is_fm_ranker = (
+            (isinstance(node.func, ast.Name) and node.func.id == "FMRanker")
+            or (isinstance(node.func, ast.Attribute) and node.func.attr == "FMRanker")
+        )
+        if is_fm_ranker:
+            if node.args and _is_shape_one_expr(node.args[0]):
+                node.args[0] = ast.copy_location(ast.Name("_field_dim", ast.Load()), node.args[0])
+            for kw in node.keywords:
+                if kw.arg == "dimension" and _is_shape_one_expr(kw.value):
+                    kw.value = ast.copy_location(ast.Name("_field_dim", ast.Load()), kw.value)
+
         if not isinstance(node.func, ast.Name) or node.func.id not in {"getattr", "hasattr"}:
             return node
         if len(node.args) < 2 or not isinstance(node.args[1], ast.Constant):
@@ -65,6 +78,18 @@ class _Transformer(ast.NodeTransformer):
         return node
 
 
+def _is_shape_one_expr(node: ast.AST) -> bool:
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "int" and len(node.args) == 1:
+        node = node.args[0]
+    if isinstance(node, ast.Subscript):
+        val = node.value
+        sl = node.slice
+        if isinstance(val, ast.Attribute) and val.attr == "shape":
+            if isinstance(sl, ast.Constant) and sl.value == 1:
+                return True
+    return False
+
+
 def _helper(kind: str, attr: str, name: str) -> ast.FunctionDef:
     args = "obj, default" if kind == "getattr" else "obj"
     success = f"return obj.{attr}" if kind == "getattr" else f"obj.{attr}"
@@ -88,7 +113,7 @@ def _insert_helpers(module: ast.Module, helpers: list[ast.stmt]) -> None:
 
 
 def _field_dimension(source: str) -> str:
-    if "context.field_dimension" not in source or "def run(" not in source or "_fd = context.field_dimension" in source:
+    if ("context.field_dimension" not in source and "_field_dim" not in source) or "def run(" not in source or "_fd = context.field_dimension" in source:
         return source
     lines = source.splitlines()
     for index, line in enumerate(lines):
@@ -105,6 +130,22 @@ def _field_dimension(source: str) -> str:
 
 def fix_candidate_source(source: str) -> str:
     module = ast.parse(source)
+    # Strip any erroneously embedded unittest classes or main blocks from candidate.py
+    kept_body = []
+    for stmt in module.body:
+        if isinstance(stmt, ast.ClassDef):
+            if stmt.name.startswith("Test") or any(
+                (isinstance(b, ast.Name) and b.id == "TestCase")
+                or (isinstance(b, ast.Attribute) and b.attr == "TestCase")
+                for b in stmt.bases
+            ):
+                continue
+        elif isinstance(stmt, ast.If):
+            if "unittest" in ast.dump(stmt):
+                continue
+        kept_body.append(stmt)
+    module.body = kept_body
+
     transform = _Transformer()
     module = transform.visit(module)
     helpers = [_helper(kind, attr, name) for (kind, attr), name in transform.helpers.items()]

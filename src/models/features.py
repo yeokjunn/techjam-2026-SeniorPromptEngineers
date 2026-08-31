@@ -514,6 +514,9 @@ def build_aux_labels(rows, spec: dict) -> np.ndarray:
     order. ``is_click`` and ``is_like`` are binary; ``play_time`` is ``log1p`` compressed and
     min-max scaled on train.
 
+    Accepts either the full train row matrix (where ``len(rows) == len(train)``) or a 1D integer
+    array/list of row indices to slice directly.
+
     **Train-only by construction.** A loss touches train rows only, so no valid/test path exists
     and none may be added -- this raises for any other split rather than silently returning
     something a scorer could misuse.
@@ -527,19 +530,35 @@ def build_aux_labels(rows, spec: dict) -> np.ndarray:
     if not heads:
         raise ValueError("At least one auxiliary head must be enabled.")
 
-    expected = len(rows)
     columns = _aux_columns(spec)
     available = len(columns["is_click"])
-    if available != expected:
-        raise ValueError(
-            f"Auxiliary train columns have {available} rows but {expected} were passed; "
-            "row order and length must match the kit's."
-        )
 
-    targets = np.empty((expected, len(heads)), dtype=np.float32)
+    is_index_slice = False
+    row_indices = None
+    if isinstance(rows, np.ndarray) and np.issubdtype(rows.dtype, np.integer) and rows.ndim == 1:
+        if len(rows) != available:
+            is_index_slice = True
+            row_indices = rows
+    elif isinstance(rows, (list, tuple)) and len(rows) > 0 and isinstance(rows[0], (int, np.integer)) and len(rows) != available:
+        is_index_slice = True
+        row_indices = np.asarray(rows, dtype=np.int64)
+
+    if not is_index_slice:
+        expected = len(rows)
+        if available != expected:
+            raise ValueError(
+                f"Auxiliary train columns have {available} rows but {expected} were passed; "
+                "row order and length must match the kit's."
+            )
+
+    full_len = available if is_index_slice else len(rows)
+    targets = np.empty((full_len, len(heads)), dtype=np.float32)
     for index, head in enumerate(heads):
         values = columns[head]
         targets[:, index] = (
             _scaled_play_time(values) if head == "play_time" else values
         ).astype(np.float32)
+
+    if is_index_slice and row_indices is not None:
+        return targets[row_indices]
     return targets

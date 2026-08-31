@@ -69,13 +69,19 @@ Build the model with src.models.fm_core.FMRanker. Do NOT re-implement the factor
 it gathers sparse field indices, so a dense one-hot formulation over ~40k fields overflows to NaN
 and, even when it converges, breaks attribution against the official baseline. Its entire API is:
 
+    # dimension is the total vocabulary width: context.field_dimension (or sum if list). NEVER train_x.shape[1]!
     model = FMRanker(dimension, embedding_dim=16, learning_rate=..., l2=1e-6, seed=...)
     scores, embeddings, summed = model.logits(features)   # features: int32 (n, n_fields) indices
-    grad_v, grad_w, grad_b = model.gradients(features, score_gradients)  # d(loss)/d(score), (n,)
+    grad_v, grad_w, grad_b = model.gradients(features, score_gradients, embeddings, summed)  # (n,)
     model.apply_gradients(grad_v, grad_w, grad_b)         # Adam + L2 are applied inside
     scores = model.predict(features)                      # (n,) chunked, for validation/test
     state = model.state_dict()                            # {"V", "W", "b"} COPIES -> checkpoint_state
     model.load_state_dict(state)                          # restore, e.g. best epoch on early stop
+
+For multi_task auxiliary heads:
+    # Build aux targets upfront once:
+    aux_targets = build_aux_labels(context.train_x, spec)  # (n_train, n_heads) float32 in [0, 1]
+    # Slice batch rows during training: batch_aux = aux_targets[batch_rows]
 
 state_dict() returns copies, not views, so writing into them does not change the model: to
 restore a checkpoint call load_state_dict(state). Do not hand-roll the restore -- "b" is a
@@ -91,6 +97,10 @@ Access context fields directly. Use the documented trusted sampler signature exa
 probe multiple signatures, add a fallback sampler, or reimplement FMRanker. Instantiate FMRanker
 and use its logits, gradients, apply_gradients, predict, state_dict, and load_state_dict methods.
 The trusted worker writes checkpoints and computes final metrics.
+
+`candidate.py` must define ONLY `run(context, parameters)` and private helpers. NEVER put `import unittest`,
+`class Test...`, or `unittest.main()` inside `candidate.py`. All tests belong exclusively in `test_candidate.py`.
+
 Return CandidateOutput with EXACTLY these field names -- there are no others, and a wrong name
 is a TypeError that costs the iteration:
 
@@ -110,18 +120,6 @@ trained model. Return `test_scores=None` only when `context.test_x` is None.
 Construct the result exactly as `CandidateOutput(validation_scores=..., checkpoint_state=...,
 training_trace=..., diagnostics=..., test_scores=..., random_validation_scores=...)`; do not probe alternative constructors. Score random_valid_x with the selected model, but never use
 that split for training, early stopping, checkpoint selection, or hyperparameter selection.
-test_candidate.py must use Python unittest only. Define at least one class inheriting
-`unittest.TestCase` with at least one `test_*` method. Tests run exactly as
-`python -m unittest -v test_candidate.py`. Do not use pytest, pytest fixtures, monkeypatch
-parameters, or module-level test functions. Bare pytest-style `def test_...()` functions are
-collected as zero tests and the iteration fails. Use unittest.mock.patch or patch.object when needed.
-Tests must exercise same-user sampling/group construction without loading the real dataset.
-Prefer real trusted runtime components on tiny synthetic arrays; if a mock is necessary,
-the fake public method signatures must exactly match the real API."""
-
-
-HISTORY_FEATURE_SPLIT_CONTRACT = """For history_features only: src.models.features.build_features defaults to split='train'.
-Always pass an explicit split-specific spec:
   train_spec = dict(spec, split='train', field_offset=context.field_dimension)
   valid_spec = dict(spec, split='valid', field_offset=context.field_dimension)
   test_spec = dict(spec, split='test', field_offset=context.field_dimension)

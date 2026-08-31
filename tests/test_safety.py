@@ -240,13 +240,40 @@ def run(context, parameters):
                 self.assertEqual(sanitize_parameters(name, {}), FAMILIES[name].defaults)
 
     def test_every_grid_value_is_accepted_by_todays_sanitiser(self):
+        """Each grid value must be reachable, holding the other parameters at their defaults.
+
+        One exception is deliberate rather than a gap. `multi_task` requires at least one
+        auxiliary head, and its defaults enable exactly one (`use_is_click`), so switching that
+        single head off empties the set and the sanitiser rightly rejects it. The grid entry
+        (True, False) and the "at least one head" rule are both correct; they simply interact.
+        Where a toggle would empty the set, another head is enabled so the value under test is
+        still exercised rather than skipped.
+        """
         for name, entry in FAMILIES.items():
+            toggles = [key for key in entry.grid if key.startswith("use_")]
             for key, allowed in entry.grid.items():
                 values = (0, 999) if key == "seed" else tuple(allowed)
                 for value in values:
                     with self.subTest(family=name, parameter=key, value=value):
-                        parameters = sanitize_parameters(name, {**entry.defaults, key: value})
+                        proposed = {**entry.defaults, key: value}
+                        if (
+                            key in toggles
+                            and value is False
+                            and not any(proposed.get(other) for other in toggles)
+                        ):
+                            keep_on = next(other for other in toggles if other != key)
+                            proposed[keep_on] = True
+                        parameters = sanitize_parameters(name, proposed)
                         self.assertEqual(parameters[key], value)
+
+    def test_multi_task_rejects_disabling_every_auxiliary_head(self):
+        """The constraint the test above works around must actually be enforced."""
+        entry = FAMILIES["multi_task"]
+        toggles = [key for key in entry.grid if key.startswith("use_")]
+        all_off = {**entry.defaults, **{key: False for key in toggles}}
+        with self.assertRaises(ValueError) as raised:
+            sanitize_parameters("multi_task", all_off)
+        self.assertIn("auxiliary target head", str(raised.exception))
 
     def test_coverage_families_is_the_minimum_set_not_every_family(self):
         self.assertEqual(

@@ -492,16 +492,30 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
                         policy.required_family(successful_state("bpr")),
                         "group_softmax",
                     )
-                    # The stop rule itself, which is what the run hangs on: with
-                    # coverage read off `family_names()` this is False forever and
-                    # the run can only end on a budget, never `converged`.
-                    covered.nodes.append(
+                    # The stop rule itself, which is what the run hangs on. It reads the
+                    # organizers' rule off this run's own research probes, and
+                    # `official_converged` needs a prefix longer than `patience` -- its
+                    # docstring: "the tracker converges on the 4th observation". The baseline
+                    # is a reporting target and deliberately does not consume patience
+                    # (`observe_success`), so two probes plus one is still one short: a fourth
+                    # is what makes the rule expressible at all.
+                    for index in (3, 4):
+                        covered.nodes.append(
+                            ExperimentNode(
+                                index, f"e{index}", f"h{index}", "bpr", "explore", {},
+                                "success", {"primary": 0.601},
+                            )
+                        )
+                    policy_under_test = policy.SearchPolicy(0.002, 3, [1, 2])
+                    self.assertTrue(policy_under_test.should_stop(covered))
+                    # ... and it must not fire a probe earlier, or `patience` means nothing.
+                    three_probes = successful_state("bpr", "group_softmax")
+                    three_probes.nodes.append(
                         ExperimentNode(
-                            3, "e3", "h3", "bpr", "explore", {}, "success",
-                            {"primary": 0.601},
+                            3, "e3", "h3", "bpr", "explore", {}, "success", {"primary": 0.601}
                         )
                     )
-                    self.assertTrue(policy.SearchPolicy(0.002, 3, [1, 2]).should_stop(covered))
+                    self.assertFalse(policy_under_test.should_stop(three_probes))
 
         # E's `coverage_families()` does not exist yet, so `policy.py` falls back
         # to the pair the stop rule was written against. Guarded on `hasattr`

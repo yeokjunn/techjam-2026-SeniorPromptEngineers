@@ -113,6 +113,12 @@ The trusted worker writes checkpoints and computes final metrics.
 `candidate.py` must define ONLY `run(context, parameters)` and private helpers. NEVER put `import unittest`,
 `class Test...`, or `unittest.main()` inside `candidate.py`. All tests belong exclusively in `test_candidate.py`.
 
+test_candidate.py is run exactly as `python -m unittest -v test_candidate.py`, which discovers ONLY
+subclasses of `unittest.TestCase`. Put every check in a `class X(unittest.TestCase)` with `def test_*`
+methods. Do not use pytest, pytest fixtures, monkeypatch parameters, or module-level test functions:
+bare `def test_...()` functions are collected as zero tests and the iteration fails with "NO TESTS RAN".
+Use unittest.mock.patch or patch.object when a mock is needed, and match the real API signature exactly.
+
 Return CandidateOutput with EXACTLY these field names -- there are no others, and a wrong name
 is a TypeError that costs the iteration:
 

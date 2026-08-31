@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Missing Deck</title>
+<style>
+  .slide { position: absolute; inset: 0; opacity: 0; }
+  .slide.active { opacity: 1; }
+</style>
+</head>
+<body>
+<!-- No deck container -->
+<div class="slide active" data-slide="0"><h1>Slide 1</h1></div>
+<div class="slide" data-slide="1"><h1>Slide 2</h1></div>
+<script>
+var current = 0;
+function goTo(index) { current = index; }
+function next() { goTo(current + 1); }
+function prev() { goTo(current - 1); }
+</script>
+</body>
+</html>

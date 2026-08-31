@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0e14"/>
+      <stop offset="50%" stop-color="#131720"/>
+      <stop offset="100%" stop-color="#0b0e14"/>
+    </linearGradient>
+    <radialGradient id="glow1" cx="30%" cy="40%">
+      <stop offset="0%" stop-color="rgba(88,166,255,0.3)"/>
+      <stop offset="100%" stop-color="rgba(88,166,255,0)"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="70%" cy="60%">
+      <stop offset="0%" stop-color="rgba(163,113,247,0.2)"/>
+      <stop offset="100%" stop-color="rgba(163,113,247,0)"/>
+    </radialGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <rect width="1920" height="1080" fill="url(#glow1)"/>
+  <rect width="1920" height="1080" fill="url(#glow2)"/>
+  <circle cx="400" cy="350" r="4" fill="rgba(255,255,255,0.15)"/>
+  <circle cx="800" cy="200" r="3" fill="rgba(255,255,255,0.1)"/>
+  <circle cx="1200" cy="500" r="5" fill="rgba(255,255,255,0.12)"/>
+  <circle cx="1500" cy="300" r="3" fill="rgba(255,255,255,0.08)"/>
+  <circle cx="300" cy="700" r="4" fill="rgba(255,255,255,0.1)"/>
+  <circle cx="1600" cy="800" r="3" fill="rgba(255,255,255,0.12)"/>
+  <circle cx="960" cy="900" r="4" fill="rgba(255,255,255,0.08)"/>
+  <text x="960" y="480" fill="#e6edf3" text-anchor="middle" font-family="system-ui" font-size="72" font-weight="800">Present Anywhere</text>
+  <text x="960" y="540" fill="#8b949e" text-anchor="middle" font-family="system-ui" font-size="24">One file. Every screen. No dependencies.</text>
+  <line x1="860" y1="580" x2="1060" y2="580" stroke="url(#glow1)" stroke-width="2"/>
+</svg>

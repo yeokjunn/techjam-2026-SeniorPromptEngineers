@@ -1,0 +1,13 @@
+{
+  "name": "html-slides",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test 'tests/**/*.test.js'",
+    "validate": "node bin/validate-slides.js"
+  },
+  "dependencies": {
+    "node-html-parser": "^6.1.0"
+  }
+}

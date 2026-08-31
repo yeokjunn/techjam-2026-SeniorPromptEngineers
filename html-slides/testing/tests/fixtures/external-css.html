@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>External CSS</title>
+<link rel="stylesheet" href="https://cdn.example.com/styles.css">
+<style>
+  .deck { position: relative; }
+  .slide { position: absolute; inset: 0; opacity: 0; }
+  .slide.active { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+  <div class="slide active" data-slide="0"><h1>Slide 1</h1></div>
+  <div class="slide" data-slide="1"><h1>Slide 2</h1></div>
+</div>
+<script>
+var current = 0;
+function goTo(index) { current = index; }
+function next() { goTo(current + 1); }
+function prev() { goTo(current - 1); }
+</script>
+</body>
+</html>

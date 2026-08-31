@@ -134,3 +134,6 @@ class RunSnapshot:
     live_role_passes: tuple[RolePass, ...] = ()
     live_eda: EDAArtifact | None = None
     debugger_events: tuple[DebuggerEvent, ...] = ()
+    search_frontier: tuple[dict[str, Any], ...] = ()
+    closed_branches: dict[str, dict[str, Any]] = field(default_factory=dict)
+    search_stats: dict[str, Any] = field(default_factory=dict)

@@ -146,7 +146,16 @@ class PolicyTests(unittest.TestCase):
         self.assertNotEqual(required_family(state), "history_features")
 
     def test_convergence_stops_after_three_non_replication_successes(self):
-        state = RunState("demo", "running", "now", 0.6016, stagnant_iterations=3)
+        state = RunState("demo", "running", "now", 0.6016)
+        for iteration, score in enumerate((0.6017, 0.6018, 0.6019), start=1):
+            state.nodes.append(ExperimentNode(
+                iteration, f"e{iteration}", f"h{iteration}", "bpr", "explore",
+                {}, "success", {"primary": score},
+            ))
+        self.assertFalse(SearchPolicy(0.002, 3, []).should_stop(state))
+        state.nodes.append(ExperimentNode(
+            4, "e4", "h4", "bpr", "explore", {}, "success", {"primary": 0.6019},
+        ))
         self.assertTrue(SearchPolicy(0.002, 3, []).should_stop(state))
 
 
@@ -175,11 +184,10 @@ class OfficialConvergenceTests(unittest.TestCase):
     def test_stagnation_is_the_only_ratchet(self):
         """The tracker and the policy ratchet through one shared implementation."""
         scores = [0.6015, 0.6016, 0.6018, 0.6060, 0.6061, 0.6062, 0.6063]
-        state = RunState("run", "running", "now", scores[0], meaningful_best=scores[0])
+        state = RunState("run", "running", "now", 0.6016)
         policy = SearchPolicy(0.002, 3, [])
         tracker = ConvergenceTracker(epsilon=0.002, patience=3)
-        tracker.observe(scores[0])
-        for iteration, score in enumerate(scores[1:], start=1):
+        for iteration, score in enumerate(scores, start=1):
             node = ExperimentNode(
                 iteration, f"e{iteration}", "h", "bpr", "explore", {}, "success",
                 {"primary": score},
@@ -189,11 +197,11 @@ class OfficialConvergenceTests(unittest.TestCase):
             tracker.observe(score)
             self.assertEqual(tracker.meaningful_best, state.meaningful_best, iteration)
             self.assertEqual(tracker.stagnant_iterations, state.stagnant_iterations, iteration)
-        self.assertEqual(scored_primaries(state), scores[1:])
+        self.assertEqual(scored_primaries(state), scores)
         self.assertEqual(state.stagnant_iterations, 3)
 
     def test_replications_do_not_consume_research_stagnation(self):
-        state = RunState("run", "running", "now", 0.6016, meaningful_best=0.6016)
+        state = RunState("run", "running", "now", 0.6016)
         policy = SearchPolicy(0.002, 3, [])
         for iteration, action in enumerate(("explore", "replicate", "replicate"), start=1):
             node = ExperimentNode(
@@ -210,7 +218,7 @@ class OfficialConvergenceTests(unittest.TestCase):
             policy.observe_success(state, node)
         self.assertEqual(len(scored_primaries(state)), 3)
         self.assertEqual(research_primaries(state), [0.6030])
-        self.assertEqual(state.stagnant_iterations, 1)
+        self.assertEqual(state.stagnant_iterations, 0)
 
 
 if __name__ == "__main__":

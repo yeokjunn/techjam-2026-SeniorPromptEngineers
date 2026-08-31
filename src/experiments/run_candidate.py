@@ -71,6 +71,87 @@ def _load_candidate(path: Path):
     return module
 
 
+def _dcg(labels: np.ndarray) -> float:
+    gains = (np.power(2.0, labels.astype(np.float64)) - 1.0)
+    discounts = 1.0 / np.log2(np.arange(2, len(labels) + 2, dtype=np.float64))
+    return float(np.sum(gains * discounts))
+
+
+def topk_diagnostics(
+    users: tuple[str, ...] | list[str],
+    labels: np.ndarray,
+    scores: np.ndarray,
+    *,
+    k: int = 5,
+    high_gauc_threshold: float = 0.9,
+    low_ndcg_threshold: float = 0.5,
+) -> dict[str, Any]:
+    """Validation-only top-k diagnostics computed inside the trusted runner."""
+    by_user: dict[str, list[int]] = {}
+    for index, user in enumerate(users):
+        by_user.setdefault(str(user), []).append(index)
+
+    ndcgs: list[float] = []
+    positive_hits = 0
+    possible_hits = 0
+    high_gauc_low_ndcg = 0
+    margins: list[float] = []
+    by_size: dict[str, list[float]] = {}
+    by_positive_count: dict[str, list[float]] = {}
+
+    for indices in by_user.values():
+        idx = np.asarray(indices, dtype=np.int64)
+        user_labels = labels[idx].astype(np.float64)
+        user_scores = scores[idx].astype(np.float64)
+        order = np.lexsort((idx, -user_scores))
+        top = order[:k]
+        ideal = np.argsort(-user_labels, kind="stable")[:k]
+        ideal_dcg = _dcg(user_labels[ideal])
+        ndcg = 0.0 if ideal_dcg <= 0 else _dcg(user_labels[top]) / ideal_dcg
+        ndcgs.append(float(ndcg))
+
+        positives = int(np.sum(user_labels > 0.5))
+        possible_hits += min(k, positives)
+        positive_hits += int(np.sum(user_labels[top] > 0.5))
+        size_bucket = "1-5" if len(idx) <= 5 else "6-20" if len(idx) <= 20 else "21+"
+        pos_bucket = "0" if positives == 0 else "1" if positives == 1 else "2-4" if positives <= 4 else "5+"
+        by_size.setdefault(size_bucket, []).append(float(ndcg))
+        by_positive_count.setdefault(pos_bucket, []).append(float(ndcg))
+
+        positive_scores = user_scores[user_labels > 0.5]
+        negative_scores = user_scores[user_labels <= 0.5]
+        if len(positive_scores) and len(negative_scores):
+            margins.append(float(np.max(positive_scores) - np.max(negative_scores)))
+            comparisons = (positive_scores[:, None] > negative_scores[None, :]).mean()
+            ties = (positive_scores[:, None] == negative_scores[None, :]).mean()
+            user_gauc = float(comparisons + 0.5 * ties)
+            if user_gauc >= high_gauc_threshold and ndcg < low_ndcg_threshold:
+                high_gauc_low_ndcg += 1
+
+    def summary(values: list[float]) -> dict[str, float]:
+        if not values:
+            return {"mean": 0.0, "p10": 0.0, "p50": 0.0, "p90": 0.0}
+        arr = np.asarray(values, dtype=np.float64)
+        return {
+            "mean": float(np.mean(arr)),
+            "p10": float(np.quantile(arr, 0.10)),
+            "p50": float(np.quantile(arr, 0.50)),
+            "p90": float(np.quantile(arr, 0.90)),
+        }
+
+    return {
+        "topk": int(k),
+        "per_user_ndcg": summary(ndcgs),
+        "top5_positive_hits": int(positive_hits),
+        "top5_possible_positive_hits": int(possible_hits),
+        "top5_hit_rate": float(positive_hits / possible_hits) if possible_hits else 0.0,
+        "high_gauc_low_ndcg_users": int(high_gauc_low_ndcg),
+        "positive_vs_top_negative_margin": summary(margins),
+        "ndcg_by_impression_count": {key: summary(value) for key, value in sorted(by_size.items())},
+        "ndcg_by_positive_count": {key: summary(value) for key, value in sorted(by_positive_count.items())},
+    }
+
+
 def validate_and_persist_output(
     output: CandidateOutput,
     valid_users: tuple[str, ...] | list[str],
@@ -89,6 +170,7 @@ def validate_and_persist_output(
     if not np.all(np.isfinite(scores)):
         raise ValueError("Validation scores contain NaN or Inf.")
     metrics = official_evaluate(valid_users, valid_y, scores)
+    topk_report = topk_diagnostics(valid_users, valid_y, scores, k=5)
 
     checkpoint: dict[str, np.ndarray] = {}
     total_elements = 0
@@ -170,7 +252,8 @@ def validate_and_persist_output(
     return {
         "metrics": metrics,
         "training_trace": _json_safe(output.training_trace),
-        "diagnostics": diagnostics,
+        "diagnostics": {**diagnostics, "topk_diagnostics": _json_safe(topk_report)},
+        "topk_diagnostics": _json_safe(topk_report),
         "diagnostic_metrics": diagnostic_metrics,
         "artifact_path": checkpoint_path.as_posix(),
         "validation_scores_path": _repo_relative(valid_scores_path),

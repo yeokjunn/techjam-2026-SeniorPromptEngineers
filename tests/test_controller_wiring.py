@@ -495,7 +495,12 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
                     # The stop rule itself, which is what the run hangs on: with
                     # coverage read off `family_names()` this is False forever and
                     # the run can only end on a budget, never `converged`.
-                    covered.stagnant_iterations = 3
+                    covered.nodes.append(
+                        ExperimentNode(
+                            3, "e3", "h3", "bpr", "explore", {}, "success",
+                            {"primary": 0.601},
+                        )
+                    )
                     self.assertTrue(policy.SearchPolicy(0.002, 3, [1, 2]).should_stop(covered))
 
         # E's `coverage_families()` does not exist yet, so `policy.py` falls back

@@ -156,6 +156,26 @@ class CandidateOutputTests(unittest.TestCase):
         self.assertAlmostEqual(random_metrics["robustness_gap"], 0.6845351159572601)
         self.assertNotIn("random_exposure", payload["metrics"])
 
+    def test_topk_diagnostics_are_trusted_validation_metadata(self):
+        output = CandidateOutput(
+            validation_scores=np.asarray([0.9, 0.8, 0.1, 0.7, 0.6, 0.5]),
+            checkpoint_state={},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            payload = validate_and_persist_output(
+                output,
+                ["u", "u", "u", "v", "v", "v"],
+                np.asarray([1, 0, 1, 0, 1, 0], dtype=np.float32),
+                Path(directory),
+            )
+        report = payload["topk_diagnostics"]
+        self.assertEqual(report["topk"], 5)
+        self.assertIn("per_user_ndcg", report)
+        self.assertIn("ndcg_by_impression_count", report)
+        self.assertIn("ndcg_by_positive_count", report)
+        self.assertEqual(report["top5_positive_hits"], 3)
+        self.assertEqual(payload["diagnostics"]["topk_diagnostics"], report)
+
     def test_missing_random_scores_is_optional_and_recorded(self):
         with tempfile.TemporaryDirectory() as directory:
             payload = validate_and_persist_output(

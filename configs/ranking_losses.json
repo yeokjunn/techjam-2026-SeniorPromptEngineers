@@ -10,7 +10,24 @@
   "baseline_config": "configs/baseline.json",
   "data_card_path": null,
   "research": {
-    "allow_web_search_first_pass": true
+    "allow_web_search_first_pass": true,
+    "search": {
+      "beam_width": 3,
+      "max_lineage_depth": 3,
+      "low_fidelity": {
+        "enabled": false,
+        "max_epochs": 2,
+        "max_primary_drop": 0.01
+      }
+    },
+    "ndcg_focus": {
+      "enabled": true,
+      "min_gauc_lead": 0.002,
+      "ndcg_lag_trigger": 0.003,
+      "topk": 5,
+      "hard_negative_sources": ["baseline_score", "same_tab", "same_author"],
+      "blend_grid": [0.05, 0.1, 0.2]
+    }
   },
   "eda": {
     "enabled": true,

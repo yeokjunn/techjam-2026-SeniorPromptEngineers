@@ -598,6 +598,9 @@ def load_run_snapshot(
         live_role_passes=live_passes,
         live_eda=live_eda,
         debugger_events=debugger_events,
+        search_frontier=tuple(state.get("search_frontier") or ()),
+        closed_branches=dict(state.get("closed_branches") or {}),
+        search_stats=dict(state.get("search_stats") or {}),
     )
 
 

@@ -331,15 +331,16 @@ class ProposalErrorTests(unittest.TestCase):
             provider,
         ):
             run_dir = loop.run()
-
-        self.assertEqual(len(provider.calls), 4)
-        self.assertEqual([node.status for node in loop.state.nodes], ["success"])
-        self.assertEqual(loop.state.nodes[0].family, "bpr")
-        self.assertEqual(loop.state.nodes[0].hypothesis_id, "h_bpr")
-        self.assertEqual(
-            [record["status"] for record in jsonl(run_dir, "iterations.jsonl")],
-            ["success"],
-        )
+            # Read run artifacts before TemporaryDirectory cleanup; Windows
+            # removes the directory as the context manager exits.
+            self.assertEqual(len(provider.calls), 4)
+            self.assertEqual([node.status for node in loop.state.nodes], ["success"])
+            self.assertEqual(loop.state.nodes[0].family, "bpr")
+            self.assertEqual(loop.state.nodes[0].hypothesis_id, "h_bpr")
+            self.assertEqual(
+                [record["status"] for record in jsonl(run_dir, "iterations.jsonl")],
+                ["success"],
+            )
 
     def test_malformed_research_response_is_reprompted_and_the_run_survives(self):
         broken = research("bpr")
@@ -1019,27 +1020,22 @@ class BaselineSelectionTests(unittest.TestCase):
 
 
 class SaveOrderTests(unittest.TestCase):
-    def test_state_is_saved_before_the_iteration_is_recorded(self):
-        """I3: the resumable state is on disk before the ledger line is appended.
-
-        ``record_iteration`` appends to ``iterations.jsonl``; a crash between the
-        two writes used to replay the iteration on resume and duplicate the line.
-        With ``_save()`` first, the same crash loses at most one ledger line and
-        the node is already durable.
-        """
+    def test_rejection_state_is_saved_before_the_audit_event(self):
+        """Critic rejections persist pruning state but never become DAG nodes."""
         with research_loop([]) as (loop, _provider):
             decision = ResearchDecision.from_dict(research())
             preflight = CriticDecision.from_dict({**critic(), "approved": False})
-            with patch.object(
-                ResearchAudit, "record_iteration", side_effect=RuntimeError("disk full")
-            ):
+            original = loop.audit.append_jsonl
+            def fail_research_memory(path, value):
+                if path.name == "research_memory.jsonl":
+                    raise RuntimeError("disk full")
+                return original(path, value)
+            with patch.object(loop.audit, "append_jsonl", side_effect=fail_research_memory):
                 with self.assertRaises(RuntimeError):
                     loop._record_rejection(1, decision, preflight)
             state = json.loads((loop.run_dir / "state.json").read_text(encoding="utf-8"))
-            self.assertEqual(
-                [node["experiment_id"] for node in state["nodes"]],
-                [f"rejected_{decision.hypothesis_id}"],
-            )
+            self.assertEqual(state["nodes"], [])
+            self.assertEqual(sum(state["branch_rejections"].values()), 1)
 
 
 class WallClockTests(unittest.TestCase):

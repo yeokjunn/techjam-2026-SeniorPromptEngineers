@@ -311,7 +311,7 @@ and leakage-safe feature hypotheses compatible with registered families: {', '.j
 
     def _discovery_context(self) -> str:
         if self.discovery_store is None:
-            return "No persistent web discoveries have been configured for this run."
+            return "No persistent research memory has been configured for this run."
         return self.discovery_store.prompt_text()
 
     def eda_research(
@@ -390,6 +390,7 @@ RESEARCH STATE:
         feedback: str | None = None,
         sequence: int = 0,
         eda_report: EDAReport | None = None,
+        search_context: dict[str, Any] | None = None,
     ) -> ResearchDecision:
         family_rule = (
             f"You must choose family={required_family!r} because the search policy is exploiting or falling back to the current best lead."
@@ -426,11 +427,24 @@ Do not repeat a previous failed proposal or reuse its hypothesis_id.
 EDA EVIDENCE:
 {self._eda_context(eda_report)}
 
-PERSISTENT WEB DISCOVERIES:
+PERSISTENT CROSS-RUN RESEARCH MEMORY:
 {self._discovery_context()}
 
 RESEARCH STATE:
 {self._state_summary(state)}
+
+CONTROLLER-OWNED SEARCH CONTEXT:
+{json.dumps(search_context or {}, sort_keys=True, default=str)}
+The controller owns parent selection, pruning, and allocation. Treat the supplied parent,
+family, closed branches, and tabu signatures as constraints.
+If ndcg_focus.enabled is true, prefer mechanisms that can change top-5 within-user order:
+same-user hard negatives, group-softmax/listwise losses, top-weighted BPR, small
+validation-safe blends, and within-user-varying history features such as user_author,
+user_tab, tab_cross, and recency. Avoid user-only/static feature proposals when the
+claimed benefit is nDCG@5. Hard-negative candidates may import
+src.models.sampling.sample_hard_bpr_pairs and must provide train-only hardness scores
+aligned to context.train_y; never use validation/test labels for hardness, blending, or
+checkpoint selection.
 """
         if feedback:
             volatile_block += f"\nPREVIOUS ATTEMPT REJECTED: {feedback}"

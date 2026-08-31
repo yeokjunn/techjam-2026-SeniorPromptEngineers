@@ -466,6 +466,23 @@ def _pipeline(snapshot: RunSnapshot, stale_after: int, official: float) -> None:
             st.warning(warning)
 
     st.subheader("Visual Experiment Lineage (DAG)")
+    if snapshot.search_frontier:
+        st.caption("Controller-owned cost-aware search frontier")
+        st.dataframe(list(snapshot.search_frontier), width="stretch", hide_index=True)
+    if snapshot.closed_branches:
+        with st.expander(f"Closed branches ({len(snapshot.closed_branches)})"):
+            st.dataframe(
+                [{"branch": branch, **details} for branch, details in snapshot.closed_branches.items()],
+                width="stretch",
+                hide_index=True,
+            )
+    if snapshot.search_stats:
+        st.caption(
+            "Search savings · "
+            f"duplicates avoided: {snapshot.search_stats.get('duplicates_avoided', 0)} · "
+            f"branches pruned: {snapshot.search_stats.get('branches_pruned', 0)} · "
+            f"low-fidelity pruned: {snapshot.search_stats.get('low_fidelity_pruned', 0)}"
+        )
     if snapshot.nodes:
         _render_experiment_dag(snapshot.nodes, snapshot.best_experiment_id)
         st.dataframe(
@@ -479,6 +496,12 @@ def _pipeline(snapshot: RunSnapshot, stale_after: int, official: float) -> None:
                     "primary": (node.get("metrics") or {}).get("primary"),
                     "GAUC": (node.get("metrics") or {}).get("GAUC"),
                     "nDCG@5": (node.get("metrics") or {}).get("nDCG@5"),
+                    "Δ nDCG@5 vs parent": (node.get("search") or {}).get("delta_ndcg5_vs_parent"),
+                    "top-5 hit rate": (node.get("topk_diagnostics") or {}).get("top5_hit_rate"),
+                    "hard negatives": (node.get("search") or {}).get("hard_negative_strategy"),
+                    "nDCG focus": (node.get("search") or {}).get("ndcg_focus_applied"),
+                    "beam priority": (node.get("search") or {}).get("priority"),
+                    "duration (s)": node.get("duration_seconds"),
                 }
                 for node in snapshot.nodes
             ],

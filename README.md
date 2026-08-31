@@ -301,12 +301,17 @@ fires at that engineering guard.
 
 **Convergence** uses ε = **0.002** and patience **3** over successful validation
 scores only. Failed experiments do not count as convergence evidence because
-they have no validation score. The run summary reports the official convergence
-verdict over every successful iteration, including seed replications. The harness
-research-stagnation counter excludes exact replications because they estimate
-variance rather than test a new mechanism; it therefore requires three stagnant
-non-replication probes before stopping. Queued replications and best-family
-follow-ups are still completed within the 50-iteration/six-hour hard limits.
+they have no validation score. Every successful scored iteration, including an
+exact seed replication, enters the official running-best sequence. Once the rule
+fires it is terminal: queued replications or follow-ups cannot keep the run alive.
+Meaningful improvements queue seed-1 and seed-2 replications immediately so that
+variance evidence is collected before, rather than after, convergence.
+
+Research proposals and outcomes are also persisted across runs in
+`research/discoveries/discoveries.json`, regardless of whether web search was
+used. The next run receives a bounded summary containing hypotheses, parameters,
+metrics or failure lessons, and run/iteration provenance. Web citations remain
+attached when available but are not required for an experiment to become memory.
 
 ## First research agenda
 
@@ -314,8 +319,18 @@ The approved method catalog currently contains pairwise BPR, same-user
 group-softmax, leakage-safe history features, and multi-task auxiliary feedback.
 The Researcher chooses the order and parameters, the Critic checks evidence and
 leakage, and the Builder generates each implementation. The deterministic policy
-prioritizes exploiting and attributing the current validation-best lead before
-moving into broader family exploration.
+uses a controller-owned, three-parent beam rather than allowing the model to
+expand arbitrary DAG nodes. Parents must be successful. The frontier is ranked
+by cost-aware expected improvement, uncertainty, novelty, failure risk, and
+observed runtime. Most proposal slots deliberately target an underexplored
+non-best family, while three slots per ten exploit the current lead. Parent
+selection is constrained to the chosen family when that family has a viable
+frontier node. Two family failures,
+two mechanism-level critic rejections, or two stagnant children close a branch.
+Exact and near-duplicate proposals are rejected before code generation or
+training. Optional low-fidelity epoch screening is configured under
+`research.search.low_fidelity` and remains disabled until its promotion threshold
+has been calibrated on validation-only development runs.
 
 ## Latest verified baseline
 

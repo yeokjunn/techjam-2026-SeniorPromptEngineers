@@ -53,6 +53,7 @@ class ExperimentOutcome:
     failure_class: str | None = None
     test_scores_path: str | None = None
     validation_scores_path: str | None = None
+    topk_diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -332,6 +333,9 @@ class ExperimentNode:
     validation_scores_path: str | None = None
     parent_experiment: str | None = None
     replicated_from: str | None = None
+    search: dict[str, Any] = field(default_factory=dict)
+    duration_seconds: float = 0.0
+    topk_diagnostics: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExperimentNode":
@@ -363,6 +367,13 @@ class RunState:
     stop_reason: str | None = None
     wall_clock_seconds: float = 0.0
     data_card_path: str | None = None
+    search_frontier: list[dict[str, Any]] = field(default_factory=list)
+    closed_branches: dict[str, dict[str, Any]] = field(default_factory=dict)
+    proposal_signatures: list[dict[str, Any]] = field(default_factory=list)
+    branch_failures: dict[str, int] = field(default_factory=dict)
+    branch_rejections: dict[str, int] = field(default_factory=dict)
+    branch_stagnation: dict[str, int] = field(default_factory=dict)
+    search_stats: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunState":

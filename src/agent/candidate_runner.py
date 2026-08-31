@@ -244,6 +244,7 @@ class CandidateExecutor:
                 epoch_trace=list(payload.get("training_trace", [])),
                 diagnostics=dict(payload.get("diagnostics", {})),
                 diagnostic_metrics=dict(payload.get("diagnostic_metrics", {})),
+                topk_diagnostics=dict(payload.get("topk_diagnostics", {})),
                 stdout_path=_repo_relative(stdout_path, self.repo_root),
                 stderr_path=_repo_relative(stderr_path, self.repo_root),
                 command=command,

@@ -22,8 +22,9 @@ python scripts/download_data.py
 | Config | Purpose |
 |---|---|
 | `configs/baseline.json` | Deterministic baseline ladder (random → popularity → FM). No API key needed. |
-| `configs/ranking_losses_smoke.json` | LLM-driven research loop (GLM), 10 iterations, smoke-test budgets |
-| `configs/ranking_losses.json` | Full research loop (OpenAI) |
+| `configs/offline_smoke.json` | Scripted-LLM end-to-end smoke test. No API key needed. |
+| `configs/ranking_losses_smoke.json` | LLM-driven research loop (OpenAI), 20 iterations, smoke-test budgets |
+| `configs/ranking_losses.json` | Full research loop (OpenAI, 50 iterations / 6 h caps) |
 | `configs/ranking_losses_glm.json` | Full research loop (GLM) |
 
 ## Run the Agent
@@ -32,7 +33,7 @@ python scripts/download_data.py
 # Baseline ladder (deterministic, no LLM)
 python -m src.agent.controller --config configs/baseline.json
 
-# Smoke test — 10 iterations, short budgets (quick sanity check)
+# Smoke test — 20 iterations, short budgets (quick sanity check)
 python -m src.agent.controller --config configs/ranking_losses_smoke.json
 
 # Full run — 50 iterations, 6h wall clock, 2 replication seeds (GLM)

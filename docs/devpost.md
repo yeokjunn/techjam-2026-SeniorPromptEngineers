@@ -10,7 +10,7 @@ Development used Git/GitHub, VS Code-compatible Python tooling, pytest/unittest,
 
 ## APIs used
 
-Live research uses the OpenAI Responses API with `gpt-5.5`, JSON-schema Structured Outputs (`strict: true`), optional `web_search`, and `prompt_cache_key`; offline tests replace it with `ScriptedProvider`. Official OpenAI documentation confirms these capabilities: [GPT-5.5 model](https://developers.openai.com/api/docs/models/gpt-5.5) and [Responses create API](https://developers.openai.com/api/reference/cli/resources/responses/methods/create).
+The harness supports the OpenAI Responses API (JSON-schema Structured Outputs with `strict: true`, optional `web_search`, `prompt_cache_key`; see the [Responses create API](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)), any OpenAI-compatible Chat Completions endpoint, and GLM. The committed final run used `deepseek-v4-flash` through an OpenAI-compatible endpoint with locally validated structured outputs (frozen in [`runs/final/run_config.json`](../runs/final/run_config.json)); offline tests replace the live provider with `ScriptedProvider`.
 
 ## Libraries and frameworks used
 
@@ -22,14 +22,29 @@ Training uses only the organizer-provided KuaiRand-Pure dataset and starter kit.
 
 ## Verified results and resources
 
-| Committed run | GAUC | nDCG@5 | Primary | Delta vs 0.6016 |
-|---|---:|---:|---:|---:|
-| `20260829T041834051989Z_baseline` | 0.6671 | 0.5358 | 0.6015 | -0.0001 |
-| `20260829T060130480764Z_research` | 0.6679 | 0.5360 | 0.6019 | +0.0003 |
-| `kj_20260831T020238331867Z_research` | 0.6701 | 0.5373 | 0.6037 | +0.0021 |
+All numbers below come from the committed final run [`runs/final/`](../runs/final/results.md)
+(a copy of live run `20260831T115602777469Z_research` with local absolute paths
+rewritten to repo-relative form). Validation metrics, scored against the official
+baseline (GAUC 0.6674 / nDCG@5 0.5357 / primary 0.6016):
 
-The `20260829T060130480764Z_research` row is the scripted offline end-to-end run: 1 scored iteration and training attempt, 2,440 scripted tokens, 141.31 seconds wall-clock, 0 GPU-hours, and 0 manual interventions. It validates autonomy plumbing. The `kj_20260831T020238331867Z_research` row is the latest live autonomous run: it converged at iteration 12 under the official epsilon `0.002`, patience-3 rule, used 13 training attempts, 44 proposal attempts, 1,855,199 reported LLM tokens, 3,664.28 seconds wall-clock, 0 GPU-hours, and 0 manual interventions. Its final diverse ensemble reached validation primary `0.6048` with GAUC `0.6718` and nDCG@5 `0.5378`, and the label-free submission gate passed on 170,588 rows.
+| Checkpoint | GAUC | nDCG@5 | Primary | Δ primary vs 0.6016 |
+|---|---:|---:|---:|---:|
+| Best single checkpoint (`gs_hard_neg_temp2_run1_seed2`) | 0.6710 | 0.5374 | 0.6042 | +0.0026 |
+| 4-candidate blended ensemble — designated submission | 0.6717 | 0.5379 | 0.6048 | +0.0032 |
+
+The run converged at **iteration 7 of 50** under the official ε = 0.002 /
+patience-3 rule, before the 50-iteration and six-hour limits. Resource use:
+**579,031 LLM tokens** (427,391 input / 151,640 output), **1,906 seconds
+(0.53 h) wall-clock**, 11 training attempts, 11 proposal attempts, **0
+GPU-hours**, and **0 manual interventions**. Three of seven iterations failed
+and were handled autonomously by bounded, hypothesis-preserving debugger
+repairs; the run then recovered and converged. The label-free submission gate
+passed on all 170,588 test rows: the designated submission is
+[`runs/final/submission.csv`](../runs/final/submission.csv) (SHA-256
+`dcdfc43d…85218c2`), which encodes the blended-ensemble test scores. Hidden-test
+scores are unknown by construction and did not guide model selection; the
+official hidden-test baseline is primary 0.5946.
 
 ## Limitations and next steps
 
-The latest live-LLM run converged and passed the label-free submission gate, but hidden-test score remains unknown and must not guide model selection. Validation lift is still modest, so next priorities are more diverse leakage-safe history contrast, more robust generated multi-task implementations, and score blending that reduces baseline over-weighting without changing the official GAUC/nDCG@5 criteria.
+The final committed run converged and passed the label-free submission gate, but hidden-test score remains unknown and must not guide model selection. Validation lift is still modest (+0.0032 primary over the official baseline, close to seed variance), so next priorities are more diverse leakage-safe history contrast, more robust generated multi-task implementations, and score blending that reduces baseline over-weighting without changing the official GAUC/nDCG@5 criteria.

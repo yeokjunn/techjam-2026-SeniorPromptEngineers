@@ -1,0 +1,437 @@
+[
+  {
+    "action": "explore",
+    "blend_components": null,
+    "delta_gauc": null,
+    "delta_ndcg5": null,
+    "delta_primary": null,
+    "delta_vs_baseline": null,
+    "diagnostic_metrics": {},
+    "experiment_id": "bpr_lambda_top",
+    "family": "bpr",
+    "hard_negative_strategy": null,
+    "iteration": 1,
+    "metrics": null,
+    "ndcg_focus_applied": false,
+    "status": "failed",
+    "topk_diagnostics": {}
+  },
+  {
+    "action": "exploit",
+    "blend_components": null,
+    "delta_gauc": null,
+    "delta_ndcg5": null,
+    "delta_primary": null,
+    "delta_vs_baseline": null,
+    "diagnostic_metrics": {},
+    "experiment_id": "bpr_topk_lambda_corrected",
+    "family": "bpr",
+    "hard_negative_strategy": null,
+    "iteration": 2,
+    "metrics": null,
+    "ndcg_focus_applied": false,
+    "status": "failed",
+    "topk_diagnostics": {}
+  },
+  {
+    "action": "explore",
+    "blend_components": null,
+    "delta_gauc": null,
+    "delta_ndcg5": null,
+    "delta_primary": null,
+    "delta_vs_baseline": null,
+    "diagnostic_metrics": {},
+    "experiment_id": "gs_hard_neg_group",
+    "family": "group_softmax",
+    "hard_negative_strategy": null,
+    "iteration": 3,
+    "metrics": null,
+    "ndcg_focus_applied": false,
+    "status": "failed",
+    "topk_diagnostics": {}
+  },
+  {
+    "action": "exploit",
+    "blend_components": null,
+    "delta_gauc": 0.0690309914588928,
+    "delta_ndcg5": -0.06419564161300662,
+    "delta_primary": 0.0024176749229430916,
+    "delta_vs_baseline": 0.0024176749229430916,
+    "diagnostic_metrics": {
+      "random_exposure": {
+        "GAUC": 0.5942126512527466,
+        "nDCG@5": 0.1498165726661682,
+        "primary": 0.3720146119594574,
+        "robustness_gap": 0.23200306296348572,
+        "rows": 288338.0,
+        "users": 19091.0
+      }
+    },
+    "experiment_id": "gs_hard_neg_temp2_run1",
+    "family": "group_softmax",
+    "hard_negative_strategy": null,
+    "iteration": 4,
+    "metrics": {
+      "GAUC": 0.6706309914588928,
+      "nDCG@5": 0.5374043583869934,
+      "primary": 0.6040176749229431,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "ndcg_focus_applied": true,
+    "status": "success",
+    "topk_diagnostics": {
+      "high_gauc_low_ndcg_users": 1,
+      "ndcg_by_impression_count": {
+        "1-5": {
+          "mean": 0.5278921199571498,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        },
+        "21+": {
+          "mean": 0.3913424312768361,
+          "p10": 0.0,
+          "p50": 0.36005461457723403,
+          "p90": 0.830419897363192
+        },
+        "6-20": {
+          "mean": 0.5659588370432169,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        }
+      },
+      "ndcg_by_positive_count": {
+        "0": {
+          "mean": 0.0,
+          "p10": 0.0,
+          "p50": 0.0,
+          "p90": 0.0
+        },
+        "1": {
+          "mean": 0.8002444042272249,
+          "p10": 0.43067655807339306,
+          "p50": 1.0,
+          "p90": 1.0
+        },
+        "2-4": {
+          "mean": 0.7693932189770973,
+          "p10": 0.38685280723454163,
+          "p50": 0.8772153153380493,
+          "p90": 1.0
+        },
+        "5+": {
+          "mean": 0.6853719392095323,
+          "p10": 0.3391602052736161,
+          "p50": 0.6992148198508501,
+          "p90": 1.0
+        }
+      },
+      "per_user_ndcg": {
+        "mean": 0.537403121740547,
+        "p10": 0.0,
+        "p50": 0.6309297535714575,
+        "p90": 1.0
+      },
+      "positive_vs_top_negative_margin": {
+        "mean": 0.4420436627198637,
+        "p10": -1.4579617261886595,
+        "p50": 0.2077949047088623,
+        "p90": 2.5866315841674807
+      },
+      "top5_hit_rate": 0.8197076797431637,
+      "top5_positive_hits": 29107,
+      "top5_possible_positive_hits": 35509,
+      "topk": 5
+    }
+  },
+  {
+    "action": "replicate",
+    "blend_components": null,
+    "delta_gauc": 0.06894569721221921,
+    "delta_ndcg5": -0.06409479055404665,
+    "delta_primary": 0.0024254831314086678,
+    "delta_vs_baseline": 0.0024254831314086678,
+    "diagnostic_metrics": {
+      "random_exposure": {
+        "GAUC": 0.596011221408844,
+        "nDCG@5": 0.1514071375131607,
+        "primary": 0.37370917201042175,
+        "robustness_gap": 0.23031631112098694,
+        "rows": 288338.0,
+        "users": 19091.0
+      }
+    },
+    "experiment_id": "gs_hard_neg_temp2_run1_seed1",
+    "family": "group_softmax",
+    "hard_negative_strategy": null,
+    "iteration": 5,
+    "metrics": {
+      "GAUC": 0.6705456972122192,
+      "nDCG@5": 0.5375052094459534,
+      "primary": 0.6040254831314087,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "ndcg_focus_applied": true,
+    "status": "success",
+    "topk_diagnostics": {
+      "high_gauc_low_ndcg_users": 1,
+      "ndcg_by_impression_count": {
+        "1-5": {
+          "mean": 0.5273925468719781,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        },
+        "21+": {
+          "mean": 0.39074496176492407,
+          "p10": 0.0,
+          "p50": 0.37344196431925203,
+          "p90": 0.830419897363192
+        },
+        "6-20": {
+          "mean": 0.5672415253292492,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        }
+      },
+      "ndcg_by_positive_count": {
+        "0": {
+          "mean": 0.0,
+          "p10": 0.0,
+          "p50": 0.0,
+          "p90": 0.0
+        },
+        "1": {
+          "mean": 0.8000579084745894,
+          "p10": 0.43067655807339306,
+          "p50": 1.0,
+          "p90": 1.0
+        },
+        "2-4": {
+          "mean": 0.7699424629648906,
+          "p10": 0.38364913903790027,
+          "p50": 0.8772153153380493,
+          "p90": 1.0
+        },
+        "5+": {
+          "mean": 0.685149296475806,
+          "p10": 0.3391602052736161,
+          "p50": 0.6992148198508501,
+          "p90": 1.0
+        }
+      },
+      "per_user_ndcg": {
+        "mean": 0.5375041413181016,
+        "p10": 0.0,
+        "p50": 0.6309297535714575,
+        "p90": 1.0
+      },
+      "positive_vs_top_negative_margin": {
+        "mean": 0.42981083793105335,
+        "p10": -1.4141329050064086,
+        "p50": 0.20171761512756348,
+        "p90": 2.510886192321778
+      },
+      "top5_hit_rate": 0.820045622236616,
+      "top5_positive_hits": 29119,
+      "top5_possible_positive_hits": 35509,
+      "topk": 5
+    }
+  },
+  {
+    "action": "replicate",
+    "blend_components": null,
+    "delta_gauc": 0.06938248004913328,
+    "delta_ndcg5": -0.0642421928405762,
+    "delta_primary": 0.002570143604278541,
+    "delta_vs_baseline": 0.002570143604278541,
+    "diagnostic_metrics": {
+      "random_exposure": {
+        "GAUC": 0.5963423848152161,
+        "nDCG@5": 0.15111759305000305,
+        "primary": 0.37373000383377075,
+        "robustness_gap": 0.2304401397705078,
+        "rows": 288338.0,
+        "users": 19091.0
+      }
+    },
+    "experiment_id": "gs_hard_neg_temp2_run1_seed2",
+    "family": "group_softmax",
+    "hard_negative_strategy": null,
+    "iteration": 6,
+    "metrics": {
+      "GAUC": 0.6709824800491333,
+      "nDCG@5": 0.5373578071594238,
+      "primary": 0.6041701436042786,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "ndcg_focus_applied": true,
+    "status": "success",
+    "topk_diagnostics": {
+      "high_gauc_low_ndcg_users": 1,
+      "ndcg_by_impression_count": {
+        "1-5": {
+          "mean": 0.5278277816232764,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        },
+        "21+": {
+          "mean": 0.3887232494160261,
+          "p10": 0.0,
+          "p50": 0.36005461457723403,
+          "p90": 0.8261481133229379
+        },
+        "6-20": {
+          "mean": 0.5661336066062699,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        }
+      },
+      "ndcg_by_positive_count": {
+        "0": {
+          "mean": 0.0,
+          "p10": 0.0,
+          "p50": 0.0,
+          "p90": 0.0
+        },
+        "1": {
+          "mean": 0.7996769002686177,
+          "p10": 0.43067655807339306,
+          "p50": 1.0,
+          "p90": 1.0
+        },
+        "2-4": {
+          "mean": 0.7696130232755903,
+          "p10": 0.38364913903790027,
+          "p50": 0.8772153153380493,
+          "p90": 1.0
+        },
+        "5+": {
+          "mean": 0.6858930305318229,
+          "p10": 0.3391602052736161,
+          "p50": 0.6992148198508501,
+          "p90": 1.0
+        }
+      },
+      "per_user_ndcg": {
+        "mean": 0.5373566594517539,
+        "p10": 0.0,
+        "p50": 0.6309297535714575,
+        "p90": 1.0
+      },
+      "positive_vs_top_negative_margin": {
+        "mean": 0.42825367123275243,
+        "p10": -1.4113839149475096,
+        "p50": 0.19771838188171387,
+        "p90": 2.4969184875488284
+      },
+      "top5_hit_rate": 0.8198766509898899,
+      "top5_positive_hits": 29113,
+      "top5_possible_positive_hits": 35509,
+      "topk": 5
+    }
+  },
+  {
+    "action": "explore",
+    "blend_components": null,
+    "delta_gauc": 0.06752752389907835,
+    "delta_ndcg5": -0.06508822116851809,
+    "delta_primary": 0.0012196811676025154,
+    "delta_vs_baseline": 0.0012196811676025154,
+    "diagnostic_metrics": {
+      "random_exposure": {
+        "GAUC": 0.5884051322937012,
+        "nDCG@5": 0.14711865782737732,
+        "primary": 0.36776190996170044,
+        "robustness_gap": 0.2350577712059021,
+        "rows": 288338.0,
+        "users": 19091.0
+      }
+    },
+    "experiment_id": "hist_user_tab_tabcross_bpr_v1",
+    "family": "history_features",
+    "hard_negative_strategy": null,
+    "iteration": 7,
+    "metrics": {
+      "GAUC": 0.6691275238990784,
+      "nDCG@5": 0.5365117788314819,
+      "primary": 0.6028196811676025,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "ndcg_focus_applied": true,
+    "status": "success",
+    "topk_diagnostics": {
+      "high_gauc_low_ndcg_users": 2,
+      "ndcg_by_impression_count": {
+        "1-5": {
+          "mean": 0.525975751194197,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        },
+        "21+": {
+          "mean": 0.38454957932063333,
+          "p10": 0.0,
+          "p50": 0.34570049273536274,
+          "p90": 0.830419897363192
+        },
+        "6-20": {
+          "mean": 0.5674277478061649,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        }
+      },
+      "ndcg_by_positive_count": {
+        "0": {
+          "mean": 0.0,
+          "p10": 0.0,
+          "p50": 0.0,
+          "p90": 0.0
+        },
+        "1": {
+          "mean": 0.7986307123698889,
+          "p10": 0.43067655807339306,
+          "p50": 1.0,
+          "p90": 1.0
+        },
+        "2-4": {
+          "mean": 0.7681450768778473,
+          "p10": 0.38364913903790027,
+          "p50": 0.8772153153380493,
+          "p90": 1.0
+        },
+        "5+": {
+          "mean": 0.6850507044141959,
+          "p10": 0.3391602052736161,
+          "p50": 0.6992148198508501,
+          "p90": 1.0
+        }
+      },
+      "per_user_ndcg": {
+        "mean": 0.5365118292866581,
+        "p10": 0.0,
+        "p50": 0.6309297535714575,
+        "p90": 1.0
+      },
+      "positive_vs_top_negative_margin": {
+        "mean": 0.2016747974309376,
+        "p10": -0.6868074417114257,
+        "p50": 0.08926630020141602,
+        "p90": 1.1380121707916264
+      },
+      "top5_hit_rate": 0.8188346616350785,
+      "top5_positive_hits": 29076,
+      "top5_possible_positive_hits": 35509,
+      "topk": 5
+    }
+  }
+]

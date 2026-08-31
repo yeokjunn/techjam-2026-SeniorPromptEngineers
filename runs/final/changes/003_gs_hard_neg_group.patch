@@ -1,0 +1,224 @@
+--- parent/candidate.py
++++ candidate/candidate.py
+@@ -0,0 +1,151 @@
++import numpy as np
++import math
++import time
++from src.models.fm_core import FMRanker
++from src.models.sampling import sample_softmax_groups
++from src.models.features import build_features
++from src.experiments.contracts import CandidateOutput
++
++SPEC = {'user_id': 0, 'video_id': 1}
++
++def run(context, parameters):
++    seed = parameters['seed']
++    lr = parameters['learning_rate']
++    epochs = parameters['epochs']
++    batch_size = parameters['batch_size']
++    K = parameters['negatives_per_group']
++    temperature = parameters['temperature']
++    patience = parameters['patience']
++
++    rng = np.random.default_rng(seed)
++
++    # Build features with correct field offset (base fields start at 0)
++    train_spec = dict(SPEC, split='train', field_offset=0)
++    valid_spec = dict(SPEC, split='valid', field_offset=0)
++    test_spec = dict(SPEC, split='test', field_offset=0)
++    random_valid_spec = dict(SPEC, split='random_valid', field_offset=0)
++
++    train_features = build_features(context.train_x, train_spec).astype(np.int32)
++    valid_features = build_features(context.valid_x, valid_spec).astype(np.int32) if context.valid_x is not None else None
++    test_features = build_features(context.test_x, test_spec).astype(np.int32) if context.test_x is not None else None
++    random_valid_features = build_features(context.random_valid_x, random_valid_spec).astype(np.int32) if context.random_valid_x is not None else None
++
++    model = FMRanker(context.field_dimension, embedding_dim=16, learning_rate=lr, l2=1e-6, seed=seed)
++
++    best_primary = -np.inf
++    best_state = None
++    best_epoch = -1
++    patience_counter = 0
++    training_trace = []
++
++    for epoch in range(epochs):
++        start_time = time.time()
++        # Sample groups for this epoch (always same-user negatives via sampler)
++        pos_idx, neg_idx = sample_softmax_groups(context.train_users, context.train_y, rng, K)
++        n_groups = len(pos_idx)
++        if n_groups == 0:
++            continue
++        # Shuffle groups
++        perm = rng.permutation(n_groups)
++        pos_idx = pos_idx[perm]
++        neg_idx = neg_idx[perm]
++
++        epoch_loss = 0.0
++        for start in range(0, n_groups, batch_size):
++            end = min(start + batch_size, n_groups)
++            pos_batch = pos_idx[start:end]
++            neg_batch = neg_idx[start:end]  # (B, K)
++            B = len(pos_batch)
++
++            # Gather features
++            pos_feat = train_features[pos_batch]                # (B, n_fields)
++            neg_flat = neg_batch.reshape(-1)                    # (B*K,)
++            neg_feat = train_features[neg_flat]                 # (B*K, n_fields)
++            all_feat = np.concatenate([pos_feat, neg_feat], axis=0)  # (B*(1+K), n_fields)
++
++            # Compute scores
++            all_scores = model.predict(all_feat)                # (B*(1+K),)
++            scores_group = all_scores.reshape(B, 1 + K)         # (B, 1+K)
++
++            # Group softmax
++            logits = scores_group / temperature
++            shifted = logits - np.max(logits, axis=1, keepdims=True)
++            exp = np.exp(shifted)
++            softmax = exp / np.sum(exp, axis=1, keepdims=True)
++            loss = -np.log(softmax[:, 0] + 1e-12).mean()
++
++            # Gradients
++            one_hot = np.zeros_like(softmax)
++            one_hot[:, 0] = 1.0
++            score_grad = (softmax - one_hot) / temperature      # (B, 1+K)
++            all_grads = score_grad.reshape(-1) / B              # (B*(1+K),)
++
++            grad_v, grad_w, grad_b = model.gradients(all_feat, all_grads)
++            model.apply_gradients(grad_v, grad_w, grad_b)
++
++            epoch_loss += loss * B
++
++        epoch_loss /= max(n_groups, 1)
++
++        # Validation
++        if valid_features is not None:
++            valid_scores = model.predict(valid_features)
++            if not np.all(np.isfinite(valid_scores)):
++                valid_scores = np.nan_to_num(valid_scores, nan=0.0, posinf=1e6, neginf=-1e6)
++            valid_primary = context.evaluate_validation(valid_scores)
++        else:
++            valid_primary = -np.inf
++
++        training_trace.append({
++            'epoch': epoch,
++            'loss': float(epoch_loss),
++            'validation_primary': float(valid_primary),
++            'time': time.time() - start_time,
++        })
++
++        if valid_primary > best_primary:
++            best_primary = valid_primary
++            best_epoch = epoch
++            best_state = model.state_dict()
++            patience_counter = 0
++        else:
++            patience_counter += 1
++            if patience_counter >= patience:
++                break
++
++    if best_state is not None:
++        model.load_state_dict(best_state)
++
++    # Final scores
++    validation_scores = model.predict(valid_features) if valid_features is not None else np.array([])
++    if valid_features is not None and not np.all(np.isfinite(validation_scores)):
++        validation_scores = np.nan_to_num(validation_scores, nan=0.0, posinf=1e6, neginf=-1e6)
++
++    test_scores = None
++    if test_features is not None:
++        test_scores = model.predict(test_features)
++        if not np.all(np.isfinite(test_scores)):
++            test_scores = np.nan_to_num(test_scores, nan=0.0, posinf=1e6, neginf=-1e6)
++
++    random_validation_scores = None
++    if random_valid_features is not None:
++        random_validation_scores = model.predict(random_valid_features)
++        if not np.all(np.isfinite(random_validation_scores)):
++            random_validation_scores = np.nan_to_num(random_validation_scores, nan=0.0, posinf=1e6, neginf=-1e6)
++
++    diagnostics = {
++        'best_epoch': best_epoch,
++        'best_primary': best_primary,
++        'n_groups': n_groups,
++        'temperature': temperature,
++        'negatives_per_group': K,
++    }
++
++    return CandidateOutput(
++        validation_scores=validation_scores,
++        checkpoint_state=best_state,
++        training_trace=training_trace,
++        diagnostics=diagnostics,
++        test_scores=test_scores,
++        random_validation_scores=random_validation_scores,
++    )
+
+--- parent/test_candidate.py
++++ candidate/test_candidate.py
+@@ -0,0 +1,66 @@
++import unittest
++from unittest.mock import patch
++import numpy as np
++import candidate
++
++class FakeContext:
++    def __init__(self):
++        n_train = 1000
++        n_valid = 200
++        self.field_dimension = 300
++        self.train_x = np.random.randint(0, 100, size=(n_train, 2))
++        self.train_y = (np.random.rand(n_train) > 0.5).astype(np.float32)
++        self.train_users = self.train_x[:, 0].astype(np.int64)
++        self.valid_x = np.random.randint(0, 100, size=(n_valid, 2))
++        self.valid_users = self.valid_x[:, 0].astype(np.int64)
++        self.test_x = np.random.randint(0, 100, size=(100, 2))
++        self.random_valid_x = None
++        def evaluate_validation(scores):
++            return float(np.mean(scores))
++        self.evaluate_validation = evaluate_validation
++
++class TestCandidate(unittest.TestCase):
++    def test_run_returns_valid_output(self):
++        ctx = FakeContext()
++        params = {
++            'seed': 42,
++            'learning_rate': 0.0005,
++            'epochs': 2,
++            'batch_size': 64,
++            'negatives_per_group': 4,
++            'temperature': 1.0,
++            'patience': 2,
++        }
++
++        def fake_build_features(data, spec):
++            return np.zeros((len(data), 2), dtype=np.int32)
++
++        def fake_sample_softmax_groups(users, labels, rng, K):
++            uniq = np.unique(users)
++            pos_idx = []
++            neg_idx = []
++            for u in uniq:
++                idx_u = np.where(users == u)[0]
++                pos_u = idx_u[labels[idx_u] > 0.5]
++                neg_u = idx_u[labels[idx_u] <= 0.5]
++                if len(pos_u) > 0 and len(neg_u) >= K:
++                    for p in pos_u:
++                        negs = rng.choice(neg_u, size=K, replace=False)
++                        pos_idx.append(p)
++                        neg_idx.append(negs)
++            if len(pos_idx) == 0:
++                return np.array([], dtype=np.int64), np.array([], dtype=np.int64).reshape(0, K)
++            return np.array(pos_idx, dtype=np.int64), np.array(neg_idx, dtype=np.int64)
++
++        with patch('candidate.build_features', side_effect=fake_build_features), \
++             patch('candidate.sample_softmax_groups', side_effect=fake_sample_softmax_groups):
++            out = candidate.run(ctx, params)
++
++        self.assertEqual(len(out.validation_scores), len(ctx.valid_x))
++        self.assertTrue(np.all(np.isfinite(out.validation_scores)))
++        self.assertIsNotNone(out.checkpoint_state)
++        self.assertIsNotNone(out.test_scores)
++        self.assertTrue(np.all(np.isfinite(out.test_scores)))
++
++if __name__ == '__main__':
++    unittest.main()

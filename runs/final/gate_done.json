@@ -1,0 +1,11 @@
+{
+  "status": "ok",
+  "submission_path": "runs/20260831T115602777469Z_research/submission.csv",
+  "details": {
+    "rows": 170588,
+    "sha256": "dcdfc43d542d9aec979c19cbde6ced016cf3fe01668b09bd79db2eece85218c2",
+    "check_stdout": "\u2713 \u683c\u5f0f\u4e0e\u5bf9\u9f50\u6821\u9a8c\u901a\u8fc7\uff1a170,588 \u884c\uff0csplit=test\n",
+    "checked_with": ".venv/bin/python",
+    "scored": false
+  }
+}

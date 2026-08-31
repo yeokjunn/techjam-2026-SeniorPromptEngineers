@@ -1,0 +1,145 @@
+{
+  "best": {
+    "artifact_path": "runs/20260831T115602777469Z_research/artifacts/006_gs_hard_neg_temp2_run1_seed2/model.npz",
+    "candidate_dir": "generated_experiments/20260831T115602777469Z_research/006_gs_hard_neg_temp2_run1_seed2",
+    "ensemble_blended": true,
+    "ensemble_metrics": {
+      "GAUC": 0.6717091212793168,
+      "nDCG@5": 0.5379154409853121,
+      "primary": 0.6048122811323144,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "ensemble_weights": {
+      "gs_hard_neg_temp2_run1 (group_softmax)": 0.25767882910740053,
+      "gs_hard_neg_temp2_run1_seed1 (group_softmax)": 0.1816120387548959,
+      "gs_hard_neg_temp2_run1_seed2 (group_softmax)": 0.30303030303030304,
+      "hist_user_tab_tabcross_bpr_v1 (history_features)": 0.25767882910740053
+    },
+    "experiment_id": "gs_hard_neg_temp2_run1_seed2",
+    "metrics": {
+      "GAUC": 0.6709824800491333,
+      "nDCG@5": 0.5373578071594238,
+      "primary": 0.6041701436042786,
+      "rows": 124909.0,
+      "users": 22377.0
+    }
+  },
+  "converged_official": true,
+  "converged_official_iteration": 7,
+  "ensemble": {
+    "candidates_used": [
+      {
+        "experiment_id": "gs_hard_neg_temp2_run1_seed2",
+        "family": "group_softmax",
+        "primary": 0.6041701436042786,
+        "weight": 0.30303030303030304
+      },
+      {
+        "experiment_id": "gs_hard_neg_temp2_run1_seed1",
+        "family": "group_softmax",
+        "primary": 0.6040254831314087,
+        "weight": 0.1816120387548959
+      },
+      {
+        "experiment_id": "gs_hard_neg_temp2_run1",
+        "family": "group_softmax",
+        "primary": 0.6040176749229431,
+        "weight": 0.25767882910740053
+      },
+      {
+        "experiment_id": "hist_user_tab_tabcross_bpr_v1",
+        "family": "history_features",
+        "primary": 0.6028196811676025,
+        "weight": 0.25767882910740053
+      }
+    ],
+    "ensemble_node_dir": "generated_experiments/20260831T115602777469Z_research/ensemble",
+    "ensemble_primary": 0.6048122811323144,
+    "metrics": {
+      "GAUC": 0.6717091212793168,
+      "nDCG@5": 0.5379154409853121,
+      "primary": 0.6048122811323144,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "reason": null,
+    "single_best_primary": 0.6041701436042786,
+    "status": "ok",
+    "weights": {
+      "gs_hard_neg_temp2_run1 (group_softmax)": 0.25767882910740053,
+      "gs_hard_neg_temp2_run1_seed1 (group_softmax)": 0.1816120387548959,
+      "gs_hard_neg_temp2_run1_seed2 (group_softmax)": 0.30303030303030304,
+      "hist_user_tab_tabcross_bpr_v1 (history_features)": 0.25767882910740053
+    }
+  },
+  "gate": {
+    "details": {
+      "check_stdout": "\u2713 \u683c\u5f0f\u4e0e\u5bf9\u9f50\u6821\u9a8c\u901a\u8fc7\uff1a170,588 \u884c\uff0csplit=test\n",
+      "checked_with": ".venv/bin/python",
+      "rows": 170588,
+      "scored": false,
+      "sha256": "dcdfc43d542d9aec979c19cbde6ced016cf3fe01668b09bd79db2eece85218c2"
+    },
+    "status": "ok",
+    "submission_path": "runs/20260831T115602777469Z_research/submission.csv"
+  },
+  "iterations": 7,
+  "manual_interventions": 0,
+  "run_id": "20260831T115602777469Z_research",
+  "search": {
+    "closed_branches": {
+      "family:bpr": {
+        "count": 2,
+        "reason": "consecutive_failures",
+        "scope": "family"
+      }
+    },
+    "estimated_seed_noise": 7.010652158485363e-05,
+    "frontier": [
+      {
+        "expected_cost": 57.76144832274986,
+        "expected_improvement": 5.621068749845563e-210,
+        "experiment_id": "gs_hard_neg_temp2_run1",
+        "failure_risk": 0.25,
+        "family": "group_softmax",
+        "lineage_depth": 0,
+        "mechanism": "group_softmax:gs_hard_neg_temp2",
+        "ndcg_bonus": 0.0025565375804901813,
+        "novelty": 0.5,
+        "priority": 4.5690108380361866e-05,
+        "rank": 1,
+        "uncertainty": 4.0476019108963554e-05
+      },
+      {
+        "expected_cost": 54.66382750000048,
+        "expected_improvement": 3.8841759622295664e-05,
+        "experiment_id": "hist_user_tab_tabcross_bpr_v1",
+        "failure_risk": 0.0,
+        "family": "history_features",
+        "lineage_depth": 1,
+        "mechanism": "history_features:hist_user_tab_tabcross_gs",
+        "ndcg_bonus": 0.0,
+        "novelty": 1.0,
+        "priority": 1.3516100013711796e-05,
+        "rank": 2,
+        "uncertainty": 0.002
+      }
+    ],
+    "stats": {
+      "branches_pruned": 1,
+      "proposals_admitted": 5
+    }
+  },
+  "status": "completed",
+  "stop_reason": "converged",
+  "token_usage": {
+    "cached_tokens": 314880,
+    "input_tokens": 427391,
+    "output_tokens": 151640,
+    "total_tokens": 579031,
+    "web_search_calls": 0
+  },
+  "training_attempts": 11,
+  "wall_clock_seconds": 1906.0229086649924
+}

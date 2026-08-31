@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "src/experiments/run_candidate.py", line 328, in <module>
+    main()
+  File "src/experiments/run_candidate.py", line 314, in main
+    output = module.run(context, parameters)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "generated_experiments/20260831T115602777469Z_research/003_gs_hard_neg_group/candidate.py", line 76, in run
+    training_trace.append({'epoch': epoch, 'loss': float(epoch_loss), 'validation_primary': float(valid_primary), 'time': time.time() - start_time})
+                                                                                            ^^^^^^^^^^^^^^^^^^^^
+TypeError: float() argument must be a string or a real number, not 'dict'

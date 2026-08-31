@@ -1,0 +1,602 @@
+[
+  {
+    "action": "explore",
+    "artifact_path": null,
+    "candidate_dir": "generated_experiments/20260831T115602777469Z_research/001_bpr_lambda_top",
+    "diagnostic_metrics": {},
+    "duration_seconds": 11.944057458997122,
+    "experiment_id": "bpr_lambda_top",
+    "family": "bpr",
+    "hypothesis_id": "b7f3a2c09d1e4",
+    "iteration": 1,
+    "metrics": null,
+    "parameters": {
+      "batch_size": 4096,
+      "epochs": 8,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_positive": 2,
+      "patience": 2,
+      "seed": 42
+    },
+    "parent_experiment": null,
+    "replicated_from": null,
+    "search": {
+      "blend_components": null,
+      "closed": false,
+      "failure_count": 1,
+      "hard_negative_strategy": null,
+      "mechanism": "bpr:b7f3a2c09d1e4",
+      "ndcg_focus_applied": false
+    },
+    "status": "failed",
+    "test_scores_path": null,
+    "topk_diagnostics": {},
+    "validation_scores_path": null
+  },
+  {
+    "action": "exploit",
+    "artifact_path": null,
+    "candidate_dir": "generated_experiments/20260831T115602777469Z_research/002_bpr_topk_lambda_corrected",
+    "diagnostic_metrics": {},
+    "duration_seconds": 17.25784887500049,
+    "experiment_id": "bpr_topk_lambda_corrected",
+    "family": "bpr",
+    "hypothesis_id": "bpr_topk_lambda_corrected",
+    "iteration": 2,
+    "metrics": null,
+    "parameters": {
+      "batch_size": 4096,
+      "epochs": 8,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_positive": 2,
+      "patience": 2,
+      "seed": 42
+    },
+    "parent_experiment": null,
+    "replicated_from": null,
+    "search": {
+      "blend_components": null,
+      "closed": true,
+      "failure_count": 2,
+      "hard_negative_strategy": null,
+      "mechanism": "bpr:bpr_topk_lambda_corrected",
+      "ndcg_focus_applied": false
+    },
+    "status": "failed",
+    "test_scores_path": null,
+    "topk_diagnostics": {},
+    "validation_scores_path": null
+  },
+  {
+    "action": "explore",
+    "artifact_path": null,
+    "candidate_dir": "generated_experiments/20260831T115602777469Z_research/003_gs_hard_neg_group",
+    "diagnostic_metrics": {},
+    "duration_seconds": 33.98296491700603,
+    "experiment_id": "gs_hard_neg_group",
+    "family": "group_softmax",
+    "hypothesis_id": "gs_hard_neg_group",
+    "iteration": 3,
+    "metrics": null,
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 8,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_group": 8,
+      "patience": 2,
+      "seed": 42,
+      "temperature": 1.0
+    },
+    "parent_experiment": null,
+    "replicated_from": null,
+    "search": {
+      "blend_components": null,
+      "closed": false,
+      "failure_count": 1,
+      "hard_negative_strategy": null,
+      "mechanism": "group_softmax:gs_hard_neg_group",
+      "ndcg_focus_applied": false
+    },
+    "status": "failed",
+    "test_scores_path": null,
+    "topk_diagnostics": {},
+    "validation_scores_path": null
+  },
+  {
+    "action": "exploit",
+    "artifact_path": "runs/20260831T115602777469Z_research/artifacts/004_gs_hard_neg_temp2_run1/model.npz",
+    "candidate_dir": "generated_experiments/20260831T115602777469Z_research/004_gs_hard_neg_temp2_run1",
+    "diagnostic_metrics": {
+      "random_exposure": {
+        "GAUC": 0.5942126512527466,
+        "nDCG@5": 0.1498165726661682,
+        "primary": 0.3720146119594574,
+        "robustness_gap": 0.23200306296348572,
+        "rows": 288338.0,
+        "users": 19091.0
+      }
+    },
+    "duration_seconds": 68.33171816600225,
+    "experiment_id": "gs_hard_neg_temp2_run1",
+    "family": "group_softmax",
+    "hypothesis_id": "gs_hard_neg_temp2",
+    "iteration": 4,
+    "metrics": {
+      "GAUC": 0.6706309914588928,
+      "nDCG@5": 0.5374043583869934,
+      "primary": 0.6040176749229431,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 8,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_group": 8,
+      "patience": 2,
+      "seed": 42,
+      "temperature": 2.0
+    },
+    "parent_experiment": null,
+    "replicated_from": null,
+    "search": {
+      "blend_components": null,
+      "closed": false,
+      "delta_gauc_vs_baseline": 0.0690309914588928,
+      "delta_ndcg5_vs_baseline": -0.06419564161300662,
+      "delta_primary_vs_baseline": 0.0024176749229430916,
+      "expected_cost": 51.15734154150414,
+      "expected_improvement": 0.0001666309411753723,
+      "failure_risk": 0.5,
+      "hard_negative_strategy": null,
+      "mechanism": "group_softmax:gs_hard_neg_temp2",
+      "ndcg_bonus": 0.0025565375804901813,
+      "ndcg_focus_applied": true,
+      "novelty": 0.7071067811865475,
+      "priority": 5.7871727497696615e-05,
+      "uncertainty": 0.002
+    },
+    "status": "success",
+    "test_scores_path": "runs/20260831T115602777469Z_research/artifacts/004_gs_hard_neg_temp2_run1/test_scores.npy",
+    "topk_diagnostics": {
+      "high_gauc_low_ndcg_users": 1,
+      "ndcg_by_impression_count": {
+        "1-5": {
+          "mean": 0.5278921199571498,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        },
+        "21+": {
+          "mean": 0.3913424312768361,
+          "p10": 0.0,
+          "p50": 0.36005461457723403,
+          "p90": 0.830419897363192
+        },
+        "6-20": {
+          "mean": 0.5659588370432169,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        }
+      },
+      "ndcg_by_positive_count": {
+        "0": {
+          "mean": 0.0,
+          "p10": 0.0,
+          "p50": 0.0,
+          "p90": 0.0
+        },
+        "1": {
+          "mean": 0.8002444042272249,
+          "p10": 0.43067655807339306,
+          "p50": 1.0,
+          "p90": 1.0
+        },
+        "2-4": {
+          "mean": 0.7693932189770973,
+          "p10": 0.38685280723454163,
+          "p50": 0.8772153153380493,
+          "p90": 1.0
+        },
+        "5+": {
+          "mean": 0.6853719392095323,
+          "p10": 0.3391602052736161,
+          "p50": 0.6992148198508501,
+          "p90": 1.0
+        }
+      },
+      "per_user_ndcg": {
+        "mean": 0.537403121740547,
+        "p10": 0.0,
+        "p50": 0.6309297535714575,
+        "p90": 1.0
+      },
+      "positive_vs_top_negative_margin": {
+        "mean": 0.4420436627198637,
+        "p10": -1.4579617261886595,
+        "p50": 0.2077949047088623,
+        "p90": 2.5866315841674807
+      },
+      "top5_hit_rate": 0.8197076797431637,
+      "top5_positive_hits": 29107,
+      "top5_possible_positive_hits": 35509,
+      "topk": 5
+    },
+    "validation_scores_path": "runs/20260831T115602777469Z_research/artifacts/004_gs_hard_neg_temp2_run1/validation_scores.npy"
+  },
+  {
+    "action": "replicate",
+    "artifact_path": "runs/20260831T115602777469Z_research/artifacts/005_gs_hard_neg_temp2_run1_seed1/model.npz",
+    "candidate_dir": "generated_experiments/20260831T115602777469Z_research/005_gs_hard_neg_temp2_run1_seed1",
+    "diagnostic_metrics": {
+      "random_exposure": {
+        "GAUC": 0.596011221408844,
+        "nDCG@5": 0.1514071375131607,
+        "primary": 0.37370917201042175,
+        "robustness_gap": 0.23031631112098694,
+        "rows": 288338.0,
+        "users": 19091.0
+      }
+    },
+    "duration_seconds": 65.86131599999499,
+    "experiment_id": "gs_hard_neg_temp2_run1_seed1",
+    "family": "group_softmax",
+    "hypothesis_id": "gs_hard_neg_temp2",
+    "iteration": 5,
+    "metrics": {
+      "GAUC": 0.6705456972122192,
+      "nDCG@5": 0.5375052094459534,
+      "primary": 0.6040254831314087,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 8,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_group": 8,
+      "patience": 2,
+      "seed": 1,
+      "temperature": 2.0
+    },
+    "parent_experiment": "gs_hard_neg_temp2_run1",
+    "replicated_from": "gs_hard_neg_temp2_run1",
+    "search": {
+      "blend_components": null,
+      "delta_gauc_vs_baseline": 0.06894569721221921,
+      "delta_gauc_vs_parent": -8.529424667358398e-05,
+      "delta_ndcg5_vs_baseline": -0.06409479055404665,
+      "delta_ndcg5_vs_parent": 0.00010085105895996094,
+      "delta_primary_vs_baseline": 0.0024254831314086678,
+      "delta_primary_vs_parent": 7.808208465576172e-06,
+      "hard_negative_strategy": null,
+      "ndcg_focus_applied": true
+    },
+    "status": "success",
+    "test_scores_path": "runs/20260831T115602777469Z_research/artifacts/005_gs_hard_neg_temp2_run1_seed1/test_scores.npy",
+    "topk_diagnostics": {
+      "high_gauc_low_ndcg_users": 1,
+      "ndcg_by_impression_count": {
+        "1-5": {
+          "mean": 0.5273925468719781,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        },
+        "21+": {
+          "mean": 0.39074496176492407,
+          "p10": 0.0,
+          "p50": 0.37344196431925203,
+          "p90": 0.830419897363192
+        },
+        "6-20": {
+          "mean": 0.5672415253292492,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        }
+      },
+      "ndcg_by_positive_count": {
+        "0": {
+          "mean": 0.0,
+          "p10": 0.0,
+          "p50": 0.0,
+          "p90": 0.0
+        },
+        "1": {
+          "mean": 0.8000579084745894,
+          "p10": 0.43067655807339306,
+          "p50": 1.0,
+          "p90": 1.0
+        },
+        "2-4": {
+          "mean": 0.7699424629648906,
+          "p10": 0.38364913903790027,
+          "p50": 0.8772153153380493,
+          "p90": 1.0
+        },
+        "5+": {
+          "mean": 0.685149296475806,
+          "p10": 0.3391602052736161,
+          "p50": 0.6992148198508501,
+          "p90": 1.0
+        }
+      },
+      "per_user_ndcg": {
+        "mean": 0.5375041413181016,
+        "p10": 0.0,
+        "p50": 0.6309297535714575,
+        "p90": 1.0
+      },
+      "positive_vs_top_negative_margin": {
+        "mean": 0.42981083793105335,
+        "p10": -1.4141329050064086,
+        "p50": 0.20171761512756348,
+        "p90": 2.510886192321778
+      },
+      "top5_hit_rate": 0.820045622236616,
+      "top5_positive_hits": 29119,
+      "top5_possible_positive_hits": 35509,
+      "topk": 5
+    },
+    "validation_scores_path": "runs/20260831T115602777469Z_research/artifacts/005_gs_hard_neg_temp2_run1_seed1/validation_scores.npy"
+  },
+  {
+    "action": "replicate",
+    "artifact_path": "runs/20260831T115602777469Z_research/artifacts/006_gs_hard_neg_temp2_run1_seed2/model.npz",
+    "candidate_dir": "generated_experiments/20260831T115602777469Z_research/006_gs_hard_neg_temp2_run1_seed2",
+    "diagnostic_metrics": {
+      "random_exposure": {
+        "GAUC": 0.5963423848152161,
+        "nDCG@5": 0.15111759305000305,
+        "primary": 0.37373000383377075,
+        "robustness_gap": 0.2304401397705078,
+        "rows": 288338.0,
+        "users": 19091.0
+      }
+    },
+    "duration_seconds": 62.869794207996165,
+    "experiment_id": "gs_hard_neg_temp2_run1_seed2",
+    "family": "group_softmax",
+    "hypothesis_id": "gs_hard_neg_temp2",
+    "iteration": 6,
+    "metrics": {
+      "GAUC": 0.6709824800491333,
+      "nDCG@5": 0.5373578071594238,
+      "primary": 0.6041701436042786,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 8,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_group": 8,
+      "patience": 2,
+      "seed": 2,
+      "temperature": 2.0
+    },
+    "parent_experiment": "gs_hard_neg_temp2_run1",
+    "replicated_from": "gs_hard_neg_temp2_run1",
+    "search": {
+      "blend_components": null,
+      "delta_gauc_vs_baseline": 0.06938248004913328,
+      "delta_gauc_vs_parent": 0.0003514885902404785,
+      "delta_ndcg5_vs_baseline": -0.0642421928405762,
+      "delta_ndcg5_vs_parent": -4.655122756958008e-05,
+      "delta_primary_vs_baseline": 0.002570143604278541,
+      "delta_primary_vs_parent": 0.00015246868133544922,
+      "hard_negative_strategy": null,
+      "ndcg_focus_applied": true
+    },
+    "status": "success",
+    "test_scores_path": "runs/20260831T115602777469Z_research/artifacts/006_gs_hard_neg_temp2_run1_seed2/test_scores.npy",
+    "topk_diagnostics": {
+      "high_gauc_low_ndcg_users": 1,
+      "ndcg_by_impression_count": {
+        "1-5": {
+          "mean": 0.5278277816232764,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        },
+        "21+": {
+          "mean": 0.3887232494160261,
+          "p10": 0.0,
+          "p50": 0.36005461457723403,
+          "p90": 0.8261481133229379
+        },
+        "6-20": {
+          "mean": 0.5661336066062699,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        }
+      },
+      "ndcg_by_positive_count": {
+        "0": {
+          "mean": 0.0,
+          "p10": 0.0,
+          "p50": 0.0,
+          "p90": 0.0
+        },
+        "1": {
+          "mean": 0.7996769002686177,
+          "p10": 0.43067655807339306,
+          "p50": 1.0,
+          "p90": 1.0
+        },
+        "2-4": {
+          "mean": 0.7696130232755903,
+          "p10": 0.38364913903790027,
+          "p50": 0.8772153153380493,
+          "p90": 1.0
+        },
+        "5+": {
+          "mean": 0.6858930305318229,
+          "p10": 0.3391602052736161,
+          "p50": 0.6992148198508501,
+          "p90": 1.0
+        }
+      },
+      "per_user_ndcg": {
+        "mean": 0.5373566594517539,
+        "p10": 0.0,
+        "p50": 0.6309297535714575,
+        "p90": 1.0
+      },
+      "positive_vs_top_negative_margin": {
+        "mean": 0.42825367123275243,
+        "p10": -1.4113839149475096,
+        "p50": 0.19771838188171387,
+        "p90": 2.4969184875488284
+      },
+      "top5_hit_rate": 0.8198766509898899,
+      "top5_positive_hits": 29113,
+      "top5_possible_positive_hits": 35509,
+      "topk": 5
+    },
+    "validation_scores_path": "runs/20260831T115602777469Z_research/artifacts/006_gs_hard_neg_temp2_run1_seed2/validation_scores.npy"
+  },
+  {
+    "action": "explore",
+    "artifact_path": "runs/20260831T115602777469Z_research/artifacts/007_hist_user_tab_tabcross_bpr_v1/model.npz",
+    "candidate_dir": "generated_experiments/20260831T115602777469Z_research/007_hist_user_tab_tabcross_bpr_v1",
+    "diagnostic_metrics": {
+      "random_exposure": {
+        "GAUC": 0.5884051322937012,
+        "nDCG@5": 0.14711865782737732,
+        "primary": 0.36776190996170044,
+        "robustness_gap": 0.2350577712059021,
+        "rows": 288338.0,
+        "users": 19091.0
+      }
+    },
+    "duration_seconds": 54.66382750000048,
+    "experiment_id": "hist_user_tab_tabcross_bpr_v1",
+    "family": "history_features",
+    "hypothesis_id": "hist_user_tab_tabcross_gs_v1",
+    "iteration": 7,
+    "metrics": {
+      "GAUC": 0.6691275238990784,
+      "nDCG@5": 0.5365117788314819,
+      "primary": 0.6028196811676025,
+      "rows": 124909.0,
+      "users": 22377.0
+    },
+    "parameters": {
+      "batch_size": 2048,
+      "epochs": 12,
+      "k": 16,
+      "learning_rate": 0.0005,
+      "negatives_per_positive": 1,
+      "patience": 2,
+      "scheme": "prior_days",
+      "seed": 42,
+      "smoothing": 20.0,
+      "use_recency": true,
+      "use_tab_cross": true,
+      "use_user_author": true,
+      "use_user_rate": true,
+      "use_user_tab": true,
+      "use_video_age": true
+    },
+    "parent_experiment": "gs_hard_neg_temp2_run1",
+    "replicated_from": null,
+    "search": {
+      "blend_components": null,
+      "closed": false,
+      "delta_gauc_vs_baseline": 0.06752752389907835,
+      "delta_gauc_vs_parent": -0.0015034675598144531,
+      "delta_ndcg5_vs_baseline": -0.06508822116851809,
+      "delta_ndcg5_vs_parent": -0.0008925795555114746,
+      "delta_primary_vs_baseline": 0.0012196811676025154,
+      "delta_primary_vs_parent": -0.0011979937553405762,
+      "expected_cost": 54.66382750000048,
+      "expected_improvement": 3.8841759622295664e-05,
+      "failure_risk": 0.0,
+      "hard_negative_strategy": null,
+      "mechanism": "history_features:hist_user_tab_tabcross_gs",
+      "ndcg_bonus": 0.0,
+      "ndcg_focus_applied": true,
+      "novelty": 1.0,
+      "priority": 1.3516100013711796e-05,
+      "uncertainty": 0.002
+    },
+    "status": "success",
+    "test_scores_path": "runs/20260831T115602777469Z_research/artifacts/007_hist_user_tab_tabcross_bpr_v1/test_scores.npy",
+    "topk_diagnostics": {
+      "high_gauc_low_ndcg_users": 2,
+      "ndcg_by_impression_count": {
+        "1-5": {
+          "mean": 0.525975751194197,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        },
+        "21+": {
+          "mean": 0.38454957932063333,
+          "p10": 0.0,
+          "p50": 0.34570049273536274,
+          "p90": 0.830419897363192
+        },
+        "6-20": {
+          "mean": 0.5674277478061649,
+          "p10": 0.0,
+          "p50": 0.6309297535714575,
+          "p90": 1.0
+        }
+      },
+      "ndcg_by_positive_count": {
+        "0": {
+          "mean": 0.0,
+          "p10": 0.0,
+          "p50": 0.0,
+          "p90": 0.0
+        },
+        "1": {
+          "mean": 0.7986307123698889,
+          "p10": 0.43067655807339306,
+          "p50": 1.0,
+          "p90": 1.0
+        },
+        "2-4": {
+          "mean": 0.7681450768778473,
+          "p10": 0.38364913903790027,
+          "p50": 0.8772153153380493,
+          "p90": 1.0
+        },
+        "5+": {
+          "mean": 0.6850507044141959,
+          "p10": 0.3391602052736161,
+          "p50": 0.6992148198508501,
+          "p90": 1.0
+        }
+      },
+      "per_user_ndcg": {
+        "mean": 0.5365118292866581,
+        "p10": 0.0,
+        "p50": 0.6309297535714575,
+        "p90": 1.0
+      },
+      "positive_vs_top_negative_margin": {
+        "mean": 0.2016747974309376,
+        "p10": -0.6868074417114257,
+        "p50": 0.08926630020141602,
+        "p90": 1.1380121707916264
+      },
+      "top5_hit_rate": 0.8188346616350785,
+      "top5_positive_hits": 29076,
+      "top5_possible_positive_hits": 35509,
+      "topk": 5
+    },
+    "validation_scores_path": "runs/20260831T115602777469Z_research/artifacts/007_hist_user_tab_tabcross_bpr_v1/validation_scores.npy"
+  }
+]

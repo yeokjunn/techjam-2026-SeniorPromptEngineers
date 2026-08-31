@@ -1,0 +1,26 @@
+{
+  "artifact_path": "runs/20260831T115602777469Z_research/artifacts/006_gs_hard_neg_temp2_run1_seed2/model.npz",
+  "candidate_dir": "generated_experiments/20260831T115602777469Z_research/006_gs_hard_neg_temp2_run1_seed2",
+  "ensemble_blended": true,
+  "ensemble_metrics": {
+    "GAUC": 0.6717091212793168,
+    "nDCG@5": 0.5379154409853121,
+    "primary": 0.6048122811323144,
+    "rows": 124909.0,
+    "users": 22377.0
+  },
+  "ensemble_weights": {
+    "gs_hard_neg_temp2_run1 (group_softmax)": 0.25767882910740053,
+    "gs_hard_neg_temp2_run1_seed1 (group_softmax)": 0.1816120387548959,
+    "gs_hard_neg_temp2_run1_seed2 (group_softmax)": 0.30303030303030304,
+    "hist_user_tab_tabcross_bpr_v1 (history_features)": 0.25767882910740053
+  },
+  "experiment_id": "gs_hard_neg_temp2_run1_seed2",
+  "metrics": {
+    "GAUC": 0.6709824800491333,
+    "nDCG@5": 0.5373578071594238,
+    "primary": 0.6041701436042786,
+    "rows": 124909.0,
+    "users": 22377.0
+  }
+}

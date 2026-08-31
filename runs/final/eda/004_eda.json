@@ -1,0 +1,146 @@
+{
+  "data_card_path": "runs/20260831T115602777469Z_research/DATA_CARD.md",
+  "data_dir": "data/KuaiRand-Pure/data",
+  "feature_candidates": [
+    {
+      "description": "Binary indicator for videos with duration 0, optionally combined with duration bucket embedding.",
+      "expected_impact": "Separates abnormal videos; expected small but clear GAUC/nDCG gain on affected rows.",
+      "family": "bpr",
+      "implementation_scope": "Add flag to video feature table; concatenate with existing static features in BPR/GroupSoftmax input.",
+      "leakage_risk": "None; static video attribute known at impression time.",
+      "name": "zero_duration_flag"
+    },
+    {
+      "description": "Categorical encoding of tab, possibly interacted with video_type or user_active_degree.",
+      "expected_impact": "Captures 10-point long_view rate differences across tabs, especially tab 4 vs tab 1.",
+      "family": "group_softmax",
+      "implementation_scope": "Add tab as an embedding input to the model; consider grouping by tab for GroupSoftmax negatives.",
+      "leakage_risk": "Low; tab observed at impression, but distribution shifts between train/valid could bias importance.",
+      "name": "tab_categorical"
+    },
+    {
+      "description": "Cumulative long_view count per user computed strictly from past interactions in train log, not future rows.",
+      "expected_impact": "Models user affinity trend; may improve ranking for users with clear preference shifts.",
+      "family": "history_features",
+      "implementation_scope": "Sort train rows by timestamp, compute per-user cumulative positives and exposures up to each row; use as user-side features in history_features family.",
+      "leakage_risk": "High if computed over entire log; must ensure only past rows per user are used.",
+      "name": "causal_user_longview_history"
+    }
+  ],
+  "findings": [
+    {
+      "evidence": "Data card: '239 videos with zero duration (24,076 train rows affected)'.",
+      "implication": "A binary zero-duration flag plus duration-bucket embedding could reduce false positives and improve ranking separation.",
+      "leakage_safe": true,
+      "observation": "239 videos have zero duration, impacting 24,076 train rows; long_view rate for these is likely depressed though not explicitly given.",
+      "title": "Zero-duration videos affect 24k train rows"
+    },
+    {
+      "evidence": "Tab breakdown table in DATA CARD: tab 4 long_view 48.93%, tab 1 38.61%, shares 6.62% and 73.16%.",
+      "implication": "Encoding tab as a categorical or using tab-based group construction can capture context effects without invasive changes.",
+      "leakage_safe": true,
+      "observation": "Tab 4 has 48.93% long_view vs tab 1 38.61%, while tab 4 is only 6.62% of rows; tab context is highly predictive.",
+      "title": "Tab long_view rates differ strongly"
+    },
+    {
+      "evidence": "Leakage Flag section in DATA CARD.",
+      "implication": "Using these aggregates directly likely inflates validation metrics; exclude or use only as teacher/regularizer.",
+      "leakage_safe": false,
+      "observation": "Implied total exposures 12.83 B vs 2.62 M logged, ratio ~4,892:1, with observation windows up to 181 days exceeding log span.",
+      "title": "Video statistics are leaky period aggregates"
+    }
+  ],
+  "iteration": 4,
+  "plan": {
+    "expected_artifacts": [
+      "A small report of long_view rate by video duration bucket, zero-duration flag, and tab (train only).",
+      "A histogram of user positive counts and long_view rates per tab, plus user-tab interaction coverage to inform GroupSoftmax group size.",
+      "A correlation/ROCAUC table of candidate leaky features (e.g., video stats aggregates) against train long_view, with leakage caveats.",
+      "A proposed feature list and negative-sampling plan aligned to registered families, with expected GAUC/nDCG hypotheses."
+    ],
+    "feature_hypotheses": [
+      "Zero-duration videos are much less likely to be long_view; adding a binary is_zero_duration feature and/or treating duration as a spline or bucket could improve ranking.",
+      "Video engagement aggregates such as historical long_view rate or average watch ratio from the video statistics table correlate with future long_view; incorporate as a leaky-side feature with strong regularization or as a multi-task auxiliary target.",
+      "User historical long_view counts (from train interactions, in a strictly causal manner) are predictive of future long_view; include as user history features within history_features family.",
+      "Tab-specific long_view rates differ dramatically (tab 4 48.93% vs tab 1 38.61%); adding tab as a categorical feature (or tab-by-tab interaction with video type) could capture context effects."
+    ],
+    "leakage_risks": [
+      "Video statistics table is a full-platform period aggregate; using it directly as a feature risks target leakage inflating validation metrics; must isolate by training without it or use as a teacher/regularizer.",
+      "History features must be computed strictly from past impressions (e.g., daily cumulative) to avoid using future interactions within the same user; any rolling or global counts from the entire log can leak.",
+      "Tab distribution shifts between train and valid (e.g., tab 4 share) could cause feature importance to be spurious; verify tab stability.",
+      "If zero-duration videos are more frequent in certain tabs, adding duration-related features may encode tab effects without explicit tab feature; ensure no interaction with evaluator assumptions."
+    ],
+    "objective": "Plan a leakage-safe EDA pass on train/valid splits to identify feature and sampling changes that improve within-user ranking of long_view, measured by validation GAUC and nDCG@5, compatible with registered families (bpr, group_softmax, history_features, multi_task).",
+    "questions": [
+      "How do long_view rates and click-through behaviors vary by video duration buckets, especially for zero-duration videos (239 videos, 24,076 train rows)?",
+      "What is the distribution of user-positive counts and long_view rates across tabs (especially tab 4 vs tab 1) to inform negative sampling or GroupSoftmax group construction?",
+      "Do interaction history features (e.g., previous long_view counts per user or per video) exhibit monotonic trends that could be encoded as additive user/video biases within the BPR or GroupSoftmax families?",
+      "Does the video statistics table (leaky but legal) provide a high-correlation proxy for long_view that could be distilled or regularized without directly injecting full-period aggregates?"
+    ],
+    "required_inputs": [
+      "Train and validation interaction logs with long_view label, user_id, video_id, tab, and timestamp order.",
+      "Video feature table (duration, type, upload_type) and user profile table (active degree, etc.) with full coverage.",
+      "Video statistics table (period aggregates) for leakage-caveated feature exploration.",
+      "Current experiment outputs or logs (for family hyperparameter defaults and any previous feature encodings)."
+    ]
+  },
+  "report": {
+    "feature_candidates": [
+      {
+        "description": "Binary indicator for videos with duration 0, optionally combined with duration bucket embedding.",
+        "expected_impact": "Separates abnormal videos; expected small but clear GAUC/nDCG gain on affected rows.",
+        "family": "bpr",
+        "implementation_scope": "Add flag to video feature table; concatenate with existing static features in BPR/GroupSoftmax input.",
+        "leakage_risk": "None; static video attribute known at impression time.",
+        "name": "zero_duration_flag"
+      },
+      {
+        "description": "Categorical encoding of tab, possibly interacted with video_type or user_active_degree.",
+        "expected_impact": "Captures 10-point long_view rate differences across tabs, especially tab 4 vs tab 1.",
+        "family": "group_softmax",
+        "implementation_scope": "Add tab as an embedding input to the model; consider grouping by tab for GroupSoftmax negatives.",
+        "leakage_risk": "Low; tab observed at impression, but distribution shifts between train/valid could bias importance.",
+        "name": "tab_categorical"
+      },
+      {
+        "description": "Cumulative long_view count per user computed strictly from past interactions in train log, not future rows.",
+        "expected_impact": "Models user affinity trend; may improve ranking for users with clear preference shifts.",
+        "family": "history_features",
+        "implementation_scope": "Sort train rows by timestamp, compute per-user cumulative positives and exposures up to each row; use as user-side features in history_features family.",
+        "leakage_risk": "High if computed over entire log; must ensure only past rows per user are used.",
+        "name": "causal_user_longview_history"
+      }
+    ],
+    "findings": [
+      {
+        "evidence": "Data card: '239 videos with zero duration (24,076 train rows affected)'.",
+        "implication": "A binary zero-duration flag plus duration-bucket embedding could reduce false positives and improve ranking separation.",
+        "leakage_safe": true,
+        "observation": "239 videos have zero duration, impacting 24,076 train rows; long_view rate for these is likely depressed though not explicitly given.",
+        "title": "Zero-duration videos affect 24k train rows"
+      },
+      {
+        "evidence": "Tab breakdown table in DATA CARD: tab 4 long_view 48.93%, tab 1 38.61%, shares 6.62% and 73.16%.",
+        "implication": "Encoding tab as a categorical or using tab-based group construction can capture context effects without invasive changes.",
+        "leakage_safe": true,
+        "observation": "Tab 4 has 48.93% long_view vs tab 1 38.61%, while tab 4 is only 6.62% of rows; tab context is highly predictive.",
+        "title": "Tab long_view rates differ strongly"
+      },
+      {
+        "evidence": "Leakage Flag section in DATA CARD.",
+        "implication": "Using these aggregates directly likely inflates validation metrics; exclude or use only as teacher/regularizer.",
+        "leakage_safe": false,
+        "observation": "Implied total exposures 12.83 B vs 2.62 M logged, ratio ~4,892:1, with observation windows up to 181 days exceeding log span.",
+        "title": "Video statistics are leaky period aggregates"
+      }
+    ],
+    "recommended_next_focus": "Run a leakage-safe ablation on the BPR baseline adding zero-duration flag and tab embedding; if primary improves, then layer causal user history features and revisit GroupSoftmax grouping by tab.",
+    "summary": "Baseline primary is 0.6016 but all BPR/GroupSoftmax runs failed; EDA plan targets leakage-safe features (zero-duration, tab, causal history) while flagging video-stats aggregates as leaky. Recommend small feature ablation on BPR first, then history features.",
+    "ui_notes": [
+      "Show long_view rate by duration bucket and zero-duration flag, split by tab to highlight tab 4 vs tab 1.",
+      "Display a warning that video statistics aggregates are leaky (~4892:1 exposure ratio) and should be excluded from direct feature use.",
+      "Plot user positive-count histogram; note many users in low-positive regime, so GroupSoftmax group size should stay small (e.g., 8) to avoid dilution."
+    ]
+  },
+  "status": "completed"
+}

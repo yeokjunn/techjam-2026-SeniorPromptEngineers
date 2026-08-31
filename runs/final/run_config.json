@@ -1,0 +1,68 @@
+{
+  "mode": "research",
+  "name": "kuairand-pure-production-deepseek",
+  "data_dir": "data/KuaiRand-Pure/data",
+  "run_root": "runs",
+  "generated_root": "generated_experiments",
+  "method_catalog": "research/methods",
+  "official_validation_baseline": 0.6016,
+  "use_official_baseline_cache": true,
+  "baseline_config": "configs/baseline.json",
+  "data_card_path": null,
+  "research": {
+    "allow_web_search_first_pass": true,
+    "search": {
+      "beam_width": 3,
+      "max_lineage_depth": 3,
+      "low_fidelity": {
+        "enabled": false,
+        "max_epochs": 2,
+        "max_primary_drop": 0.01
+      }
+    },
+    "ndcg_focus": {
+      "enabled": true,
+      "min_gauc_lead": 0.002,
+      "ndcg_lag_trigger": 0.003,
+      "topk": 5,
+      "hard_negative_sources": ["baseline_score", "same_tab", "same_author"],
+      "blend_grid": [0.05, 0.1, 0.2]
+    }
+  },
+  "eda": {
+    "enabled": true,
+    "required": false,
+    "researcher_max_output_tokens": 1600,
+    "builder_max_output_tokens": 2000,
+    "max_retries": 1,
+    "max_role_reprompts": 1
+  },
+  "llm": {
+    "provider": "openai",
+    "model": "deepseek-v4-flash",
+    "reasoning_effort": "low",
+    "verbosity": "low",
+    "store": false,
+    "max_output_tokens": 32000,
+    "max_tool_calls": 2,
+    "max_total_tokens": 3000000,
+    "request_timeout_seconds": 300,
+    "max_retries": 3
+  },
+  "budgets": {
+    "max_iterations": 50,
+    "max_training_attempts": 50,
+    "max_proposals": 100,
+    "max_wall_clock_seconds": 21600,
+    "experiment_timeout_seconds": 900,
+    "test_timeout_seconds": 60,
+    "max_debug_repairs": 2,
+    "max_consecutive_harness_errors": 3,
+    "max_role_reprompts": 3
+  },
+  "convergence": {
+    "epsilon": 0.002,
+    "patience": 3
+  },
+  "replication_seeds": [1, 2]
+}

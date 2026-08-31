@@ -1,0 +1,244 @@
+--- parent/candidate.py
++++ candidate/candidate.py
+@@ -0,0 +1,180 @@
++import numpy as np
++import math
++import time
++import collections
++from src.models.fm_core import FMRanker
++from src.models.sampling import sample_bpr_pairs
++from src.experiments.contracts import CandidateOutput
++
++def run(context, parameters):
++    # Extract parameters
++    batch_size = parameters.get('batch_size', 4096)
++    epochs = parameters.get('epochs', 8)
++    k = parameters.get('k', 16)
++    learning_rate = parameters.get('learning_rate', 0.0005)
++    negatives_per_positive = parameters.get('negatives_per_positive', 2)
++    patience = parameters.get('patience', 2)
++    seed = parameters.get('seed', 42)
++
++    # Create RNG
++    rng = np.random.RandomState(seed)
++
++    # Compute user positive counts (train-only, leak-safe)
++    train_users = context.train_users
++    train_y = context.train_y
++    user_pos_counts = {}
++    for u, y in zip(train_users, train_y):
++        if y > 0:
++            user_pos_counts[u] = user_pos_counts.get(u, 0) + 1
++
++    # Precompute weight per training row (top-5 heuristic: full weight if user <=5 positives, else 0.2)
++    n_train = len(train_y)
++    row_weight = np.ones(n_train, dtype=np.float32)
++    for i in range(n_train):
++        u = train_users[i]
++        cnt = user_pos_counts.get(u, 0)
++        if cnt > 5:
++            row_weight[i] = 0.2
++
++    # Initialize FM model
++    model = FMRanker(context.field_dimension, embedding_dim=k, learning_rate=learning_rate, l2=1e-6, seed=seed)
++
++    # Prepare features (already index-coded)
++    train_x = context.train_x.astype(np.int32)
++    valid_x = context.valid_x.astype(np.int32) if context.valid_x is not None else None
++
++    best_primary = float('-inf')
++    best_state = None
++    best_valid_scores = None
++    best_epoch = -1
++    no_improve = 0
++    training_trace = []
++    n_pairs_total = 0  # Track total pairs across the run
++
++    for epoch in range(epochs):
++        # Resample pairs each epoch
++        pos_rows, neg_rows = sample_bpr_pairs(train_users, train_y, rng, negatives_per_positive)
++        n_pairs = len(pos_rows)
++        if n_pairs == 0:
++            break
++
++        n_pairs_total += n_pairs
++
++        # Shuffle pairs
++        perm = rng.permutation(n_pairs)
++        pos_rows = pos_rows[perm]
++        neg_rows = neg_rows[perm]
++
++        epoch_loss = 0.0
++        n_batches = math.ceil(n_pairs / batch_size)
++        for batch_idx in range(n_batches):
++            start = batch_idx * batch_size
++            end = min(start + batch_size, n_pairs)
++            if start >= end:
++                break
++
++            pos_idx = pos_rows[start:end]
++            neg_idx = neg_rows[start:end]
++
++            pos_features = train_x[pos_idx]
++            neg_features = train_x[neg_idx]
++
++            pos_scores = model.logits(pos_features)[0]
++            neg_scores = model.logits(neg_features)[0]
++
++            d = pos_scores - neg_scores
++            d = np.clip(d, -30.0, 30.0)
++
++            # BPR gradient: (sigmoid(d) - 1) * weight
++            sig = 1.0 / (1.0 + np.exp(-d))
++            grad_base = sig - 1.0
++            w = row_weight[pos_idx]
++            grad = grad_base * w / batch_size
++
++            # Compute gradients and apply
++            grad_pos = model.gradients(pos_features, grad)
++            grad_neg = model.gradients(neg_features, -grad)
++            model.apply_gradients(
++                grad_pos[0] + grad_neg[0],
++                grad_pos[1] + grad_neg[1],
++                grad_pos[2] + grad_neg[2]
++            )
++
++            # Track loss (softplus(-d) * weight) for diagnostics
++            loss = np.logaddexp(0, -d) * w
++            epoch_loss += np.sum(loss)
++
++        # Evaluate validation
++        if valid_x is not None:
++            valid_scores = model.predict(valid_x)
++        else:
++            valid_scores = None
++
++        # Compute validation metrics if available (safe unpack; runtime may return >2 values)
++        if valid_scores is not None and hasattr(context, 'evaluate_validation'):
++            eval_result = context.evaluate_validation(valid_scores)
++            if isinstance(eval_result, tuple):
++                gauc = eval_result[0]
++                ndcg = eval_result[1]
++            else:
++                gauc = eval_result
++                ndcg = eval_result
++            primary = (gauc + ndcg) / 2.0
++        else:
++            gauc = 0.0
++            ndcg = 0.0
++            primary = 0.0
++
++        training_trace.append({
++            'epoch': epoch,
++            'loss': epoch_loss / n_pairs if n_pairs > 0 else 0.0,
++            'gauc': gauc,
++            'ndcg': ndcg,
++            'primary': primary
++        })
++
++        # Early stopping
++        if primary > best_primary:
++            best_primary = primary
++            best_state = model.state_dict()
++            best_valid_scores = valid_scores
++            best_epoch = epoch
++            no_improve = 0
++        else:
++            no_improve += 1
++            if no_improve >= patience:
++                break
++
++    # Restore best model
++    if best_state is not None:
++        model.load_state_dict(best_state)
++    else:
++        best_state = model.state_dict()
++        if valid_x is not None:
++            best_valid_scores = model.predict(valid_x)
++
++    # Test scores
++    test_scores = None
++    if context.test_x is not None:
++        test_scores = model.predict(context.test_x.astype(np.int32))
++
++    # Random validation scores (diagnostic only)
++    random_valid_scores = None
++    if context.random_valid_x is not None:
++        random_valid_scores = model.predict(context.random_valid_x.astype(np.int32))
++
++    diagnostics = {
++        'best_epoch': best_epoch,
++        'best_primary': best_primary,
++        'weight_used': 'top5_heuristic',
++        'n_pairs_per_epoch': n_pairs_total / epochs if epochs > 0 else 0.0
++    }
++
++    return CandidateOutput(
++        validation_scores=best_valid_scores if best_valid_scores is not None else np.zeros(len(context.valid_x), dtype=np.float32),
++        checkpoint_state=best_state,
++        training_trace=training_trace,
++        diagnostics=diagnostics,
++        test_scores=test_scores,
++        random_validation_scores=random_valid_scores
++    )
+
+--- parent/test_candidate.py
++++ candidate/test_candidate.py
+@@ -0,0 +1,57 @@
++import unittest
++import numpy as np
++import math
++from unittest.mock import patch, MagicMock
++from src.models.fm_core import FMRanker
++from src.models.sampling import sample_bpr_pairs
++from src.experiments.contracts import CandidateOutput
++from candidate import run
++
++class DummyContext:
++    def __init__(self):
++        self.field_dimension = 20
++        self.train_users = np.array([0,0,0,1,1,2], dtype=np.int64)
++        self.train_y = np.array([1,0,1,1,0,0], dtype=np.float32)
++        self.train_x = np.random.randint(0, self.field_dimension, size=(len(self.train_users), 1)).astype(np.int32)
++        self.valid_x = np.random.randint(0, self.field_dimension, size=(4, 1)).astype(np.int32)
++        self.valid_users = np.array([0,1,2,0], dtype=np.int64)
++        self.test_x = np.random.randint(0, self.field_dimension, size=(3, 1)).astype(np.int32)
++        self.random_valid_x = np.random.randint(0, self.field_dimension, size=(5, 1)).astype(np.int32)
++    def evaluate_validation(self, scores):
++        # Runtime may return a tuple with more than 2 values; candidate must unpack safely.
++        return 0.5, 0.5, 0.5
++
++class TestCandidate(unittest.TestCase):
++    def test_run_outputs(self):
++        ctx = DummyContext()
++        params = {
++            'seed': 42,
++            'k': 16,
++            'learning_rate': 0.0005,
++            'epochs': 2,
++            'batch_size': 4,
++            'patience': 1,
++            'negatives_per_positive': 1,
++            'negatives_per_group': None,
++            'temperature': None
++        }
++        # Mock sample_bpr_pairs to return deterministic pairs for the synthetic training set
++        with patch('candidate.sample_bpr_pairs') as mock_sampler:
++            pos = np.array([0, 2])   # rows with label 1
++            neg = np.array([1, 4])   # rows with label 0
++            mock_sampler.return_value = (pos, neg)
++            result = run(ctx, params)
++        self.assertIsInstance(result, CandidateOutput)
++        self.assertEqual(len(result.validation_scores), len(ctx.valid_x))
++        self.assertTrue(np.all(np.isfinite(result.validation_scores)))
++        self.assertEqual(len(result.test_scores), len(ctx.test_x))
++        self.assertTrue(np.all(np.isfinite(result.test_scores)))
++        self.assertEqual(len(result.random_validation_scores), len(ctx.random_valid_x))
++        self.assertTrue(np.all(np.isfinite(result.random_validation_scores)))
++        self.assertIsInstance(result.checkpoint_state, dict)
++        self.assertTrue(all(isinstance(v, np.ndarray) for v in result.checkpoint_state.values()))
++        self.assertIsInstance(result.training_trace, list)
++        self.assertTrue(all('epoch' in d and 'loss' in d for d in result.training_trace))
++
++if __name__ == '__main__':
++    unittest.main()

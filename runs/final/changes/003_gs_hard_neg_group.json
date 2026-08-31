@@ -1,0 +1,21 @@
+{
+  "candidate_id": "gs_hard_neg_group",
+  "files": [
+    {
+      "lines_added": 151,
+      "lines_deleted": 0,
+      "path": "candidate.py",
+      "status": "added"
+    },
+    {
+      "lines_added": 66,
+      "lines_deleted": 0,
+      "path": "test_candidate.py",
+      "status": "added"
+    }
+  ],
+  "iteration": 3,
+  "lines_added": 217,
+  "lines_deleted": 0,
+  "patch_path": "changes/003_gs_hard_neg_group.patch"
+}

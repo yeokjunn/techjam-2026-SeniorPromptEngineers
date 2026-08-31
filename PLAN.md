@@ -23,7 +23,7 @@ Use one shared memory and one OpenAI client. Researcher, critic, builder, and de
 ### 1. OpenAI research runtime
 
 - Add a provider interface with an OpenAI Responses API implementation.
-- Default to configurable `gpt-5.5`, medium reasoning, low verbosity, `store=False`.
+- Default to a configurable model (`gpt-5.4-nano` in `configs/ranking_losses.json`), low reasoning, low verbosity, `store=False`.
 - Read `OPENAI_API_KEY` only from the environment; never log it.
 - Use JSON-schema Structured Outputs for:
   - `ResearchDecision`
@@ -157,9 +157,9 @@ python -m src.agent.controller --config configs/baseline.json
 python -m src.agent.controller --config configs/ranking_losses.json
 ```
 
-The research configuration defaults to 50 candidate iterations/training attempts,
-100 proposals, two debugger repairs per candidate, 150,000 total LLM tokens, and
-the official six-hour ceiling.
+The research configuration defaults to 50 candidate iterations, 50 training
+attempts, 100 proposals, two debugger repairs per candidate, a 2,500,000-token
+engineering guard, and the official six-hour ceiling.
 
 ## Test Plan
 

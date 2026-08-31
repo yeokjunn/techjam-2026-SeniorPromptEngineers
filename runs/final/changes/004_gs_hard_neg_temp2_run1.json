@@ -1,0 +1,21 @@
+{
+  "candidate_id": "gs_hard_neg_temp2_run1",
+  "files": [
+    {
+      "lines_added": 151,
+      "lines_deleted": 0,
+      "path": "candidate.py",
+      "status": "added"
+    },
+    {
+      "lines_added": 25,
+      "lines_deleted": 0,
+      "path": "test_candidate.py",
+      "status": "added"
+    }
+  ],
+  "iteration": 4,
+  "lines_added": 176,
+  "lines_deleted": 0,
+  "patch_path": "changes/004_gs_hard_neg_temp2_run1.patch"
+}

@@ -119,7 +119,7 @@ python -m src.agent.controller --config configs/ranking_losses.json
 `.env` is loaded automatically and ignored by Git. An `OPENAI_API_KEY` already
 set in PowerShell or CI takes precedence over the file.
 
-The research run uses `gpt-5.5` with medium reasoning and low verbosity by
+The research run uses `gpt-5.4-nano` with low reasoning and low verbosity by
 default. Edit `configs/ranking_losses.json` to use a model available to your
 OpenAI project. Full benchmark configs use the official 50-iteration and
 six-hour caps. Per-iteration execution is capped at 432 seconds so 50 iterations
@@ -332,78 +332,75 @@ training. Optional low-fidelity epoch screening is configured under
 `research.search.low_fidelity` and remains disabled until its promotion threshold
 has been calibrated on validation-only development runs.
 
-## Latest verified baseline
+## Baseline reproduction
 
-Run `20260829T041834051989Z_baseline` completed all three experiments with zero manual
-interventions:
+The committed final run pins the official baseline through its gate:
+[`runs/final/baseline_gate.json`](runs/final/baseline_gate.json) records the
+official FM validation baseline primary **0.6016** (published GAUC 0.6674 /
+nDCG@5 0.5357) that every iteration is scored against. A local end-to-end
+retrain of the untouched starter-kit FM reproduces it within noise (best-epoch
+validation primary 0.6015). Ladder runs write only gitignored stdout and
+checkpoints, so the pinned gate record above is the committed baseline
+evidence.
 
-| Experiment | GAUC | nDCG@5 | Primary |
-|---|---:|---:|---:|
-| Random, seed 0 | 0.4990 | 0.4663 | 0.4827 |
-| Item popularity | 0.6387 | 0.5227 | 0.5807 |
-| Official FM, seed 0 | 0.6671 | 0.5358 | **0.6015** |
+## Final submission run (committed)
 
-The FM result reproduces the published validation baseline of `0.6016` within
-rounding/noise. The run used 3 iterations, 0 LLM tokens, 0 manual interventions,
-and 32.02 seconds wall-clock. Source:
-[`summary.json`](runs/20260829T041834051989Z_baseline/summary.json).
+The designated final run is committed at [`runs/final/`](runs/final/) — a copy of
+run `20260831T115602777469Z_research` with local absolute paths rewritten to
+repo-relative form for publication; provenance paths inside its JSON records
+still reference that original run id. Model checkpoints (`artifacts/`, `*.npz`)
+are deliberately excluded; everything else ships: the full iteration ledger,
+per-role prompts and outputs, candidate patches, stdout, rendered reports, and
+the submission CSV. The agent-generated code for every iteration is committed at
+[`generated_experiments/final/`](generated_experiments/final/).
 
-## Latest verified autonomous integration run
+The run completed with `stop_reason: converged` at **iteration 7 of 50** under
+the official ε = 0.002, patience-3 rule — before the 50-iteration and six-hour
+limits. It was driven by `deepseek-v4-flash` on an OpenAI-compatible endpoint
+(frozen in [`runs/final/run_config.json`](runs/final/run_config.json)).
+Recorded resource use: **579,031 LLM tokens** (427,391 input / 151,640
+output / 314,880 cached), **1,906 s (0.53 h) wall-clock**, 11 training attempts,
+11 proposal attempts, **0 GPU-hours**, and **0 manual interventions**
+([`resources.json`](runs/final/resources.json)).
 
-Latest local live run `kj_20260831T020238331867Z_research` completed with
-`stop_reason: converged` at iteration 12 under the official epsilon `0.002`,
-patience-3 rule. It used 13 training attempts, 44 proposal attempts, 1,855,199
-reported LLM tokens, 3,664.28 seconds wall-clock, 0 GPU-hours, and 0 manual
-interventions. It stopped by convergence, not by the 50-iteration or six-hour
-hard limits.
+| Iteration | Candidate | Family | Status | Primary |
+|---:|---|---|---|---:|
+| 1 | `bpr_lambda_top` | bpr | failed after 2 bounded repairs | — |
+| 2 | `bpr_topk_lambda_corrected` | bpr | failed after 2 bounded repairs | — |
+| 3 | `gs_hard_neg_group` | group_softmax | failed after 2 bounded repairs | — |
+| 4 | `gs_hard_neg_temp2_run1` | group_softmax | success | 0.6040 |
+| 5 | `gs_hard_neg_temp2_run1_seed1` | group_softmax | success (seed replication) | 0.6040 |
+| 6 | `gs_hard_neg_temp2_run1_seed2` | group_softmax | success (seed replication) | **0.6042** |
+| 7 | `hist_user_tab_tabcross_bpr_v1` | history_features | success — third stagnant success; convergence latched | 0.6028 |
 
-| Iteration | Candidate | Family | Status | Primary | Notes |
-|---:|---|---|---|---:|---|
-| 1 | `bpr_temp_clipped_2neg_historydecay_kgap` | `bpr` | success | 0.6036 | Initial BPR lead over the official FM validation baseline. |
-| 2 | `bpr_temp_clipped_2neg_historydecay_kgap_seed1` | `bpr` | success | 0.6033 | Exact seed replication. |
-| 3 | `bpr_temp_clipped_2neg_historydecay_kgap_seed2` | `bpr` | success | **0.6037** | Best single checkpoint. |
-| 4 | `gs_group_softmax_temp_1_seed123_lr5e4_bs1024_k16_k4_ep6_pat2` | `group_softmax` | success | 0.6033 | Different objective family, below best. |
-| 5 | `hist_feat_bpr_prior_smooth_v1` | `history_features` | success | 0.6027 | Preserved history feature groups but did not improve top-line score. |
-| 6-11 | multi-task and BPR probes | mixed | failed/rejected | — | Failures and critic rejections were logged but did not count as convergence evidence. |
-| 12 | `bpr_stratified_neg_same_tab_v1` | `bpr` | success | 0.6033 | Third stagnant non-replication success; official convergence verdict latched. |
+Validation results against the official baseline (GAUC 0.6674 / nDCG@5 0.5357 /
+primary 0.6016):
 
-Best single-checkpoint validation metrics from that run:
+| Checkpoint | GAUC | nDCG@5 | Primary | Δ primary |
+|---|---:|---:|---:|---:|
+| Best single (`gs_hard_neg_temp2_run1_seed2`) | 0.6710 | 0.5374 | 0.6042 | +0.0026 |
+| 4-candidate blended ensemble — designated submission | 0.6717 | 0.5379 | **0.6048** | **+0.0032** |
 
-| GAUC | nDCG@5 | Primary | Delta vs official 0.6016 |
-|---:|---:|---:|---:|
-| 0.6701 | 0.5373 | **0.6037** | **+0.0021** |
+Applying the judging formula on validation, the ensemble scores
+mean(ΔGAUC +0.0043, ΔnDCG@5 +0.0022) = **+0.0032**. Hidden-test deltas are not
+computable locally — the official hidden-test baseline is primary 0.5946
+(GAUC 0.6610 / nDCG@5 0.5282) — and no hidden-test signal guided selection.
 
-The final ensemble blended four diverse successful candidates and reached validation
-primary `0.6048` with GAUC `0.6718` and nDCG@5 `0.5378`. The label-free
-submission gate passed on 170,588 test rows. The run artifacts remain generated
-outputs under `runs/` and are intentionally not committed in this PR. Source:
-[`summary.json`](runs/kj_20260831T020238331867Z_research/summary.json).
+The designated submission is [`runs/final/submission.csv`](runs/final/submission.csv):
+the blended-ensemble scores on all 170,588 test rows, gate-checked label-free
+(SHA-256 `dcdfc43d…85218c2`, see [`gate_done.json`](runs/final/gate_done.json);
+the gate never reads test labels — `scored: false`).
 
-This run motivated the current harness fixes: convergence is reported over
-successful non-replication research scores, seed replications remain variance
-evidence, failed/rejected candidates do not count as stagnation evidence, the
-policy uses a deterministic 70/30 explore/exploit schedule, and the Debugger is
-explicitly forbidden from repairing history-feature failures by disabling the
-approved `use_*` signals.
-
-Previously committed integration run `20260829T060130480764Z_research` executed
-the real BPR trainer and the label-free submission gate:
-
-| GAUC | nDCG@5 | Primary | Delta vs official 0.6016 |
-|---:|---:|---:|---:|
-| 0.6679 | 0.5360 | **0.6019** | **+0.0003** |
-
-It used 1 scored iteration/training attempt, 2,440 scripted tokens, 141.31 seconds,
-0 GPU-hours, and 0 manual interventions. This is an offline integration result,
-not a converged live-LLM claim. Sources: [`summary.json`](runs/20260829T060130480764Z_research/summary.json),
-[`resources.json`](runs/20260829T060130480764Z_research/resources.json), and
-[`results.json`](runs/20260829T060130480764Z_research/results.json).
-
-Reproduce its rendered report with:
+Render the report bundle locally:
 
 ```bash
-python -m src.agent.report runs/20260829T060130480764Z_research
+python -m src.agent.report runs/final
 ```
+
+Rendered summaries are committed at [`runs/final/results.md`](runs/final/results.md)
+(results table, per-role token accounting, compute, convergence) and
+[`runs/final/journal.md`](runs/final/journal.md) (per-iteration hypothesis,
+rationale, evidence links, and code diff).
 
 ## Architecture
 
@@ -419,13 +416,18 @@ Conductor: research_controller.ResearchLoop
 
 ## Limitations and next work
 
-- The latest live-LLM run converged locally and passed the label-free submission
-  gate; hidden-test score remains unknown and must not guide model selection.
+- The final committed run ([`runs/final/`](runs/final/)) converged locally and
+  passed the label-free submission gate; hidden-test score remains unknown and
+  must not guide model selection.
 - Validation lift remains modest and close to seed variance, so future work
   should prioritize more diverse, leakage-safe history contrast and calibrated
   score blending rather than relying on the official FM-like baseline signal.
-- Multi-task proposals are registered but the latest live run exposed reliability
-  failures in generated auxiliary-head implementations that still need hardening.
+- Multi-task proposals are registered but generated auxiliary-head
+  implementations have shown reliability failures in earlier live runs and still
+  need hardening.
+- A later local run (`20260831T113413137484Z_research`, not committed) hit the
+  harness error breaker at iteration 2; its frontier is worth investigating
+  before any longer unattended run.
 
 ## Team contributions
 

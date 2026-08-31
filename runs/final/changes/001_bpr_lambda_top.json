@@ -1,0 +1,21 @@
+{
+  "candidate_id": "bpr_lambda_top",
+  "files": [
+    {
+      "lines_added": 109,
+      "lines_deleted": 0,
+      "path": "candidate.py",
+      "status": "added"
+    },
+    {
+      "lines_added": 56,
+      "lines_deleted": 0,
+      "path": "test_candidate.py",
+      "status": "added"
+    }
+  ],
+  "iteration": 1,
+  "lines_added": 165,
+  "lines_deleted": 0,
+  "patch_path": "changes/001_bpr_lambda_top.patch"
+}

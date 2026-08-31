@@ -1,0 +1,146 @@
+{
+  "data_card_path": "runs/20260831T115602777469Z_research/DATA_CARD.md",
+  "data_dir": "data/KuaiRand-Pure/data",
+  "feature_candidates": [
+    {
+      "description": "One-hot or embedding of tab_ID added to the scoring function as an additive bias term (implementable in BPR or group_softmax as a per-tab scalar).",
+      "expected_impact": "Moderate-high; directly models tab-level long_view rate differences (e.g., tab 4 at 48.93% vs tab 0 at 4.22% in train).",
+      "family": "bpr",
+      "implementation_scope": "Extend src.models.features to include tab_ID embedding; join training rows to tab distribution; no extra data files needed.",
+      "leakage_risk": "Low; tab is observed at exposure time and is not a future aggregate.",
+      "name": "tab_onehot_bias"
+    },
+    {
+      "description": "Log-binned video duration (e.g., 5\u201310 buckets) plus a binary indicator for duration==0, concatenated with item embedding.",
+      "expected_impact": "Small-to-moderate; zero-duration videos (24k rows) may need dedicated handling to avoid malformed duration arithmetic.",
+      "family": "history_features",
+      "implementation_scope": "Transform video feature table column 'duration' into bucket IDs; add missing indicator; include in candidate set for history_features family.",
+      "leakage_risk": "Low; duration is a static video attribute, no temporal aggregation.",
+      "name": "duration_bucket_zero_indicator"
+    },
+    {
+      "description": "For each train row, count of user's long_views in the last K older exposures (e.g., last 20 or 50 interactions) before that row, optionally normalized by total prior exposures.",
+      "expected_impact": "Moderate-high for nDCG@5; captures short-term user interest drift that static user terms cannot.",
+      "family": "history_features",
+      "implementation_scope": "Sort train rows by user_id, timestamp (hourmin); compute rolling counts per user; cache as a precomputed feature column.",
+      "leakage_risk": "Low if strictly past-only; must ensure no future/full-period aggregation is used (no video stats table).",
+      "name": "recency_weighted_prior_longview_per_user"
+    }
+  ],
+  "findings": [
+    {
+      "evidence": "DATA CARD Tab Breakdown (train): per-tab click and long_view rates range from ~0% to ~61% click and ~0% to ~49% long_view.",
+      "implication": "Adding a tab embedding/bias term may capture large conditional mean differences that item-only features miss, likely recovers a meaningful slice of within-user ranking signal.",
+      "leakage_safe": true,
+      "observation": "In train, tab 4 has 61.96% click and 48.93% long_view, tab 1 has 52.97% click and 38.61% long_view, while tabs 0,6,8,11,14 are far lower; tab distribution is heavily imbalanced (tab 1 73.16% of rows).",
+      "title": "Tab-specific engagement is strong"
+    },
+    {
+      "evidence": "DATA CARD Data Quality: '239 videos with zero duration (24,076 train rows affected)'.",
+      "implication": "Binning duration into coarse log-spaced buckets plus a separate missing/zero indicator may prevent the model from conflating missingness with real short-form content.",
+      "leakage_safe": true,
+      "observation": "239 videos have zero duration affecting 24,076 train rows; if duration is treated as a normal numeric feature, they may bias learned item embeddings.",
+      "title": "Zero-duration videos are a distinct subpopulation"
+    },
+    {
+      "evidence": "DATA CARD 'Measured Dead Ends': static user terms have zero intra-group effect; training log allows timestamp-ordered per-user history construction.",
+      "implication": "The key gains likely come from user\u00d7item context, e.g., recency-weighted prior long_view/click within the same tab or category, which can be built strictly from the training log.",
+      "leakage_safe": true,
+      "observation": "First-order user-only terms contribute zero to within-user ranking, as do static features (primary stays at ~0.5950 for 5-feature default); history signals are per-interaction and can vary within a user's ranked list.",
+      "title": "User history aggregates are the most feasible leakage-safe differentiation"
+    }
+  ],
+  "iteration": 3,
+  "plan": {
+    "expected_artifacts": [
+      "A compact EDA table summarizing long_view rate by tab, duration bin, and user_active_degree (train only).",
+      "A feature importance report from a quick baseline model (e.g., logistic regression on few features) to rank candidate features.",
+      "A correlation matrix between new candidate features and long_view, with leakage flags noted.",
+      "A short summary of which candidate features are implementable within bpr/group_softmax/history_features families and their expected impact."
+    ],
+    "feature_hypotheses": [
+      "Tab-specific bias terms (e.g., one-hot or embedding for tab_ID) as features will improve ranking, especially for tab 1 and tab 4 where engagement is high and distinct.",
+      "Video duration normalized by user's average watched duration or binned into log-scale could capture attention differences; zero-duration videos should be treated as missing with a learned indicator.",
+      "User history aggregates over video categories (e.g., average long_view/click ratio per category) will provide informative user-level preferences for ranking.",
+      "Recency-weighted user interaction counts (e.g., number of long_views in the last N exposures) could capture short-term drift and improve nDCG@5."
+    ],
+    "leakage_risks": [
+      "Video statistics table is a period aggregate over full-platform traffic (ratio ~4892:1 to logged exposures); using it directly could leak unseen exposure data and inflate metrics.",
+      "Aggregating user history across the entire training period may inadvertently use future interactions relative to a given train row, causing temporal leakage if not strictly applied per user-time.",
+      "Zero-duration videos (239 videos, ~24k train rows) may have special handling but treating them as normal could mislead model if missingness is informative.",
+      "Row-order tie-breaking in stable sort means any feature that produces ties may affect nDCG@5; features with many ties should be avoided or randomized."
+    ],
+    "objective": "Plan one leakage-safe EDA pass to uncover tab-specific engagement patterns, duration effects, and user history signals that can be turned into features for the bpr, group_softmax, history_features, or multi_task ranking families, without altering the official evaluator or split.",
+    "questions": [
+      "How does long_view rate vary across tabs after controlling for user, and does tab-specific bias explain variance beyond item features?",
+      "Do videos with zero duration systematically differ in long_view rate, and does the interaction between duration and other features improve ranking?",
+      "Which user history features (e.g., prior long_view, click, like rates per video category or tab) have the strongest predictive signal for future long_view?",
+      "Is there a meaningful within-user temporal pattern (e.g., time-of-day or session position) that correlates with long_view, beyond simple item features?"
+    ],
+    "required_inputs": [
+      "training log with user_id, video_id, tab, timestamp, and label columns (long_view, is_click)",
+      "video feature table (duration, category, upload_type, etc.) with user feature table (active_degree, etc.)",
+      "user interaction history derived from the training log only (no test or validation leakage)",
+      "existing baseline embedding/feature configuration to compare against"
+    ]
+  },
+  "report": {
+    "feature_candidates": [
+      {
+        "description": "One-hot or embedding of tab_ID added to the scoring function as an additive bias term (implementable in BPR or group_softmax as a per-tab scalar).",
+        "expected_impact": "Moderate-high; directly models tab-level long_view rate differences (e.g., tab 4 at 48.93% vs tab 0 at 4.22% in train).",
+        "family": "bpr",
+        "implementation_scope": "Extend src.models.features to include tab_ID embedding; join training rows to tab distribution; no extra data files needed.",
+        "leakage_risk": "Low; tab is observed at exposure time and is not a future aggregate.",
+        "name": "tab_onehot_bias"
+      },
+      {
+        "description": "Log-binned video duration (e.g., 5\u201310 buckets) plus a binary indicator for duration==0, concatenated with item embedding.",
+        "expected_impact": "Small-to-moderate; zero-duration videos (24k rows) may need dedicated handling to avoid malformed duration arithmetic.",
+        "family": "history_features",
+        "implementation_scope": "Transform video feature table column 'duration' into bucket IDs; add missing indicator; include in candidate set for history_features family.",
+        "leakage_risk": "Low; duration is a static video attribute, no temporal aggregation.",
+        "name": "duration_bucket_zero_indicator"
+      },
+      {
+        "description": "For each train row, count of user's long_views in the last K older exposures (e.g., last 20 or 50 interactions) before that row, optionally normalized by total prior exposures.",
+        "expected_impact": "Moderate-high for nDCG@5; captures short-term user interest drift that static user terms cannot.",
+        "family": "history_features",
+        "implementation_scope": "Sort train rows by user_id, timestamp (hourmin); compute rolling counts per user; cache as a precomputed feature column.",
+        "leakage_risk": "Low if strictly past-only; must ensure no future/full-period aggregation is used (no video stats table).",
+        "name": "recency_weighted_prior_longview_per_user"
+      }
+    ],
+    "findings": [
+      {
+        "evidence": "DATA CARD Tab Breakdown (train): per-tab click and long_view rates range from ~0% to ~61% click and ~0% to ~49% long_view.",
+        "implication": "Adding a tab embedding/bias term may capture large conditional mean differences that item-only features miss, likely recovers a meaningful slice of within-user ranking signal.",
+        "leakage_safe": true,
+        "observation": "In train, tab 4 has 61.96% click and 48.93% long_view, tab 1 has 52.97% click and 38.61% long_view, while tabs 0,6,8,11,14 are far lower; tab distribution is heavily imbalanced (tab 1 73.16% of rows).",
+        "title": "Tab-specific engagement is strong"
+      },
+      {
+        "evidence": "DATA CARD Data Quality: '239 videos with zero duration (24,076 train rows affected)'.",
+        "implication": "Binning duration into coarse log-spaced buckets plus a separate missing/zero indicator may prevent the model from conflating missingness with real short-form content.",
+        "leakage_safe": true,
+        "observation": "239 videos have zero duration affecting 24,076 train rows; if duration is treated as a normal numeric feature, they may bias learned item embeddings.",
+        "title": "Zero-duration videos are a distinct subpopulation"
+      },
+      {
+        "evidence": "DATA CARD 'Measured Dead Ends': static user terms have zero intra-group effect; training log allows timestamp-ordered per-user history construction.",
+        "implication": "The key gains likely come from user\u00d7item context, e.g., recency-weighted prior long_view/click within the same tab or category, which can be built strictly from the training log.",
+        "leakage_safe": true,
+        "observation": "First-order user-only terms contribute zero to within-user ranking, as do static features (primary stays at ~0.5950 for 5-feature default); history signals are per-interaction and can vary within a user's ranked list.",
+        "title": "User history aggregates are the most feasible leakage-safe differentiation"
+      }
+    ],
+    "recommended_next_focus": "Implement a tab embedding baseline (BPR) and a leakage-safe recency-weighted prior long_view feature to test whether either lifts primary above 0.6016; verify no temporal leakage by using only past exposures per user.",
+    "summary": "EDA plan scoped to training-only evidence: tab, duration, and per-user history signals for within-user long_view ranking, with explicit leakage caveats around the full-platform video statistics table and temporal history aggregation.",
+    "ui_notes": [
+      "Show train tab-rate table prominently; tab 4/1 vs tab 0/6 difference is the clearest single-variable signal.",
+      "Flag video statistics table as leaky (ratio ~4892:1) and exclude it from the next exploration round.",
+      "Monitor nDCG@5 tie effects: tab/duration buckets introduce ties; consider tie-aware evaluation or add small random noise to break stable-sort ties."
+    ]
+  },
+  "status": "completed"
+}

@@ -1,0 +1,46 @@
+{
+  "status": "ok",
+  "blending_method": "rank",
+  "metrics": {
+    "GAUC": 0.6717091212793168,
+    "nDCG@5": 0.5379154409853121,
+    "primary": 0.6048122811323144,
+    "users": 22377.0,
+    "rows": 124909.0
+  },
+  "single_best_primary": 0.6041701436042786,
+  "ensemble_primary": 0.6048122811323144,
+  "delta_primary": 0.0006421375280358799,
+  "weights": {
+    "gs_hard_neg_temp2_run1_seed2 (group_softmax)": 0.30303030303030304,
+    "gs_hard_neg_temp2_run1_seed1 (group_softmax)": 0.1816120387548959,
+    "gs_hard_neg_temp2_run1 (group_softmax)": 0.25767882910740053,
+    "hist_user_tab_tabcross_bpr_v1 (history_features)": 0.25767882910740053
+  },
+  "candidates": [
+    {
+      "experiment_id": "gs_hard_neg_temp2_run1_seed2",
+      "family": "group_softmax",
+      "primary": 0.6041701436042786,
+      "weight": 0.30303030303030304
+    },
+    {
+      "experiment_id": "gs_hard_neg_temp2_run1_seed1",
+      "family": "group_softmax",
+      "primary": 0.6040254831314087,
+      "weight": 0.1816120387548959
+    },
+    {
+      "experiment_id": "gs_hard_neg_temp2_run1",
+      "family": "group_softmax",
+      "primary": 0.6040176749229431,
+      "weight": 0.25767882910740053
+    },
+    {
+      "experiment_id": "hist_user_tab_tabcross_bpr_v1",
+      "family": "history_features",
+      "primary": 0.6028196811676025,
+      "weight": 0.25767882910740053
+    }
+  ]
+}

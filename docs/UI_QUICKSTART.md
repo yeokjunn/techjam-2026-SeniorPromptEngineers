@@ -1,8 +1,7 @@
 # UI and live-agent quickstart
 
 This guide starts the read-only Streamlit dashboard and a bounded autonomous
-research run in two terminals. Run every command from the repository root on
-the `feat/light-ui` branch.
+research run in two terminals. Run every command from the repository root.
 
 ## What is ready
 
@@ -16,24 +15,17 @@ The current development loop can:
   metrics, errors, repairs, and completed iteration records; and
 - expose those artifacts in the dashboard with a five-second active-run refresh.
 
-This is ready for observing development runs. It is not yet the final competition
-workflow: final submission gating and report generation remain stubs, and history
-features are not implemented. Those gaps do not prevent a research run or live UI
-inspection.
+This is ready for observing development runs. Final submission gating and report
+generation are implemented — see the committed [`runs/final/`](../runs/final/)
+artifacts (`results.md`, `journal.md`, `submission.csv`) — but the dashboard
+itself remains read-only observation tooling and cannot drive a run.
 
 ## 1. Open the repository
 
-In PowerShell:
+In PowerShell, from your local clone:
 
 ```powershell
-cd "C:\Users\Admin\OneDrive - Nanyang Technological University\2026_projects\tiktok_techjam_clean\techjam-2026-SeniorPromptEngineers"
-git branch --show-current
-```
-
-The branch should be:
-
-```text
-feat/light-ui
+cd <repository-root>
 ```
 
 ## 2. Install dependencies
@@ -67,8 +59,8 @@ Never commit `.env`, paste the key into terminal logs, or place it in a JSON
 configuration. The runner loads `.env` without overriding an existing shell or
 CI environment variable.
 
-The default model in the smoke configuration is `gpt-5.5`. If that model is not
-available to your API project, change only the `llm.model` value in
+The default model in the smoke configuration is `gpt-5.4-nano`. If that model is
+not available to your API project, change only the `llm.model` value in
 `configs/ranking_losses_smoke.json` to a model your project can use.
 
 ## 4. Start the UI in terminal A
@@ -97,8 +89,8 @@ aggregate output under `artifacts/ui/`.
 
 ## 5. Start a bounded agent run in terminal B
 
-The recommended first run is limited to two candidate/training attempts, 30
-minutes, and 30,000 total LLM tokens:
+The recommended first run is bounded to 20 iterations, 8,640 seconds (2.4 h) of
+wall-clock, and 100,000 total LLM tokens:
 
 ```powershell
 python -m src.agent.controller --config configs/ranking_losses_smoke.json
@@ -158,8 +150,9 @@ After the two-iteration smoke run behaves correctly:
 python -m src.agent.controller --config configs/ranking_losses.json
 ```
 
-The full configuration allows up to 50 iterations/training attempts, six hours,
-and 150,000 LLM tokens. Use it only when you intentionally want a benchmark run.
+The full configuration allows up to 50 iterations, 100 proposals, six hours of
+wall-clock, and a 2,500,000-token engineering guard. Use it only when you
+intentionally want a benchmark run.
 
 ## Resume an interrupted research run
 

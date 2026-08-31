@@ -1,0 +1,284 @@
+# HTML Slides
+
+`Yes I currently have time to maintain, so PR welcomed.`
+
+[![Version](https://img.shields.io/github/v/tag/bluedusk/html-slides?label=version)](https://github.com/bluedusk/html-slides/releases) [![frontend-slides compatible](https://img.shields.io/badge/frontend--slides-v2.0.0_compatible-blue)](https://github.com/zarazhangrui/frontend-slides) [![Agent Skills](https://img.shields.io/badge/Agent_Skills-compatible-green)](https://agentskills.io) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+A skill for creating stunning, animation-rich HTML presentations — from scratch, by converting PowerPoint files, or by converting any existing HTML. Works with AI coding agents (Claude Code, Gemini CLI, GitHub Copilot, OpenAI Codex).
+
+**[htmlslides.com](https://htmlslides.com)** | **[Quick Start](QUICKSTART.md)** | **[Live Demo: Introducing HTML Slides](https://bluedusk.github.io/html-slides/introducing-html-slides.html)**
+
+## What This Does
+
+**HTML Slides** helps non-designers create beautiful web presentations without knowing CSS or JavaScript.
+
+> **Default mode: Pro (Obsidian)** — Just say "create a presentation about [topic]" and you get interactive components, charts, and polished animations out of the box. No mode selection needed.
+
+It also offers a **Vibe mode** with 12 creative themes for non-technical presentations — say "create a vibe presentation" to use it.
+
+### Key Features
+
+- **Zero Dependencies** — Single HTML files with inline CSS/JS. No npm, no build tools, no frameworks.
+- **Agent Skills Standard** — One install works across Claude Code, Gemini CLI, GitHub Copilot, and OpenAI Codex.
+- **Visual Style Discovery** — Can't articulate design preferences? Pick from generated visual previews.
+- **Rich Component Library** — Flip cards, expandable cards, code blocks, architecture flows, stats cards, charts (via Chart.js), tables, timelines, and more.
+- **PPT Conversion** — Convert existing PowerPoint files to web, preserving all images and content.
+- **HTML Conversion** — Convert any HTML file (reveal.js, Marp, Google Slides exports, articles, generic pages) into HTMLSlides format.
+- **Anti-AI-Slop** — Curated distinctive styles that avoid generic AI aesthetics.
+
+## Installation
+
+### Quick Install (Recommended)
+
+```bash
+curl -sSL https://raw.githubusercontent.com/bluedusk/html-slides/main/remote-install.sh | bash
+```
+
+This one command clones the repo, detects your agents, and sets up everything. **Run the same command again to update.**
+
+### Install from cloned repo
+
+```bash
+git clone https://github.com/bluedusk/html-slides.git
+cd html-slides
+./install.sh
+```
+
+Interactive installer with user-level vs project-level scope choice.
+
+### Manual Install
+
+Pick your agent(s) below. Replace `/path/to/html-slides` with the actual path to your cloned repo.
+
+#### Claude Code
+
+**Via plugin marketplace (recommended):**
+
+```bash
+claude plugin marketplace add bluedusk/html-slides
+claude plugin install html-slides
+```
+
+**Via skill symlink:**
+
+```bash
+# User-level (available in all projects)
+ln -s /path/to/html-slides ~/.claude/skills/html-slides
+
+# Project-level (available only in current project)
+ln -s /path/to/html-slides .claude/skills/html-slides
+```
+
+#### Gemini CLI
+
+```bash
+# User-level (available in all projects)
+ln -s /path/to/html-slides ~/.gemini/skills/html-slides
+
+# Project-level (available only in current project)
+ln -s /path/to/html-slides .gemini/skills/html-slides
+```
+
+#### GitHub Copilot
+
+```bash
+# Project-level only (Copilot reads .github/skills/)
+ln -s /path/to/html-slides .github/skills/html-slides
+```
+
+#### OpenAI Codex
+
+```bash
+# User-level (available in all projects)
+ln -s /path/to/html-slides ~/.codex/skills/html-slides
+
+# Project-level (available only in current project)
+ln -s /path/to/html-slides .codex/skills/html-slides
+```
+
+All agents also support the universal `~/.agents/skills/` path as defined by the [Agent Skills standard](https://agentskills.io/specification).
+
+### Updating
+
+Re-run the install command to update:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/bluedusk/html-slides/main/remote-install.sh | bash
+```
+
+For Claude Code plugin specifically:
+
+```bash
+claude plugin marketplace update html-slides
+claude plugin update html-slides@html-slides
+```
+
+Restart your agent after updating.
+
+## Two Modes
+
+HTML Slides offers two modes. **Pro is the default** — if you don't specify a mode, you get the full interactive component system.
+
+### Pro Mode (Default)
+
+Structured interactive components with deterministic output. The AI maps your content to the right component type automatically. Multiple themes available — same components, different visual styles.
+
+> "Create a presentation about [topic]"
+
+or specify a theme:
+
+> "Create a presentation about [topic] using the Excalidraw theme"
+
+**Available themes:**
+
+| Theme | Vibe |
+|-------|------|
+| Obsidian (default) | Dark background, blue/green/orange accents |
+| Excalidraw Light | Hand-drawn, sketchy, whiteboard on white |
+| Excalidraw Dark | Hand-drawn, sketchy, whiteboard on dark |
+| Editorial Light | Luminous, editorial, tech-forward minimalism |
+| Binary Architect | Hacker-elite, sharp corners, neon on void-black |
+
+**Components included:**
+
+| Component | What it does |
+|-----------|-------------|
+| Title Slide | Opening with hero text and rainbow gradient |
+| Statement | Bold centered text with glow |
+| Flip Cards | 2x2 grid, click to reveal back side |
+| VS/Comparison | Side-by-side with visual contrast |
+| Architecture Flow | Connected boxes showing a pipeline |
+| Code Block | Syntax-highlighted terminal window |
+| Auth Flip Compare | Before/after with red/green flip cards |
+| Stats Cards | Large animated numbers |
+| Expandable Cards | Click to reveal hidden details |
+| Status Timeline | Vertical list with colored status dots |
+| Table | Styled data table with hover highlights |
+| Chart | 8 chart types via Chart.js (bar, line, pie, doughnut, radar, polar, scatter, bubble) |
+| CTA Box | Call-to-action with resource links |
+
+Best for: technical talks, product demos, data-rich presentations, API overviews.
+
+### Vibe Mode — Creative Themes
+
+AI interprets your content freely with distinctive visual styles. No structured templates — the AI decides the best layout for your content.
+
+> "Create a vibe presentation about [topic]"
+
+The skill will:
+1. Ask about your content (slides, messages, images)
+2. Ask about the feeling you want (impressed? excited? calm?)
+3. Generate 3 visual style previews to compare
+4. Create the full presentation in your chosen style
+
+**Available themes:**
+
+| Category | Themes |
+|----------|--------|
+| Dark | Bold Signal, Electric Studio, Creative Voltage, Dark Botanical |
+| Light | Notebook Tabs, Pastel Geometry, Split Pastel, Vintage Editorial |
+| Specialty | Neon Cyber, Terminal Green, Swiss Modern, Paper & Ink |
+
+Best for: pitch decks, keynotes, non-technical presentations.
+
+### Convert a PowerPoint
+
+> "Convert my presentation.pptx to a web slideshow"
+
+### Convert Any HTML
+
+> "Convert my-page.html to a presentation"
+
+Auto-detects the source format, extracts content, and generates a spec-compliant HTMLSlides file.
+
+| Source Format | Detection |
+|---------------|-----------|
+| reveal.js | `<div class="reveal">` + `<section>` |
+| Marp | `<!-- marp: true -->` or `class="marpit"` |
+| impress.js | `<div id="impress">` + `div.step` |
+| Slidev | `class="slidev-layout"` |
+| Google Slides | Google-specific nested div structure |
+| Article / Blog | `<article>`, `<main>`, or heading-structured HTML |
+| Generic HTML | Falls back to heading-based splitting |
+
+## Output
+
+Every generated presentation produces a single file:
+
+```
+my-deck.html              ← self-contained: CSS, JS, and speaker notes all inline
+```
+
+### Speaker Notes
+
+Speaker notes are embedded inside each slide as hidden JSON. Open the browser's DevTools (F12), detach to a separate window, and notes appear in the console as you navigate — a free presenter view.
+
+```
+📋 Slide 1: Introduction
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Welcome everyone. Today we'll look at how...
+
+  • Pause after welcome
+  • Gauge audience familiarity
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 For a better presenter experience, try the HTML Slides app: htmlslides.com
+```
+
+To edit notes, ask your AI agent: `"Update the speaker notes for slide 3 to say..."`
+
+## Architecture
+
+This skill uses **progressive disclosure** — the main `SKILL.md` is a concise map, with supporting files loaded on-demand:
+
+| File | Purpose | Loaded When |
+|------|---------|-------------|
+| `SKILL.md` | Core workflow and rules | Always (entry point) |
+| `references/STYLE_PRESETS.md` | Curated visual presets | Phase 2 (style selection) |
+| `references/html-template.md` | HTML structure and JS features | Phase 3 (Vibe) |
+| `references/animation-patterns.md` | CSS/JS animation reference | Phase 3 (Vibe) |
+| `references/component-templates.md` | Structured component templates | Phase 3 (Pro) |
+| `assets/viewport-base.css` | Mandatory responsive CSS | Phase 3 (Vibe) |
+| `assets/components.css` | Shared component CSS for all Pro themes | Phase 3 (Pro) |
+| `assets/themes/*.css` | Theme CSS files (colors, fonts) | Phase 3 (Pro) |
+| `assets/slides-runtime.js` | Navigation JS + Chart.js integration | Phase 3 (Pro) |
+| `scripts/extract-pptx.py` | PPT content extraction | Phase 4 (PPT conversion) |
+| `references/conversion-patterns.md` | Framework detection patterns | Phase 5 (HTML conversion) |
+| `scripts/deploy.sh` | Deploy to Vercel | Phase 7 (sharing) |
+| `scripts/export-pdf.sh` | Export slides to PDF | Phase 7 (sharing) |
+
+## Sharing Your Presentations
+
+After creating a presentation, the skill offers two ways to share:
+
+### Deploy to a Live URL
+
+```bash
+bash scripts/deploy.sh ./presentation.html
+```
+
+Deploys to a permanent, shareable URL via [Vercel](https://vercel.com) (free). Works on any device.
+
+### Export to PDF
+
+```bash
+bash scripts/export-pdf.sh ./presentation.html
+bash scripts/export-pdf.sh ./presentation.html --compact   # smaller file
+```
+
+Screenshots each slide and combines into a PDF. Uses [Playwright](https://playwright.dev) (auto-installs).
+
+## Requirements
+
+- Any agent supporting the [Agent Skills standard](https://agentskills.io)
+- For PPT conversion: Python with `python-pptx` library
+- For URL deployment: Node.js + Vercel account (free)
+- For PDF export: Node.js (Playwright installs automatically)
+
+## Credits
+
+Inspired by the awesome [@zarazhangrui](https://github.com/zarazhangrui)'s [frontend-slides](https://github.com/zarazhangrui/frontend-slides).
+Obsidian component system, Pro/Vibe modes, and multi-theme support by [@bluedusk](https://github.com/bluedusk).
+
+## License
+
+MIT — Use it, modify it, share it.

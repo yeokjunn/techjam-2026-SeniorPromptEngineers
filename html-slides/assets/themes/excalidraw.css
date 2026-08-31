@@ -1,0 +1,323 @@
+/* Excalidraw Light Theme
+   Hand-drawn aesthetic inspired by excalidraw.com.
+   Rough borders, visible hachure fills, sketch shadows. */
+
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Cascadia+Code:wght@400;600&display=swap');
+
+@font-face {
+  font-family: 'Excalifont';
+  src: url('../fonts/Excalifont-Regular.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-body: 'Excalifont', 'Caveat', 'Segoe Print', cursive;
+  --font-mono: 'Cascadia Code', monospace;
+
+  --bg: #ffffff;
+  --bg-card: #fcfcfa;
+  --bg-card-hover: #f5f5f0;
+  --text: #1e1e1e;
+  --text-muted: #505050;
+  --text-dim: #999999;
+  --accent-blue: #1971c2;
+  --accent-green: #2f9e44;
+  --accent-orange: #e8590c;
+  --accent-red: #e03131;
+  --accent-purple: #9c36b5;
+  --accent-yellow: #e8b627;
+  --border: #1e1e1e;
+  --border-hover: #1e1e1e;
+}
+
+/* ====== EXCALIDRAW OVERRIDES ====== */
+
+/* Kill all border-radius globally */
+.flip-front, .flip-back,
+.flip-card,
+.flip-bounce-wrap,
+.card-v2,
+.card-v2::before,
+.stat-card,
+.arch-box,
+.vs-card,
+.vs-badge,
+.vs-plus,
+.auth-front, .auth-back,
+.auth-flip,
+.status-item,
+.chart-container,
+.table-wrap,
+.cta-box,
+.code-window,
+.code-dot,
+.nav-hints kbd {
+  border-radius: 14px !important;
+}
+
+/* All card-like elements: no hard border, offset shadow provides edge definition */
+.flip-front, .flip-back,
+.card-v2,
+.stat-card,
+.arch-box,
+.vs-card,
+.auth-front, .auth-back,
+.status-item,
+.chart-container,
+.table-wrap,
+.cta-box {
+  border: none !important;
+  position: relative;
+}
+
+/* Hachure fill — two slightly offset angles for hand-drawn feel */
+.flip-front,
+.card-v2,
+.stat-card,
+.arch-box,
+.vs-card,
+.auth-front,
+.status-item,
+.chart-container,
+.table-wrap {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(25,113,194,0.12) 4px, rgba(25,113,194,0.12) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(25,113,194,0.08) 6px, rgba(25,113,194,0.08) 7px),
+    var(--bg-card) !important;
+}
+
+/* Per-component colored fills */
+.flip-front.border-orange,
+.card-v2.glow-orange {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(232,89,12,0.14) 4px, rgba(232,89,12,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(232,89,12,0.09) 6px, rgba(232,89,12,0.09) 7px),
+    var(--bg-card) !important;
+}
+.flip-front.border-yellow {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(232,182,39,0.14) 4px, rgba(232,182,39,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(232,182,39,0.09) 6px, rgba(232,182,39,0.09) 7px),
+    var(--bg-card) !important;
+}
+.flip-front.border-red {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(224,49,49,0.14) 4px, rgba(224,49,49,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(224,49,49,0.09) 6px, rgba(224,49,49,0.09) 7px),
+    var(--bg-card) !important;
+}
+.card-v2.glow-blue {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(25,113,194,0.14) 4px, rgba(25,113,194,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(25,113,194,0.09) 6px, rgba(25,113,194,0.09) 7px),
+    var(--bg-card) !important;
+}
+.card-v2.glow-purple {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(156,54,181,0.14) 4px, rgba(156,54,181,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(156,54,181,0.09) 6px, rgba(156,54,181,0.09) 7px),
+    var(--bg-card) !important;
+}
+.card-v2.glow-green {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(47,158,68,0.14) 4px, rgba(47,158,68,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(47,158,68,0.09) 6px, rgba(47,158,68,0.09) 7px),
+    var(--bg-card) !important;
+}
+.arch-box.box-blue {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(25,113,194,0.14) 4px, rgba(25,113,194,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(25,113,194,0.09) 6px, rgba(25,113,194,0.09) 7px),
+    var(--bg-card) !important;
+}
+.arch-box.box-yellow {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(232,182,39,0.14) 4px, rgba(232,182,39,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(232,182,39,0.09) 6px, rgba(232,182,39,0.09) 7px),
+    var(--bg-card) !important;
+}
+.arch-box.box-green {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(47,158,68,0.14) 4px, rgba(47,158,68,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(47,158,68,0.09) 6px, rgba(47,158,68,0.09) 7px),
+    var(--bg-card) !important;
+}
+.vs-card.card-left {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(156,54,181,0.14) 4px, rgba(156,54,181,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(156,54,181,0.09) 6px, rgba(156,54,181,0.09) 7px),
+    var(--bg-card) !important;
+}
+.vs-card.card-right {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(25,113,194,0.14) 4px, rgba(25,113,194,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(25,113,194,0.09) 6px, rgba(25,113,194,0.09) 7px),
+    var(--bg-card) !important;
+}
+.auth-front.bad {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(224,49,49,0.14) 4px, rgba(224,49,49,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(224,49,49,0.09) 6px, rgba(224,49,49,0.09) 7px),
+    var(--bg-card) !important;
+}
+.auth-front.good {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(47,158,68,0.14) 4px, rgba(47,158,68,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(47,158,68,0.09) 6px, rgba(47,158,68,0.09) 7px),
+    var(--bg-card) !important;
+}
+
+.flip-back,
+.auth-back {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(25,113,194,0.12) 4px, rgba(25,113,194,0.12) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(25,113,194,0.08) 6px, rgba(25,113,194,0.08) 7px),
+    var(--bg-card) !important;
+}
+
+/* Hover: offset shadow like hand-drawn drop shadow */
+.flip-card:hover .flip-front,
+.card-v2:hover,
+.stat-card:hover,
+.arch-box:hover,
+.vs-card:hover,
+.auth-flip:hover .auth-front,
+.chart-container:hover,
+.table-wrap:hover {
+  box-shadow: 5px 5px 0 rgba(0,0,0,0.18) !important;
+  transform: translate(-2px, -2px);
+}
+
+/* Resting state: subtle offset shadow */
+.flip-front,
+.card-v2,
+.stat-card,
+.arch-box,
+.vs-card,
+.auth-front,
+.status-item,
+.chart-container,
+.table-wrap,
+.cta-box {
+  box-shadow: 3px 3px 0 rgba(0,0,0,0.1) !important;
+}
+
+/* Code block */
+.code-window {
+  border: none !important;
+  position: relative;
+  box-shadow: 4px 4px 0 rgba(0,0,0,0.15) !important;
+}
+.code-window:hover {
+  box-shadow: 6px 6px 0 rgba(0,0,0,0.2) !important;
+  transform: translate(-1px, -1px);
+}
+
+/* Architecture arrows: thicker, rougher */
+.arrow-line {
+  height: 3px !important;
+  }
+
+/* VS plus connector */
+.vs-plus {
+  border: 2px solid var(--border) !important;
+  background: var(--bg-card) !important;
+  }
+
+/* Progress bar: solid color */
+.progress-bar {
+  background: var(--accent-blue) !important;
+}
+
+/* Nav dots: solid, no glow */
+.slide-nav-dot {
+  background: rgba(0,0,0,0.15) !important;
+}
+.slide-nav-dot.active {
+  background: var(--accent-blue) !important;
+  box-shadow: none !important;
+}
+
+/* Glow blobs: very subtle on white */
+.glow-blob { opacity: 0.04 !important; }
+
+/* Rainbow line: single dark stroke */
+.rainbow-line {
+  background: var(--border) !important;
+  height: 2px;
+  }
+
+/* Particles: dark dots for light bg */
+.particle {
+  background: rgba(0,0,0,0.06) !important;
+}
+
+/* Table header */
+.table-wrap thead th {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(0,0,0,0.06) 4px, rgba(0,0,0,0.06) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(0,0,0,0.04) 6px, rgba(0,0,0,0.04) 7px),
+    rgba(0,0,0,0.02) !important;
+}
+
+/* Status dots: no glow */
+.status-dot { box-shadow: none !important; }
+
+/* Nav hints kbd: sketch style */
+.nav-hints kbd {
+  background: rgba(0,0,0,0.04) !important;
+  border: 2px solid var(--border) !important;
+  }
+
+/* Colored borders: keep sketch feel */
+.flip-front.border-orange,
+.flip-front.border-yellow,
+.flip-front.border-red { border-width: 2px !important; }
+.arch-box.box-blue,
+.arch-box.box-yellow,
+.arch-box.box-green { border-width: 2px !important; }
+.vs-card.card-left,
+.vs-card.card-right { border-width: 2px !important; }
+.auth-front.bad { border-color: var(--accent-red) !important; }
+.auth-front.good { border-color: var(--accent-green) !important; }
+
+/* ====== CONTENT BLOCK ====== */
+.cb-card {
+  border: none !important;
+  border-radius: 14px !important;
+  box-shadow: 3px 3px 0 rgba(0,0,0,0.1) !important;
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(25,113,194,0.12) 4px, rgba(25,113,194,0.12) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(25,113,194,0.08) 6px, rgba(25,113,194,0.08) 7px),
+    var(--bg-card) !important;
+}
+.cb-card:hover {
+  box-shadow: 5px 5px 0 rgba(0,0,0,0.18) !important;
+  transform: translate(-2px, -2px);
+}
+.cb-card.problem {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(224,49,49,0.14) 4px, rgba(224,49,49,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(224,49,49,0.09) 6px, rgba(224,49,49,0.09) 7px),
+    var(--bg-card) !important;
+}
+.cb-card.fix {
+  background:
+    repeating-linear-gradient(-37deg, transparent, transparent 4px, rgba(25,113,194,0.14) 4px, rgba(25,113,194,0.14) 5px),
+    repeating-linear-gradient(-41deg, transparent, transparent 6px, rgba(25,113,194,0.09) 6px, rgba(25,113,194,0.09) 7px),
+    var(--bg-card) !important;
+}
+.cb-card-text { font-size: clamp(15px, 1.4vw, 19px) !important; }
+.cb-card-label { font-size: clamp(12px, 1.1vw, 14px) !important; }
+.cb-body { font-size: clamp(17px, 1.6vw, 22px) !important; }
+.cb-keyquote { border-left: 3px solid var(--accent-blue) !important; }
+
+/* ====== ANIMATION PERSONALITY: PLAYFUL, SPRINGY ====== */
+
+.slide.active .anim-1 { animation: bounceInSoft 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s both !important; }
+.slide.active .anim-2 { animation: bounceInSoft 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) 0.22s both !important; }
+.slide.active .anim-3 { animation: bounceInSoft 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.34s both !important; }
+.slide.active .anim-4 { animation: bounceInSoft 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) 0.46s both !important; }
+.slide.active .anim-5 { animation: bounceInSoft 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) 0.58s both !important; }

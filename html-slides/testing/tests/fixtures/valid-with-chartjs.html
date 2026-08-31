@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="generator" content="html-slides v0.6.6">
+<title>Valid With Chart.js</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap">
+<style>
+  .deck { position: relative; width: 100vw; height: 100vh; }
+  .slide { position: absolute; inset: 0; opacity: 0; }
+  .slide.active { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+  <div class="slide active" data-slide="0"><h1>Title</h1></div>
+  <div class="slide" data-slide="1">
+    <div class="chart-container">
+      <canvas id="chart-1"></canvas>
+      <script type="application/json" data-chart-config="chart-1">
+      {"type":"bar","data":{"labels":["A","B"],"datasets":[{"label":"Test","data":[10,20]}]}}
+      </script>
+    </div>
+  </div>
+</div>
+<script>
+var current = 0;
+var slides = document.querySelectorAll('.slide');
+var total = slides.length;
+function goTo(index) {
+  if (index < 0 || index >= total || index === current) return;
+  current = index;
+  slides.forEach(function(s, i) { s.classList.toggle('active', i === current); });
+}
+function next() { goTo(current + 1); }
+function prev() { goTo(current - 1); }
+</script>
+</body>
+</html>

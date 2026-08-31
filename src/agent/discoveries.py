@@ -30,6 +30,8 @@ class DiscoveryRecord:
     delta_vs_baseline: float | None = None
     experiment_id: str | None = None
     rejection: dict[str, Any] | None = None
+    run_id: str | None = None
+    failure: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "DiscoveryRecord":
@@ -59,6 +61,8 @@ class DiscoveryRecord:
             delta_vs_baseline=value.get("delta_vs_baseline"),
             experiment_id=value.get("experiment_id"),
             rejection=dict(value["rejection"]) if isinstance(value.get("rejection"), dict) else None,
+            run_id=value.get("run_id"),
+            failure=value.get("failure"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +75,7 @@ def discovery_id_for(decision: ResearchDecision) -> str:
         {
             "family": decision.family,
             "hypothesis": decision.hypothesis.strip().lower(),
+            "parameters": decision.parameters,
             "urls": urls,
         },
         sort_keys=True,
@@ -125,8 +130,12 @@ class DiscoveryStore:
             if source.url
         ]
 
-    def record_proposal(self, iteration: int, decision: ResearchDecision) -> str | None:
-        return self._upsert_proposal(iteration, decision, increment_count=True)
+    def record_proposal(
+        self, iteration: int, decision: ResearchDecision, run_id: str | None = None
+    ) -> str:
+        return self._upsert_proposal(
+            iteration, decision, increment_count=True, run_id=run_id
+        )
 
     def _upsert_proposal(
         self,
@@ -134,12 +143,9 @@ class DiscoveryStore:
         decision: ResearchDecision,
         *,
         increment_count: bool,
-    ) -> str | None:
-        if not decision.web_searched:
-            return None
+        run_id: str | None = None,
+    ) -> str:
         evidence = self._evidence(decision)
-        if not evidence:
-            return None
         now = utc_now()
         key = discovery_id_for(decision)
         record = self.records.get(key)
@@ -155,6 +161,7 @@ class DiscoveryStore:
                 created_at=now,
                 updated_at=now,
                 first_iteration=iteration,
+                run_id=run_id,
             )
             self.records[key] = record
         else:
@@ -165,6 +172,7 @@ class DiscoveryStore:
             record.evidence = evidence
             record.parameters = dict(decision.parameters)
             record.updated_at = now
+            record.run_id = run_id or record.run_id
         record.status = "proposed" if record.status in {"new", "proposed"} else record.status
         record.last_iteration = iteration
         if increment_count:
@@ -173,11 +181,15 @@ class DiscoveryStore:
         return key
 
     def record_rejection(
-        self, iteration: int, decision: ResearchDecision, critic: CriticDecision
+        self,
+        iteration: int,
+        decision: ResearchDecision,
+        critic: CriticDecision,
+        run_id: str | None = None,
     ) -> None:
-        key = self._upsert_proposal(iteration, decision, increment_count=False)
-        if key is None:
-            return
+        key = self._upsert_proposal(
+            iteration, decision, increment_count=False, run_id=run_id
+        )
         record = self.records[key]
         record.status = "critic_rejected"
         record.rejection = {
@@ -195,10 +207,12 @@ class DiscoveryStore:
         decision: ResearchDecision,
         node: ExperimentNode,
         baseline_primary: float,
+        run_id: str | None = None,
+        failure: str | None = None,
     ) -> None:
-        key = self._upsert_proposal(iteration, decision, increment_count=False)
-        if key is None:
-            return
+        key = self._upsert_proposal(
+            iteration, decision, increment_count=False, run_id=run_id
+        )
         record = self.records[key]
         record.status = node.status
         record.metrics = dict(node.metrics) if node.metrics else None
@@ -208,16 +222,17 @@ class DiscoveryStore:
             else float(node.metrics["primary"]) - float(baseline_primary)
         )
         record.experiment_id = node.experiment_id
+        record.failure = failure
         record.updated_at = utc_now()
         self._save()
 
     def prompt_text(self, max_items: int = 6) -> str:
         if not self.records:
-            return "No persistent web discoveries have been recorded yet."
+            return "No persistent research outcomes have been recorded yet."
         ranked = sorted(
             self.records.values(),
             key=lambda item: (
-                item.status in {"proposed", "critic_rejected", "failed"},
+                item.status == "success",
                 item.delta_vs_baseline if item.delta_vs_baseline is not None else -999.0,
                 item.updated_at,
             ),
@@ -231,10 +246,14 @@ class DiscoveryStore:
                 else f"primary={record.metrics.get('primary')}, delta={record.delta_vs_baseline}"
             )
             urls = ", ".join(item["url"] for item in record.evidence[:2])
+            provenance = f"run={record.run_id or 'unknown'}, iteration={record.last_iteration}"
+            failure = f"; failure={record.failure}" if record.failure else ""
+            sources = f"; sources={urls}" if urls else ""
             lines.append(
                 (
                     f"- {record.discovery_id} [{record.status}] family={record.family}; "
-                    f"hypothesis={record.hypothesis}; metrics={metrics}; sources={urls}"
+                    f"hypothesis={record.hypothesis}; parameters={record.parameters}; "
+                    f"metrics={metrics}; {provenance}{failure}{sources}"
                 )[:900]
             )
         return "\n".join(lines)

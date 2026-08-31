@@ -26,9 +26,10 @@ Training uses only the organizer-provided KuaiRand-Pure dataset and starter kit.
 |---|---:|---:|---:|---:|
 | `20260829T041834051989Z_baseline` | 0.6671 | 0.5358 | 0.6015 | -0.0001 |
 | `20260829T060130480764Z_research` | 0.6679 | 0.5360 | 0.6019 | +0.0003 |
+| `kj_20260831T020238331867Z_research` | 0.6701 | 0.5373 | 0.6037 | +0.0021 |
 
-The research row is the scripted offline end-to-end run: 1 scored iteration and training attempt, 2,440 scripted tokens, 141.31 seconds wall-clock, 0 GPU-hours, and 0 manual interventions. It validates autonomy plumbing but is not presented as a converged live-LLM result. Every value comes from the committed summaries, resources, and results files in those run directories.
+The `20260829T060130480764Z_research` row is the scripted offline end-to-end run: 1 scored iteration and training attempt, 2,440 scripted tokens, 141.31 seconds wall-clock, 0 GPU-hours, and 0 manual interventions. It validates autonomy plumbing. The `kj_20260831T020238331867Z_research` row is the latest live autonomous run: it converged at iteration 12 under the official epsilon `0.002`, patience-3 rule, used 13 training attempts, 44 proposal attempts, 1,855,199 reported LLM tokens, 3,664.28 seconds wall-clock, 0 GPU-hours, and 0 manual interventions. Its final diverse ensemble reached validation primary `0.6048` with GAUC `0.6718` and nDCG@5 `0.5378`, and the label-free submission gate passed on 170,588 rows.
 
 ## Limitations and next steps
 
-The repository does not yet contain a converged live-LLM run, an append-only operator-intervention command, or a separately persisted official-convergence verdict. Next priorities are repeated-seed validation, leakage-safe history features, score blending, and in-dataset multi-task signals.
+The latest live-LLM run converged and passed the label-free submission gate, but hidden-test score remains unknown and must not guide model selection. Validation lift is still modest, so next priorities are more diverse leakage-safe history contrast, more robust generated multi-task implementations, and score blending that reduces baseline over-weighting without changing the official GAUC/nDCG@5 criteria.

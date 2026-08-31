@@ -1,0 +1,2041 @@
+{
+  "discoveries": [
+    {
+      "created_at": "2026-08-31T07:34:34.177669+00:00",
+      "delta_vs_baseline": 0.0025345596313476326,
+      "discovery_id": "a8b8675b03e7121c",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "METHOD CARD group_softmax: same-user group softmax loss and temperature scaling (logits=[pos,neg]/temperature; loss=-log_softmax(logits)[0])",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": "gs_temp2_k16_lr5e4_bs2048_ep8_pat2_seed42",
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 10,
+      "hypothesis": "With same-user group softmax, increasing the temperature to 2.0 while keeping K=8 should soften listwise competition and yield more stable gradients for improving nDCG@5 without sacrificing GAUC.",
+      "hypothesis_id": "gs_k8_temp2_lr5e4_bs2048_ep8_pat2_seed42",
+      "last_iteration": 10,
+      "metrics": {
+        "GAUC": 0.6707046031951904,
+        "nDCG@5": 0.5375645160675049,
+        "primary": 0.6041345596313477,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 2.0
+      },
+      "proposed_count": 1,
+      "rationale": "The only successful group_softmax run used K=8 and temperature=1.0; testing a materially different temperature (2.0) is the lowest-risk mechanism to change top-5 ordering behavior while staying in a closely related, already-validated loss family.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T07:40:48.773679+00:00"
+    },
+    {
+      "created_at": "2026-08-31T07:34:24.291520+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "2f8e3d1a294c5a7d",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD group_softmax",
+          "title": "Same-user Group Softmax (listwise loss): logits=[pos, neg1..negK]/temperature; loss=-log_softmax(logits)[0] with gradients softmax(logits)-one_hot(pos).",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        },
+        {
+          "method_card_id": "METHOD_CARD group_softmax",
+          "title": "Failure mode: Groups with duplicate negative rows reduce effective list size; stable max-shift softmax for numerical safety.",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 10,
+      "hypothesis": "Within-user group softmax will improve top-5 ordering by constructing each positive-vs-negatives list with *unique* same-user negatives (deduplicated negatives per group) instead of allowing duplicate negative rows to shrink effective list size.",
+      "hypothesis_id": "gs_unique_neg_sampling_8_temp1_annealnone_lr5e4",
+      "last_iteration": 10,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 1.0
+      },
+      "proposed_count": 1,
+      "rationale": "Prior evidence suggests group-softmax failures can come from reduced effective list size via duplicate negatives, and a uniqueness constraint is a material mechanism change beyond temperature/grid tweaking while keeping the same successful core setup (K=8, temp=1).",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T07:34:24.291520+00:00"
+    },
+    {
+      "created_at": "2026-08-31T07:34:15.175834+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "59d6023f986561ba",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "METHOD CARD group_softmax objective + temperature/negatives search dimensions for same-user listwise learning",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 10,
+      "hypothesis": "With within-user group softmax, increasing temperature to 2.0 while keeping the previously successful K=8 negatives (harder list competition without changing group size) will improve top-5 ordering (nDCG@5) versus the temperature=1.0 baseline.",
+      "hypothesis_id": "gs_k8_temp2_lr3e4_bs2048_ep8_pat2_seed42_tempScale",
+      "last_iteration": 10,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 2.0
+      },
+      "proposed_count": 1,
+      "rationale": "Temperature has the largest local sensitivity, and the prior failures at low/high temperature were at different K values, so retuning temperature at the successful K=8 is a controlled, attribution-safe listwise probe.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T07:34:15.175834+00:00"
+    },
+    {
+      "created_at": "2026-08-31T07:32:50.868628+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "d7c4db6f905c75f8",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "BPR pairwise loss that optimizes relative ordering of a positive above a negative within a user (log-sigmoid/softplus(-d))",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": "bpr_epoch_resample_neg2_bs2048_lr1e3_k16_seed42",
+      "failure": null,
+      "family": "bpr",
+      "first_iteration": 9,
+      "hypothesis": "Within-user BPR improves nDCG@5 when negatives are chosen as hard same-user pairs computed from the current model each epoch (resampling hardness), rather than fixed/easy negatives, keeping negatives_per_positive=2 and k=16.",
+      "hypothesis_id": "bpr_hardneg_recompute_each_epoch_bs2048_neg2",
+      "last_iteration": 9,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.001,
+        "negatives_per_positive": 2,
+        "patience": 3,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "The best family so far is BPR near 0.6028 primary, so changing only the negative contrast to epoch-recomputed same-user hard pairs targets top-5 ordering without introducing new (failed) feature families.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "failed",
+      "updated_at": "2026-08-31T07:33:55.113027+00:00"
+    },
+    {
+      "created_at": "2026-08-31T07:32:35.999074+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "d24ae3d3bac8131a",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "BPR objective and derivative for pairwise ordering via softplus(-d) with d = s(u,i)-s(u,j).",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "bpr",
+      "first_iteration": 9,
+      "hypothesis": "Switch BPR to train-only hard negatives drawn from each user\u2019s recent interacted items (recent-window hard negative sampling) while keeping LR=5e-4, k=16, and 2 negatives per positive to better sharpen within-user top-5 long_view ordering without hurting GAUC.",
+      "hypothesis_id": "bpr_recent_hardneg_window_lr5e4_neg2",
+      "last_iteration": 9,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "BPR is already closest to the best validation primary score, so improving the pairwise discrimination via more top-5-relevant same-user hard negatives is the most likely remaining high-leverage change.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T07:32:35.999074+00:00"
+    },
+    {
+      "created_at": "2026-08-31T07:32:22.413861+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "15aab068456a226a",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "METHOD CARD: Same-user Group Softmax (loss = -log_softmax over [pos + K negs]/temperature; score gradient = softmax - one_hot; stability via max-shifted softmax)",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-appro/"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 9,
+      "hypothesis": "With within-user group softmax using a larger same-user negative set (K=8) but a hotter temperature (2.0) and a slightly more aggressive learning rate, the softmax gradients will better balance GAUC stability and top-5 discrimination for long_view.",
+      "hypothesis_id": "gs_k8_temp2p0_lr1e3_bs1024_ep6_pat1_seed42",
+      "last_iteration": 9,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 1024,
+        "epochs": 6,
+        "k": 16,
+        "learning_rate": 0.001,
+        "negatives_per_group": 8,
+        "patience": 1,
+        "seed": 42,
+        "temperature": 2.0
+      },
+      "proposed_count": 1,
+      "rationale": "Past runs show K=8 at temperature=1.0 is strong, while extreme low temperatures hurt; testing a hotter-but-not-extreme temperature keeps listwise competition while adjusting gradient sharpness to target nDCG@5 without repeating a previously failed tuple.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T07:32:22.413861+00:00"
+    },
+    {
+      "created_at": "2026-08-31T07:16:36.693865+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "1a9bd1983ae13e54",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD_bpr",
+          "title": "BPR objective and pairwise loss definition (UAI 2009 / arXiv)",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": "bpr_fmranker_neg1_bs2048_lr5e4_ep10_pat2_k16_seed42",
+      "failure": "Candidate timed out after 432 seconds.",
+      "family": "bpr",
+      "first_iteration": 8,
+      "hypothesis": "Within-user BPR with fewer sampled negatives (1 per positive) and a slightly higher learning rate will reduce noisy pair competition and improve top-5 ordering for long_view versus the best 2-negate BPR run.",
+      "hypothesis_id": "bpr_hardneg_pos1_bs2048_lr5e4_ep10",
+      "last_iteration": 8,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "Top-5 ranking is sensitive to which same-user negatives are included, and changing the negative-per-positive ratio is a direct, controllable way to shift the pairwise gradient signal without relying on any user-constant terms.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "failed",
+      "updated_at": "2026-08-31T07:32:02.761212+00:00"
+    },
+    {
+      "created_at": "2026-08-31T07:06:11.776043+00:00",
+      "delta_vs_baseline": 0.001223436260223365,
+      "discovery_id": "9e51f3c106c5cebb",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Same-user Group Softmax objective + score gradient = softmax(logits) - one_hot(positive) with temperature scaling; safe search space includes K in {4,8} and temperature in {0.5,1.0,2.0}.",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": "gs_k8_temp1_lr5e4_bs2048_ep8_pat2_seed42",
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 7,
+      "hypothesis": "For within-user group softmax, using a larger same-user candidate list (K=8 via negatives_per_group=8) with a mid temperature (1.0) will better sharpen top-5 competition than the previously tried K=4 and extreme-temperature regimes, improving nDCG@5 without sacrificing GAUC.",
+      "hypothesis_id": "gs_K8_temp1p0_bs2048_lr5e4_ep8_pat2_seed42",
+      "last_iteration": 7,
+      "metrics": {
+        "GAUC": 0.6696672439575195,
+        "nDCG@5": 0.5359796285629272,
+        "primary": 0.6028234362602234,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 1.0
+      },
+      "proposed_count": 1,
+      "rationale": "The observed group-softmax attempts with K=4 and temperatures {0.5,2.0} failed badly, so changing the list size K while keeping temperature in a stable middle regime targets top-heavy ordering with reduced softmax instability risk.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T07:16:15.761018+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:50:11.538726+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "6502a0b9d7136578",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "METHOD CARD history_features defines a dedicated recency group and requires train-only construction via scheme=prior_days vs leave_one_out.",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": "hf_recency_only_bpr_lr3e4_seed42_v2",
+      "failure": "Candidate timed out after 432 seconds.",
+      "family": "history_features",
+      "first_iteration": 6,
+      "hypothesis": "With history_features restricted to the METHOD_CARD-supported single recency group (scheme=prior_days) and otherwise disabling all other history groups, a lower learning rate should stabilize representation learning and improve top-5 long_view ordering without the confounds that broke earlier recency+affinity bundles.",
+      "hypothesis_id": "hf_recency_only_bpr_lr3e4_seed42_v2",
+      "last_iteration": 6,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 12,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "Within-user ranking can only benefit from event-time varying history signals, so an aggressively isolated recency-only ablation is the cleanest way to verify whether short-horizon timing drives nDCG@5 in this dataset.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "failed",
+      "updated_at": "2026-08-31T07:05:52.687582+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:50:04.058681+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "188162e2dbbb0e1f",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD history_features",
+          "title": "Method card: history_features defines recency-style user-history groups and prior_days/leave_one_out schemes, and emphasizes within-user ranking benefits from event-time-varying history features.",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 6,
+      "hypothesis": "A clean recency-only probe with multi-horizon exponentially-decayed kernels (only the recency-group features enabled) will improve within-user nDCG@5 for long_view by sharpening top-5 ordering to very recent intent without the confounding affinity/cross history groups that caused prior interpretability failures.",
+      "hypothesis_id": "hf_recency_only_multihorizon_expdecay_clean_bpr_0411",
+      "last_iteration": 6,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "Given history_features is the current best lead, isolating a single, event-time-varying mechanism (recency) is the most falsifiable way to test whether recent-intent discrimination\u2014rather than user/author/tab affinity\u2014drives the validation lift.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:50:04.058681+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:49:56.727797+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "d2fa8f919629bc1c",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD_HISTORY_FEATURES",
+          "title": "Deep Interest Network (DIN) for interest modelling from user history (primary source for history-based hypotheses).",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "kuairand-starter-kit/README.en.md",
+          "title": "KuaiRand starter-kit README notes user-behaviour history is a blank direction in the official features and motivates history_features variants.",
+          "url": "https://github.com/kuairand/kuairand-starter-kit/blob/main/README.en.md"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 6,
+      "hypothesis": "Using a strictly short-horizon, exponentially-decayed multi-kernel recency-only history feature (no user-only or tab/author affinity groups) will improve top-5 long_view ranking by giving within-user score differences that better match users\u2019 most recent intent while reducing overfit risk seen in broader history_features attempts.",
+      "hypothesis_id": "hf_recency_multihorizon_decay_priorBPR_top5",
+      "last_iteration": 6,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "Among history_features, recency is the most directly within-user-varying signal, and isolating it avoids dilution from additional history groups that previously failed under BPR training.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:49:56.727797+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:44:56.828313+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "c1167fc6465c9151",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "KUAI-RAND-Pure METHOD CARD multi_task: auxiliary BCE over shared FM embeddings, weighted by aux_weight, with is_click correlation and known swamping failure mode.",
+          "url": "https://arxiv.org/abs/1804.07931"
+        }
+      ],
+      "experiment_id": "mt_click_aux_curriculum_bpr_16_lr5e4_bs4096_ep20_neg1_pat4_seed42",
+      "failure": "Candidate exited with code 1: Traceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"C:\\Users\\Admin\\OneDrive - Nanyang Technological University\\2026_projects\\tiktok_techjam_clean\\techjam-2026-SeniorPromptEngineers\\src\\experiments\\run_candidate.py\", line 328, in <module>\n    main()\n    ~~~~^^\n  File \"C:\\Users\\Admin\\OneDrive - Nanyang Technological University\\2026_projects\\tiktok_techjam_clean\\techjam-2026-SeniorPromptEngineers\\src\\experiments\\run_candidate.py\", line 314, in main\n    output = module.run(context, parameters)\n  File \"C:\\Users\\Admin\\OneDrive - Nanyang Technological University\\2026_projects\\tiktok_techjam_clean\\techjam-2026-SeniorPromptEngineers\\generated_experiments\\kj_20260831T060138171972Z_research\\005_mt_click_aux_curriculum_bpr_16_lr5e4_bs4096_ep20_neg1_pat4_seed42\\candidate.py\", line 120, in run\n    aux_targets = build_aux_labels(aux_rows, spec)\n  File \"C:\\Users\\Admin\\OneDrive - Nanyang Technological University\\2026_projects\\tiktok_techjam_clean\\techjam-2026-SeniorPromptEngineers\\src\\models\\features.py\", line 534, in build_aux_labels\n    raise ValueError(\n    ...<2 lines>...\n    )\nValueError: Auxiliary train columns have 1141112 rows but 8192 were passed; row order and length must match the kit's.\n",
+      "family": "multi_task",
+      "first_iteration": 5,
+      "hypothesis": "Adding a very small is_click auxiliary BCE term with a slow-start curriculum (effectively reducing early aux_weight) will improve long_view within-user top-5 ordering by stabilizing shared FM embeddings without letting click signal swamp the ranking gradients.",
+      "hypothesis_id": "mt_click_aux_weight_curriculum_no_useronly_20260831",
+      "last_iteration": 5,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 20,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 4,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "The multi_task family is the highest-likelihood untried lead, and a low, scheduled click-teacher aux should add representation supervision while minimizing the known swamping failure mode.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "failed",
+      "updated_at": "2026-08-31T06:49:34.286367+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:44:07.855901+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "0ad0d5fd612980d8",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD_history_features",
+          "title": "history_features method card: safe interaction-log-only DIN-style smoothed history groups; recommend scheme='prior_days' and smoothing m options; k=16 fixed",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "PERSISTENT_CROSS_RUN_MEMORY",
+          "title": "Persistent memory: broad history_features bundles with prior_days+m=20 and multiple groups achieved ~baseline primary near 0.6027; broader bundles are less reliable than narrowing recency/affinity signals",
+          "url": "(internal persistent cross-run research memory)"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 5,
+      "hypothesis": "Restrict interaction-log history_features to only (recency, user_author affinity, video_age) and keep prior_days smoothing at m=20 to maximize within-user ranking utility while avoiding previously ineffective user-level aggregate dilution.",
+      "hypothesis_id": "hf_lognarrow_prior20_recency_userauthor_videoage_bprneg1_lr5e4_ep10_bs4096_seed42",
+      "last_iteration": 5,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "A prior history_features failure involved a broader bundle; narrowing to within-user-varying components should preserve the DIN-style personalization signal most correlated with top-5 long_view ordering.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:44:07.855901+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:44:00.291027+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "1576748c4b104c45",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "KuaiRand method card: history_features (DIN-style interaction-log-only smoothed rates; groups: user_rate, user_author, user_tab, recency, video_age, tab_cross; prior_days vs leave_one_out; tuning m/smoothing)",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 5,
+      "hypothesis": "By restricting interaction-derived history_features to only within-user varying signals (recency + user_author affinity + video_age) and removing user-level aggregates (user_rate, user_tab, tab_cross), we avoid dilution from weakly ranking-relevant bins while preserving the strongest personalization cues, improving nDCG@5 vs the broader history bundle attempts.",
+      "hypothesis_id": "hf_targeted_recency_author_videoage_only_prior_smooth100",
+      "last_iteration": 5,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 12,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "The method card\u2019s within-user ranking constraint implies user-level fields are less useful, so a targeted history subset plus stronger smoothing should better sharpen top-5 ordering under the same FM backbone.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:44:00.291027+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:39:22.929451+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "e4bd9f4993b1bde2",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD_multi_task",
+          "title": "Entire Space Multi-Task / auxiliary-head supervision; long_view shares structure with is_click; auxiliary loss adds weighted BCE over shared FM embeddings",
+          "url": "https://arxiv.org/abs/1804.07931"
+        },
+        {
+          "method_card_id": "kuairand-starter-kit_MULTI_TASK",
+          "title": "Starter kit notes multi-task auxiliary signals as a prioritized untested direction and defines aux_weight + aux heads + shared-embedding training objective",
+          "url": "https://github.com/kuairand/kuairand-starter-kit/blob/main/README.en.md"
+        }
+      ],
+      "experiment_id": "mt_bpr_click_aux_bce",
+      "failure": "Candidate exited with code 1: Traceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"C:\\Users\\Admin\\OneDrive - Nanyang Technological University\\2026_projects\\tiktok_techjam_clean\\techjam-2026-SeniorPromptEngineers\\src\\experiments\\run_candidate.py\", line 328, in <module>\n    main()\n    ~~~~^^\n  File \"C:\\Users\\Admin\\OneDrive - Nanyang Technological University\\2026_projects\\tiktok_techjam_clean\\techjam-2026-SeniorPromptEngineers\\src\\experiments\\run_candidate.py\", line 314, in main\n    output = module.run(context, parameters)\n  File \"C:\\Users\\Admin\\OneDrive - Nanyang Technological University\\2026_projects\\tiktok_techjam_clean\\techjam-2026-SeniorPromptEngineers\\generated_experiments\\kj_20260831T060138171972Z_research\\004_mt_bpr_click_aux_bce\\candidate.py\", line 90, in run\n    pos_scores = model.predict(pos_feat)\n  File \"C:\\Users\\Admin\\OneDrive - Nanyang Technological University\\2026_projects\\tiktok_techjam_clean\\techjam-2026-SeniorPromptEngineers\\src\\models\\fm_core.py\", line 78, in predict\n    self.logits(features[offset : offset + batch_size])[0]\n    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Admin\\OneDrive - Nanyang Technological University\\2026_projects\\tiktok_techjam_clean\\techjam-2026-SeniorPromptEngineers\\src\\models\\fm_core.py\", line 34, in logits\n    embeddings = self.V[features]\n                 ~~~~~~^^^^^^^^^^\nIndexError: index 1613 is out of bounds for axis 0 with size 5\n",
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Train long_view ranking with click-only auxiliary supervision using an aux-weight curriculum (start at 0, then ramp) to prevent auxiliary gradient swamping while sharpening within-user top-5 ordering.",
+      "hypothesis_id": "mt_curriculum_click_only_aux_anneal_0p2",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 16,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 1,
+        "patience": 4,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "Click correlates strongly with long_view, and delaying/ramping the auxiliary loss should improve optimization stability versus a constant aux_weight setting.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "failed",
+      "updated_at": "2026-08-31T06:43:40.718627+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:39:15.370214+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "0d1027a768febda0",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD history_features",
+          "title": "Deep Interest Network (DIN) / history_features method card: log-history user-affinity + event-time recency as stronger next-interaction signals; smoothing prior_days and reserved unknown slot avoid memorizing sparse keys",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 4,
+      "hypothesis": "A narrowed, leakage-safe history representation using only (1) log-history user_author smoothed affinity and (2) monotonic recency since the user\u2019s last long_view\u2014both with prior_days smoothing\u2014will better improve within-user nDCG@5 by increasing top-5 ordering variance without the underperforming dilution from extra history groups that previously caused failure.",
+      "hypothesis_id": "hf_sparse_recency_userauthor_prior20_lr5e4",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 12,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "The earlier history_features attempt with many enabled groups failed, and within-user ranking benefits from time-varying signals like recency and user_author rather than additional tables that add noise/ties.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:39:15.370214+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:39:07.924479+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "5ce52b078c4d94df",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD_multi_task",
+          "title": "Multi-task auxiliary objective: loss = ranking_loss + aux_weight * aux BCE over shared FM embeddings (train-only heads via build_aux_labels).",
+          "url": "https://arxiv.org/abs/1804.07931"
+        },
+        {
+          "method_card_id": "METHOD_CARD_multi_task",
+          "title": "Starter-kit ranking multi-task auxiliary signals as an untested direction; cautions about auxiliary gradients swamping the ranking objective at large aux_weight and suggests low weights (0.1\u20130.3) to start.",
+          "url": "https://github.com/kuairand/kuairand-starter-kit/blob/main/README.en.md"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Adding a low-weight auxiliary `play_time` head together with `is_click` supervision will improve within-user long_view top-5 ordering (nDCG@5) by sharpening shared user/video intent representations without swamping the long_view ranking gradients.",
+      "hypothesis_id": "mt_click_plus_playtime_auxw01_bprneg2_ep12_lr3e4",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 12,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 2,
+        "patience": 3,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "The multi-task objective can provide denser representation learning when auxiliary behaviours correlate with long_view, and starting with a small aux_weight reduces the known gradient-swamping failure mode.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:39:07.924479+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:23:29.873238+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "0d23b809e26eba54",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD history_features",
+          "title": "Method card: history_features (DIN-style user history feature groups; prior_days vs leave_one_out; smoothing and candidate-varying rationale)",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": "hf_recency_user_author_only_bpr",
+      "failure": "Candidate timed out after 432 seconds.",
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "If DIN-style candidate-varying affinity is the main driver for within-user long_view separation, then restricting history_features to only {recency, user_author} with prior_days smoothing (high m) will outperform (or at least match) broader history bundles by avoiding dilution from mostly non-candidate-specific tables.",
+      "hypothesis_id": "hf_recency_user_author_only_m100_prior_days",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "Within-user ranking cannot benefit from user-only constants, so isolating two candidate-varying history signals (time since last long_view and user-author affinity) provides a clean, leakage-safe ablation that is likely to be more falsifiable than multi-table mixes.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "failed",
+      "updated_at": "2026-08-31T06:38:49.827854+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:23:22.742631+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "10d13c6b5203bc77",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD_history_features",
+          "title": "Deep Interest Network (DIN) motivates using user-specific, history-conditioned affinity signals (user_author/recency-style mechanisms).",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "METHOD_CARD_history_features",
+          "title": "History-features method card: candidate-level history tables are built from train-only past with prior_days smoothing and cautions about constant-within-user terms being weak for within-user ranking.",
+          "url": "https://github.com/kuairand/kuairand-starter-kit/blob/main/README.en.md"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "With the long_view objective kept as in the strong BPR baseline, restricting history_features to only {recency, user_author} and using prior_days with higher smoothing (m=100) will improve within-user top-5 ordering by removing diluted/near-constant history tables while emphasizing the most candidate-varying user-behavior affinity signals.",
+      "hypothesis_id": "hf_ablate_recency_user_author_m100_priordays_bpr",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 12,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "A prior controlled history_features run showed overall improvement with prior_days smoothing, and the next best step is a cleaner ablation that matches the stated hypothesis by disabling weak/diluting history tables that add compute without clear within-user ordering benefit.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:23:22.742631+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:23:10.981228+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "292e7005d5ed8092",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD history_features",
+          "title": "history_features method card: DIN-style history tables computed on train prior interactions with scheme prior_days/leave_one_out and smoothing m; uses extra FM fields whose second-order interactions change within-user ordering.",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "DATA CARD + search-space evidence",
+          "title": "Dataset/within-user ranking convention: user-only static terms contribute exactly 0 to within-user ordering; within-user-varying history is the actionable direction for GAUC/nDCG@5.",
+          "url": "(provided in prompt)"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "If we restrict history_features to only the within-user-varying recency signal plus the user_author DIN-style affinity (dropping other mostly diluted history tables) and use stronger smoothing (m=100) under prior_days, the FM will better separate positives from hard same-user negatives in the top-5 list, improving nDCG@5 without sacrificing GAUC.",
+      "hypothesis_id": "hf_sparse_recency_user_author_m100_seed42",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 12,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "The method card suggests history helps most when it varies across candidates, while your prior history_features wins with prior_days+moderate smoothing indicate smoothing and selective tables are key levers rather than capacity or static-only features.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:23:10.981228+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:21:44.412557+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "834dcfd3b37b03dd",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD history_features",
+          "title": "History-features family defines leakage-safe, train-log-derived groups including recency and video_age with scheme=prior_days and smoothing m.",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "By isolating only the temporally varying recency and video_age history tables (with prior_days smoothing m=20) while keeping all other history tables disabled, the FM will better recalibrate within-user top-5 long_view ordering without diluting the effect with mostly constant or sparsely informative history signals.",
+      "hypothesis_id": "hf_minrecency_videoage_prior20_bpr2_lr5e4_ep10_bs4096_seed42",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "Within-user ranking needs features that vary across the candidate set for the same user, and history_features is designed to inject leakage-safe train-log event-time variation that targets top-5 nDCG@5 improvements.",
+      "rejection": {
+        "concerns": [
+          "History-feature minimality mismatch: proposal sets use_tab_cross/use_user_author/use_user_rate/use_user_tab in addition to recency and video_age, contradicting \u201cisolating only recency and video_age\u201d.",
+          "Loss alignment risk: parent_experiment is group_softmax, while the best observed checkpoint in state is from family bpr; proposal does not state/lock the loss to BPR.",
+          "Soft risk to top-5 calibration: adding several history tables may help GAUC but is not a targeted minimal test for nDCG@5 given the current dead-end/flat evidence on capacity and user-only static terms. (Not a hard safety issue, but it increases iteration cost.)"
+        ],
+        "decision": "hard_reject",
+        "next_focus": "Submit a revised bounded probe that (1) enables only the temporally varying groups recency and video_age (and keeps other history groups disabled), with scheme=prior_days and smoothing m=20, and (2) explicitly uses the BPR ranking objective (not group_softmax), matching the best-performing family/setting from state. Also keep k=16 fixed and choose a single learning-rate candidate from the approved safe initial search space (0.0003/0.0005/0.001) to maintain minimality.",
+        "rationale": "Hard-reject as specified because the proposal is internally inconsistent with the method card and the existing best result: it enables multiple history groups (user_author/user_rate/user_tab/tab_cross) beyond the stated minimal \u201crecency + video_age\u201d hypothesis, and it does not explicitly ensure the ranking loss matches the best observed BPR setting (the only provided parent that is strong is bpr; a group_softmax parent is referenced in the proposal, while the method card only says the loss is unchanged, not that it will switch to BPR)."
+      },
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "critic_rejected",
+      "updated_at": "2026-08-31T06:21:51.517327+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:21:36.800548+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "274619f05a712dec",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "Method card: history_features (DIN-style user history as extra FM fields), including groups, prior_days vs leave_one_out, and smoothing m=(positives+m*prior)/(count+m).",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "A strict history_features ablation using only time-varying recency (days since last long_view) and video_age, with prior_days smoothing (m=20), will more cleanly improve within-user top-5 long_view ordering than broader history bundles while reducing noisy/weak tables that do not reliably vary across candidate impressions.",
+      "hypothesis_id": "hf_recency_videoage_only_priorDays_m20_lr3e4",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "Because within-user ordering is sensitive only to signals that vary across the candidate set, isolating the two strongest temporally varying history mechanisms should yield a higher nDCG@5/primary tradeoff than the larger multi-group configuration previously enabled.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:21:36.800548+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:21:30.123866+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "b2cc8d0f749e2192",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD history_features",
+          "title": "KuaiRand history_features method card: defines leakage-safe, train-only smoothed long_view history groups (including recency and video_age) and the prior_days vs leave_one_out schemes for temporal alignment",
+          "url": "https://arxiv.org/abs/1706.06978"
+        },
+        {
+          "method_card_id": "DATA_CARD within-user ranking invariance",
+          "title": "Data card: user-only static features contribute exactly 0 to within-user ranking because they are constant within a user and therefore cannot reorder items within that user\u2019s candidate set",
+          "url": "N/A (provided in prompt)"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Using history_features with only time-varying recency and video_age (no user_rate/user_author/user_tab or tab_cross) will yield cleaner within-user top-5 long_view ordering than broader bundles by avoiding noisy, weakly intra-user varying rate tables.",
+      "hypothesis_id": "histfeat_recency_videoage_only_prior_smooth20",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "nDCG@5 depends on subtle within-user rank shifts, and the method card\u2019s DIN-style history groups plus the dataset evidence suggest we should emphasize history signals that change with candidate context/time rather than mostly constant user-level propensity fields.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:21:30.123866+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:09:23.611729+00:00",
+      "delta_vs_baseline": -0.10825140151977541,
+      "discovery_id": "c67ca7bedb1ee718",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Method card: Same-user Group Softmax objective (log-softmax over [positive, negatives] scaled by temperature) and resulting score gradient softmax - one_hot",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": "gs_temp_0p5_bs1024_ep8_lr5e4_neg4_seed42",
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 2,
+      "hypothesis": "In within-user group softmax, annealing temperature (high\u2192low) sharpens early listwise competition and later focuses gradients on hard top-5 ordering, improving nDCG@5 without excessive GAUC regression.",
+      "hypothesis_id": "gs_temp_anneal_pos_sharpen",
+      "last_iteration": 2,
+      "metrics": {
+        "GAUC": 0.51341712474823,
+        "nDCG@5": 0.47328007221221924,
+        "primary": 0.4933485984802246,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 1024,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 4,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 2.0
+      },
+      "proposed_count": 1,
+      "rationale": "Group softmax uses a temperature-controlled softmax over (positive + K negatives); annealing is a controlled way to change the sharpness of listwise normalization toward top-heavy ranking while keeping the same underlying objective.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T06:21:13.469557+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:09:16.634975+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "3dbfd00c80728a33",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Same-user Group Softmax objective and temperature scaling (score_gradients = softmax - one_hot; loss = -log_softmax(pos))",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 2,
+      "hypothesis": "For within-user listwise optimization, using a moderate temperature (1.0) with a smaller same-user group size (K=5 items \u21d2 negatives_per_group=4) will stabilize group softmax gradients versus the previously sharp temp regime and improve nDCG@5 top-5 placement while keeping GAUC from regressing.",
+      "hypothesis_id": "gs_midtemp_k4_lr5e4_bs1024_ep10_anneal_none",
+      "last_iteration": 2,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 1024,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_group": 4,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 1.0
+      },
+      "proposed_count": 1,
+      "rationale": "Compared with the only recorded poor group_softmax setting (K=8, temp=0.5), reducing K and using a mid-range temperature should reduce softmax overconfidence/variance while preserving listwise competition among the same user\u2019s candidates.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:09:16.634975+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:09:07.866546+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "b52cd9b1e34af15c",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "Same-user Group Softmax objective and safe initial search space (K and temperature) from method card.",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 2,
+      "hypothesis": "Using group softmax with a smaller same-user group size (K=4) and a higher temperature (2.0) will stabilize the listwise normalization and better optimize top-5 ordering for long_view than the earlier sharp K=8, temp=0.5 setting.",
+      "hypothesis_id": "gs_tmp2_K4_lr1e3_bs2048_ep6_seed42",
+      "last_iteration": 2,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 2048,
+        "epochs": 6,
+        "k": 16,
+        "learning_rate": 0.001,
+        "negatives_per_group": 4,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 2.0
+      },
+      "proposed_count": 1,
+      "rationale": "The previous group_softmax run (K=8, temperature=0.5) underperformed heavily, so adjusting list sharpness and effective group competition offers a targeted fix for within-user ranking without changing FM capacity or feature leakage boundaries.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:09:07.866546+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:03:11.185462+00:00",
+      "delta_vs_baseline": 0.0011007102966308357,
+      "discovery_id": "0d724032e22a8614",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD_bpr",
+          "title": "BPR loss and gradient for implicit-feedback ranking",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": "bpr_lr1e3_neg2_bs4096_ep8_k16_seed42",
+      "failure": null,
+      "family": "bpr",
+      "first_iteration": 1,
+      "hypothesis": "With within-user BPR, using a stronger learning rate (1e-3) and more same-user negatives per positive (2) will better sharpen top-5 ordering for long_view, improving nDCG@5/GAUC versus the baseline LR/more cautious schedules.",
+      "hypothesis_id": "bpr_curriculum_lr1e-3_neg2",
+      "last_iteration": 1,
+      "metrics": {
+        "GAUC": 0.6689174175262451,
+        "nDCG@5": 0.5364840030670166,
+        "primary": 0.6027007102966309,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.001,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "Pairwise BPR directly optimizes relative ordering inside each user and should benefit from faster convergence plus denser same-user negative comparisons for top-heavy metrics.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T06:08:51.725965+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:02:38.803442+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "3e267d1d7077194e",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "BPR objective and same-user pairwise ranking for implicit feedback",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "bpr",
+      "first_iteration": 1,
+      "hypothesis": "Within-user temperature-scaled BPR (softplus(-((s_pos-s_neg)/t))) ) with explicit safeguards to skip users that lack both positive and negative impressions will improve nDCG@5 by sharpening hard top-5 pair orderings without changing the leakage-safe within-user pairing semantics.",
+      "hypothesis_id": "bpr_temp_scaled_marginfree_skip_degenerate_20260831",
+      "last_iteration": 1,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "A tighter pairwise score-gap scaling can better correct top-heavy misorderings while avoiding degenerate users that cannot form valid within-user pairs.",
+      "rejection": {
+        "concerns": [
+          "No supplied evidence (from the provided bpr method card or prior measured results) that BPR temperature scaling/margin scaling improves GAUC/nDCG@5 for this specific FMRanker within-user long_view task.",
+          "Implementation risk: temperature scaling must be translated into correct per-row score gradients passed to FMRanker.gradients(); if mishandled it can effectively act like an unplanned learning-rate/gradient-shape change and destabilize training without a specific numerical-safety plan beyond generic clipping.",
+          "Unclear how the degenerate-user skip aligns with the organizer/trusted same-user sampling & grouping construction; applying skips inconsistently can unintentionally bias training instances.",
+          "Compared to the higher-likelihood alternatives explicitly flagged by the organizers (ranking objective switch to group_softmax, or interaction history_features, or multi_task), this is likely a weaker first probe."
+        ],
+        "decision": "borderline_reject",
+        "next_focus": "Run an executable bounded probe switching the ranking objective family to `group_softmax` (listwise/group ranking within each user) while keeping FM embedding_dim=16 and a minimal hyperparameter grid; alternatively (higher likelihood), introduce `history_features` (strictly past-only recency/last-N behavioral interest) under the existing single-task setup before any BPR-specific temperature tuning.",
+        "rationale": "No hard safety/contract violations are identified, but this proposal is a small BPR variant (temperature scaling + degenerate-user skipping) without any supplied evidence that score-gap/temperature scaling improves within-user long_view ranking under the existing FMRanker setup. Additionally, it is lower-likelihood than the organizers\u2019 explicitly recommended next directions (group_softmax listwise/group ranking; history_features behavioral modeling; multi_task auxiliary heads)."
+      },
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "critic_rejected",
+      "updated_at": "2026-08-31T06:02:46.217236+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:02:30.036592+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "bda134870e147ea3",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD bpr",
+          "title": "METHOD CARD: Bayesian Personalized Ranking (BPR) \u2014 same-user negative sampling; 1\u20132 negatives per positive; resample negatives every epoch; FM embedding dim fixed at 16",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "bpr",
+      "first_iteration": 1,
+      "hypothesis": "Using standard BPR with two same-user negatives per positive (no temperature/aux heads), while resampling negatives each epoch and running a slightly longer schedule, will improve within-user long_view top-5 ordering (nDCG@5) under the method-card-aligned pairwise objective.",
+      "hypothesis_id": "bpr_same_user_2neg_lr3e4_epochs10",
+      "last_iteration": 1,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "This stays entirely within the BPR method card\u2019s safe pairwise setup and focuses compute on additional same-user comparison pairs, which should strengthen top-heavy discrimination without changing leakage-safe within-user semantics.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:02:30.036592+00:00"
+    },
+    {
+      "created_at": "2026-08-31T06:02:19.469661+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "01d20d7e8552d360",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "Bayesian Personalized Ranking from Implicit Feedback (pairwise ranking objective; gradients on score differences)",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "bpr",
+      "first_iteration": 1,
+      "hypothesis": "For within-user long_view ranking, temperature-scaled BPR (softening/sharpening pairwise score gaps) combined with slightly more same-user negatives will improve nDCG@5 by better emphasizing hard top-5 misorderings without changing the leakage-safe within-user pairing semantics.",
+      "hypothesis_id": "bpr_temp_scaled_hardmix_v1",
+      "last_iteration": 1,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "BPR\u2019s pairwise objective directly targets relative ordering within a user, and adjusting the effective margin via temperature scaling can shift gradient focus toward hard negatives that determine top-5 ranking.",
+      "rejection": null,
+      "run_id": "kj_20260831T060138171972Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T06:02:19.469661+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:32:06.943666+00:00",
+      "delta_vs_baseline": -0.015143581962585473,
+      "discovery_id": "fdf5e96f55aa0c8e",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "Entire Space Multi-Task Model (ESMM) / multi-task auxiliary supervision for correlated behaviors",
+          "url": "https://arxiv.org/abs/1804.07931"
+        },
+        {
+          "method_card_id": "multi_task",
+          "title": "KuaiRand-Pure multi_task family: auxiliary heads (is_click/is_like/is_comment/etc.) train-only and combined as loss = ranking_loss + aux_weight * mean_t(BCE(head_t,target_t))",
+          "url": "https://github.com/kuairand/kuairand-starter-kit/blob/main/README.en.md"
+        }
+      ],
+      "experiment_id": "mt_click_comment_aux0p05_k16_lr3e4_e10_bs4096",
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Adding a low-weight is_comment auxiliary head on top of click-only supervision will better align shared FM embeddings with long_view intent signals that co-move with deeper engagement, improving nDCG@5/top-5 ordering without swamping the long_view ranking gradients.",
+      "hypothesis_id": "mt_click_comment_aux0p05_k16_lr3e4_e10_bs4096",
+      "last_iteration": 4,
+      "metrics": {
+        "GAUC": 0.6466119289398193,
+        "nDCG@5": 0.526300847530365,
+        "primary": 0.5864564180374146,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 10,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 1,
+        "patience": 3,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "Comment is rarer than click but correlated with downstream engagement, so enabling one additional auxiliary head should provide extra embedding supervision while keeping aux_weight small and controlled.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T05:37:07.828849+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:31:58.296743+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "fa9af37f74a5f22a",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "Method-card multi_task objective uses ranking_loss + aux_weight * mean_t(BCE(head_t, target_t)) over train-only auxiliary targets built by build_aux_labels",
+          "url": "https://arxiv.org/abs/1804.07931"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Warm up the FM with the long_view ranking loss for the first few epochs, then enable a low-weight click-only auxiliary BCE to steer shared embeddings without swamping early top-5 ordering.",
+      "hypothesis_id": "mt_rank_warmup_click_aux_stage0p1",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 20,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 3,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "Auxiliary gradients can dominate early training; delaying a small click-only aux term is a controlled mechanism to improve within-user nDCG@5 while preserving GAUC selection stability.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T05:31:58.296743+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:31:50.802807+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "5c75074e3a38662b",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "Entire Space Multi-Task Model / ESMM (ranking+auxiliary related tasks to share representations)",
+          "url": "https://arxiv.org/abs/1804.07931"
+        },
+        {
+          "method_card_id": "multi_task",
+          "title": "KuaiRand starter kit: multi-task auxiliary signals are the 3rd-highest-likelihood untested direction; aux_weight controls swamping risk",
+          "url": "https://github.com/kuairand/kuairand-starter-kit/blob/main/README.en.md"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Training the FM backbone with long_view ranking plus a low-weight shared auxiliary head for is_click and is_comment (no play_time) will improve within-user nDCG@5 by sharpening shared embeddings toward engagement behaviours that co-move with long_view, without swamping the ranking gradients.",
+      "hypothesis_id": "mt_click_comment_aux_weight010_seed43_v1",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 16,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 3,
+        "seed": 43,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "Compared with the previous click-only multi_task attempt, adding a very low-frequency but semantically closer comment signal at a moderate aux_weight tests whether correlated engagement structure helps top-5 ordering while staying in the known stable auxiliary-weight regime.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T05:31:50.802807+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:31:30.260826+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "d5be50ff56d33fc1",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "METHOD CARD multi_task: loss = ranking_loss + aux_weight * mean_t(BCE(head_t,target_t)); suggested safe start is click-only then add heads; aux_weight must be kept low (0.05\u20130.3) to avoid auxiliary swamping, and auxiliary targets are train-only via build_aux_labels.",
+          "url": "https://arxiv.org/abs/1804.07931"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Train the FM backbone with long_view ranking plus a low-weight multi-task auxiliary loss that enables BOTH is_click and play_time (log1p(play_time_ms)) heads (aux_weight=0.1, not ramped) to enrich shared embeddings without swamping within-user top-5 ordering.",
+      "hypothesis_id": "mt_click_playtime_auxw010_epochs08_bs4096_seed42",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "is_click has high frequency and play_time is a correlated engagement signal, so joint training should improve representation quality for long_view while a small aux_weight limits gradient interference that could hurt GAUC/nDCG@5.",
+      "rejection": {
+        "concerns": [
+          "Contract/intent mismatch: hypothesis claims enabling play_time head, but parameters set use_play_time=false.",
+          "Attribution problem: any validation change would reflect click-only aux, contradicting the stated jointly-training-with-play_time rationale."
+        ],
+        "decision": "hard_reject",
+        "next_focus": "Revise the probe to be internally consistent with one of the allowed safe strategies: (A) keep use_is_click=true and set use_play_time=true with low aux_weight (0.05\u20130.1), or (B) explicitly change the hypothesis to click-only aux and run that as the first step per the method card. Then submit that corrected, single-purpose configuration for a bounded validation probe.",
+        "rationale": "Hard-reject because the proposal\u2019s stated intent (enable BOTH is_click and play_time auxiliary heads) conflicts with the provided parameters (use_play_time=false). This would not test the intended multi-task click+playtime hypothesis, making the validation probe mis-specified and not attributable to play_time effects."
+      },
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "critic_rejected",
+      "updated_at": "2026-08-31T05:31:34.550458+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:31:18.821223+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "59d3e6cf96e3376a",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "METHOD CARD multi_task: ESMM-style auxiliary losses over shared FM embeddings; loss = ranking_loss + aux_weight * BCE(play_time/is_click/etc.); safe fixed aux_weight grid and cautions about auxiliary-gradient swamping (start 0.05\u20130.3; disable play_time first if needed).",
+          "url": "https://arxiv.org/abs/1804.07931"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Adding a very low-weight play_time auxiliary head alongside click-only supervision (fixed aux_weight, no ramp) will improve long_view representation quality and top-5 ordering by transferring shared embedding signal from higher-frequency engagement events without swamping the ranking gradients.",
+      "hypothesis_id": "mt_click_playtime_lowaux_fixed0p05_no_ramp_seed42_v1",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 20,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 3,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "ESMM-style multi-task sharing is expected to regularize embeddings, and the method card flags auxiliary swamping as the key failure mode\u2014so we keep aux_weight minimal and avoid any unverified training schedules while changing only the set of auxiliary heads.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T05:31:18.821223+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:31:10.360957+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "6d2db94491e41bef",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD_multi_task",
+          "title": "Entire Space Multi-Task Model (ESMM) / multi-task shared-supervision argument (auxiliary signals improve representation under related behaviours)",
+          "url": "https://arxiv.org/abs/1804.07931"
+        },
+        {
+          "method_card_id": "METHOD_CARD_multi_task",
+          "title": "Kit guidance: multi-task is the highest-priority untested direction after ranking-loss families",
+          "url": "https://github.com/kuairand/kuairand-starter-kit/blob/main/README.en.md"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Jointly training the long_view ranking backbone with a shared auxiliary click head and a low-weight play_time head using a linear aux_weight ramp will improve within-user top-5 ordering (nDCG@5) by steering embeddings toward sustained engagement without letting auxiliary gradients dominate early.",
+      "hypothesis_id": "mt_click_play_ramp_aux0p1_seed42",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 18,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 3,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "Compared to prior multi_task attempts, this targets the same shared-representation mechanism but replaces rare/sparse auxiliaries with a higher-frequency click signal plus a weak continuous watch-time proxy while mitigating swamping via a schedule.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T05:31:10.360957+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:30:46.838335+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "07885c7c9e08acb4",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "KuaiRand METHOD CARD multi_task: weighted auxiliary BCE over same shared FM embeddings with aux targets from build_aux_labels; warns about aux_weight swamping and suggests low aux_weight starting points",
+          "url": "https://arxiv.org/abs/1804.07931"
+        },
+        {
+          "method_card_id": "multi_task",
+          "title": "Entire Space Multi-Task Model (ESMM) motivates sharing representations across correlated post-click behaviours",
+          "url": "https://arxiv.org/abs/1804.07931"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Adding a small click+comment auxiliary BCE supervision (shared FM embeddings) with a warm-start protocol\u2014start with click-only aux for the first few epochs, then enable the comment head for the remaining training\u2014will improve within-user long_view top-5 ranking without swamping the ranking objective.",
+      "hypothesis_id": "mt_esmm_click_comment_warmstart_0p1",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 12,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 3,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "It increases representation learning using related behaviours (click/comment) while controlling gradient interference via a staged auxiliary activation, which directly targets nDCG@5-sensitive ordering changes.",
+      "rejection": {
+        "concerns": [
+          "Warm-start / epoch-dependent enabling of the comment auxiliary head is not specified in the multi_task method card and may be infeasible or incorrectly implemented under the trusted FMRanker training abstraction.",
+          "Parameter mismatch: the proposal sets use_is_comment=false while claiming it will later enable is_comment; without explicit scheduling support, the intended head may never train.",
+          "Attribution/protocol risk: the recommended ablation sequence (click-only control first, then add comment) is merged into one experiment, making it harder to tell whether any gain/loss is due to comment supervision or general regularization/optimization effects."
+        ],
+        "decision": "hard_reject",
+        "next_focus": "Do one bounded probe that is contract-consistent: (1) run click-only auxiliary BCE (use_is_click=true, use_is_comment=false, others false) as the control, then (2) run a separate probe enabling only is_comment (use_is_click=false or keep fixed per the method-card\u2019s incremental ablation rule) with the same aux_weight/budget. If you want warm-start, you must explicitly define a supported mechanism in candidate.py that truly changes head activation/aux_weight over epochs within the allowed training-loop abstraction (and confirm it matches the trusted builder\u2019s capabilities).",
+        "rationale": "The proposal relies on a \u201cwarm-start then enable is_comment\u201d schedule, but the provided multi_task method-card specifies only adding a weighted auxiliary BCE term with enabled heads; it does not define any epoch-dependent head activation/aux_weight scheduling. Given the candidate contract constraints (FMRanker training abstraction and only train-only aux labels via build_aux_labels), this warm-start protocol is not clearly executable in a contract-consistent way and may result in is_comment never actually contributing (parameters specify use_is_comment=false). Additionally, it combines the recommended stepwise search logic (click-only control, then incremental head add) into one non-attributable run, increasing the risk of misleading conclusions."
+      },
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "critic_rejected",
+      "updated_at": "2026-08-31T05:30:55.373139+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:30:38.905445+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "8f6489bea3fdb8c0",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "METHOD CARD multi_task: weighted auxiliary term over the same shared FM embeddings; safe start with aux_weight in {0.05,0.1,0.3,1.0} and begin with click-only then add one head at a time (click+comment).",
+          "url": "https://arxiv.org/abs/1804.07931"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Adding a constant auxiliary BCE head for is_comment alongside is_click (shared FM embeddings) with a small aux_weight will provide extra supervision that improves within-user top-5 long_view ordering without swamping the ranking objective.",
+      "hypothesis_id": "mt_click_comment_const_aux0p1_seed42",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 16,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 3,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "Unlike sequential/history objectives, multi-task shares representation learning signals that are correlated with long_view (click strongly, comment weakly but complementary), and a small aux_weight is intended to avoid auxiliary-gradient dominance.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T05:30:38.905445+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:30:30.545094+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "f609a49d5bc52285",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "Entire Space Multi-Task Model: shared representation benefits from auxiliary related tasks (click/like/watch behaviors)",
+          "url": "https://arxiv.org/abs/1804.07931"
+        },
+        {
+          "method_card_id": "multi_task",
+          "title": "KDD 2018 multi-gate mixture-of-experts motivates controlling task influence to avoid harming the primary objective",
+          "url": "https://arxiv.org/abs/1806.04647"
+        },
+        {
+          "method_card_id": "multi_task",
+          "title": "Multi_task family description: aux loss is added to the ranking loss on train-only auxiliary heads built by build_aux_labels",
+          "url": "https://github.com/hyz20/CWM"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Adding a sparse second auxiliary head (is_comment) alongside is_click, with a linearly-ramped aux_weight schedule (0\u2192aux_weight) over the first half of training, will better shape shared FM embeddings for long_view without early auxiliary-gradient swamping.",
+      "hypothesis_id": "mt_aux_click_comment_ramp_shared_fm_seed42_v1",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 20,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 3,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "Multi-task auxiliary supervision on related behaviors should improve the shared representation, while curriculum scheduling controls the risk that the auxiliary heads dominate the within-user ranking objective early.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T05:30:30.545094+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:30:08.481059+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "df0f7bdb6b845cc0",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "METHOD CARD multi_task: aux loss = ranking_loss + aux_weight*BCE over enabled heads (including is_click and play_time) with cautions about aux_weight swamping ranking and play_time being weakest.",
+          "url": "https://arxiv.org/abs/1804.07931"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Adding a tiny shared-playtime auxiliary BCE on top of click-only supervision (long_view ranking as primary) will improve within-user top-5 ordering by sharpening shared FM embeddings toward sustained-engagement signals without swamping the ranking head.",
+      "hypothesis_id": "mt_click_plus_playtime_aux_w0p10_seed42_v1",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 14,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 3,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "Compared to click-only, the additional play_time supervision is correlated with long_view (but weaker than click) and should provide extra representation pressure specifically helpful for nDCG@5 when weighted conservatively.",
+      "rejection": {
+        "concerns": [
+          "Intent/config mismatch: hypothesis claims play_time auxiliary is enabled, but `use_play_time` is false so the play_time head cannot contribute aux loss.",
+          "Because the run will not match the described contrast, it\u2019s unclear how the iteration informs the decision relative to the click-only control.",
+          "Epoch/early-stopping settings are not necessarily wrong, but given the configuration mismatch, the risk of wasting an iteration increases."
+        ],
+        "decision": "not_approved",
+        "next_focus": "Approve only after correcting the probe to match the stated hypothesis\u2014either (a) set `use_play_time=true` (and keep aux_weight small, e.g., 0.05) for a click+play_time aux run, or (b) revise the hypothesis to be explicitly \u201cclick-only multi_task\u201d to match `use_is_click=true` and `use_play_time=false` (the method card\u2019s recommended first step). Prefer the click-only multi_task control first if you want a clean baseline for adding play_time afterward.",
+        "rationale": "This proposal is not aligned with its stated experimental intent: it claims a \u201cclick-only supervision + play_time auxiliary\u201d probe, but the provided parameters set `use_play_time=false`, so the run cannot include the play_time auxiliary head and cannot test the hypothesized effect. While `multi_task` itself is a valid bounded direction, the current configuration would most likely execute (at most) click-only auxiliary training, making the probe unverifiable versus the intended hypothesis."
+      },
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "critic_rejected",
+      "updated_at": "2026-08-31T05:30:14.667253+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:30:00.754345+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "296b19bae1459284",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "METHOD CARD multi_task: weighted auxiliary BCE over shared FM embeddings; start click-only; auxiliary gradients can swamp ranking at large aux_weight; auxiliary targets are train-only via build_aux_labels.",
+          "url": "https://arxiv.org/abs/1804.07931"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Use a linear warmup curriculum for the multi-task auxiliary BCE, ramping a small (click+comment) aux_weight from 0 to 0.15 over the first half of training to shape shared FM embeddings without early auxiliary-gradient swamping of the long_view ranking head.",
+      "hypothesis_id": "mt_aux_click_comment_ramped_lin_0p15",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 16,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 3,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "A kit-supported, strictly specified aux-weight schedule should preserve the ranking head\u2019s early optimization while still leveraging correlated auxiliary supervision (click) plus a less-sparse second signal (comment) to improve top-5 within-user ordering (nDCG@5) and maintain GAUC.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T05:30:00.754345+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:29:51.470326+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "04b3de965112f2a3",
+      "evidence": [
+        {
+          "method_card_id": "multi_task",
+          "title": "Entire Space Multi-Task Model (ESMM): auxiliary task losses improve shared representation learning for post-click conversion related behaviors",
+          "url": "https://arxiv.org/abs/1804.07931"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "multi_task",
+      "first_iteration": 4,
+      "hypothesis": "Ramping a small click+like auxiliary loss weight only after the FM ranking head stabilizes will better shape shared embeddings for long_view, improving nDCG@5 without letting auxiliary gradients swamp the ranking objective early.",
+      "hypothesis_id": "mt_curriculum_click_like_ramp_aux_02_0410",
+      "last_iteration": 4,
+      "metrics": null,
+      "parameters": {
+        "aux_weight": 0.05,
+        "batch_size": 4096,
+        "epochs": 20,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 1,
+        "patience": 3,
+        "seed": 42,
+        "use_is_click": true,
+        "use_is_comment": false,
+        "use_is_follow": false,
+        "use_is_forward": false,
+        "use_is_like": false,
+        "use_play_time": false
+      },
+      "proposed_count": 1,
+      "rationale": "Compared to a constant aux_weight multi_task probe, a delayed/curriculum aux schedule should preserve within-user top-5 ordering dynamics while still leveraging ESMM-style auxiliary supervision when representations are already roughly aligned to long_view.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T05:29:51.470326+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:26:16.839886+00:00",
+      "delta_vs_baseline": 0.001047662162780738,
+      "discovery_id": "daed7c15c4c4645e",
+      "evidence": [
+        {
+          "method_card_id": "METHOD_CARD_history_features",
+          "title": "METHOD CARD history_features: hypotheses and safe initial search space; prior_days preferred; smoothing m; reserved unknown/history slot; within-user invariance notes on user-only terms",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": "hf_bpr_recency_author_ablate_m20_priordays_seed42",
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Isolating the event-time order-varying history mechanisms (recency + DIN-style user_author long_view affinity) with prior_days smoothing (m=20) will improve within-user top-5 long_view ranking more than broader history bundles by avoiding dilution from mostly constant-within-user signals.",
+      "hypothesis_id": "hf_recency_userauthor_ablate_m20_priordays",
+      "last_iteration": 3,
+      "metrics": {
+        "GAUC": 0.6688075065612793,
+        "nDCG@5": 0.5364878177642822,
+        "primary": 0.6026476621627808,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 8,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "The method card and within-user-ranking invariance state that user-only/constant terms add no intra-user ordering signal, so focusing capacity on the two explicitly order-varying groups (recency and user_author) provides a cleaner, more attribution-aligned test under leakage-safe prior_days history building.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T05:29:35.523749+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:26:08.040255+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "9153504004b39a81",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "METHOD CARD: history_features (prior_days smoothing, reserved unknown slot, DIN-inspired user_author, recency/video_age/tab_cross grouping)",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Using only event-time recency (days-since-last-long_view) plus the DIN-style user_author long_view affinity, with prior_days smoothing (m=20) and the reserved unknown-history slot, will improve within-user top-5 ordering more than adding broader history groups because these two components are the most order-varying and directly tied to near-term intent.",
+      "hypothesis_id": "hf_recency_user_author_prior_smooth20_mini_ablation_20260831",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 12,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "The starter kit evidence suggests static/user-only features and un-ablated full history bundles are hard to attribute and may include weak/near-constant parts, so isolating recency+user_author provides a leakage-safe, mechanism-focused test under the registered history_features design.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T05:26:08.040255+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:26:00.838877+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "b25e2664f415f6f7",
+      "evidence": [
+        {
+          "method_card_id": "history_features",
+          "title": "History_features family: long_view-only history idea, recency and smoothed rate tables, prior_days vs leave_one_out scheme, and unknown-history reserved slot.",
+          "url": "https://arxiv.org/abs/1706.06978"
+        }
+      ],
+      "experiment_id": null,
+      "failure": null,
+      "family": "history_features",
+      "first_iteration": 3,
+      "hypothesis": "Using only event-time, long_view-only user history encoded as discretized recency bins (1/3/7/14 days) for each user-candidate pair, with prior_days smoothing (m\u224820, unknown-history as reserved slot), should increase top-5 within-user separability for long_view versus the default broader history feature bundle while avoiding leave_one_out leakage risk.",
+      "hypothesis_id": "hf_recency_weighted_longview_priordays_only_smooth20_seed42",
+      "last_iteration": 3,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 12,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_positive": 1,
+        "patience": 2,
+        "scheme": "prior_days",
+        "seed": 42,
+        "smoothing": 20.0,
+        "use_recency": true,
+        "use_tab_cross": true,
+        "use_user_author": true,
+        "use_user_rate": true,
+        "use_user_tab": true,
+        "use_video_age": true
+      },
+      "proposed_count": 1,
+      "rationale": "Within-user ranking needs history-conditioned, ordering-varying signals; a focused recency-weighted history ablation isolates the most likely transferable component and reduces noise from weaker history tables.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "proposed",
+      "updated_at": "2026-08-31T05:26:00.838877+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:22:04.181947+00:00",
+      "delta_vs_baseline": -0.10371799144744875,
+      "discovery_id": "3a8b3ef72f9d7f0f",
+      "evidence": [
+        {
+          "method_card_id": "group_softmax",
+          "title": "METHOD CARD: group_softmax (Same-user Group Softmax) \u2014 logits/softmax loss, safe search space (K in {4,8}, temperature in {0.5,1.0,2.0}, LR in {0.0003,0.0005,0.001}, embedding dim fixed at 16, batch sizes {512,1024,2048})",
+          "url": "https://www.microsoft.com/en-us/research/publication/learning-to-rank-from-pairwise-approach-to-listwise-approach/"
+        }
+      ],
+      "experiment_id": "gs_listwise_temp050_K8_lr3e4_bs1024_e6_p2_seed42",
+      "failure": null,
+      "family": "group_softmax",
+      "first_iteration": 2,
+      "hypothesis": "Using group softmax over K=8 same-user candidates with a sharper temperature (0.5) will better optimize top-5 within-user ordering for long_view than the flatter temperature regimes, improving nDCG@5 without hurting GAUC.",
+      "hypothesis_id": "gs_listwise_temp050_K8_lr3e4_bs1024_seed42_e6_p2_v1",
+      "last_iteration": 2,
+      "metrics": {
+        "GAUC": 0.5188197493553162,
+        "nDCG@5": 0.4769442677497864,
+        "primary": 0.49788200855255127,
+        "rows": 124909.0,
+        "users": 22377.0
+      },
+      "parameters": {
+        "batch_size": 1024,
+        "epochs": 6,
+        "k": 16,
+        "learning_rate": 0.0003,
+        "negatives_per_group": 8,
+        "patience": 2,
+        "seed": 42,
+        "temperature": 0.5
+      },
+      "proposed_count": 1,
+      "rationale": "Listwise softmax directly matches within-user competition among a positive and multiple same-user negatives, and lowering temperature increases gradients on the hardest rank violations (top-heavy corrections).",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "success",
+      "updated_at": "2026-08-31T05:25:40.480790+00:00"
+    },
+    {
+      "created_at": "2026-08-31T05:20:51.202827+00:00",
+      "delta_vs_baseline": null,
+      "discovery_id": "339b0f37c7105e86",
+      "evidence": [
+        {
+          "method_card_id": "bpr",
+          "title": "BPR pairwise ordering objective and gradient w.r.t. score difference d = s_pos - s_neg",
+          "url": "https://arxiv.org/abs/1205.2618"
+        }
+      ],
+      "experiment_id": "bpr_scaled_softplus_alpha2_4096x16_lr5e4_neg2_e6_p2_s42",
+      "failure": null,
+      "family": "bpr",
+      "first_iteration": 1,
+      "hypothesis": "Using a temperature-scaled BPR loss softplus(-alpha*(s_pos-s_neg)) will sharpen within-user relative preference for hard same-user negatives, improving top-5 nDCG while preserving GAUC.",
+      "hypothesis_id": "bpr:scaled_softplus_temp_alpha_hardneg",
+      "last_iteration": 1,
+      "metrics": null,
+      "parameters": {
+        "batch_size": 4096,
+        "epochs": 6,
+        "k": 16,
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2,
+        "patience": 2,
+        "seed": 42
+      },
+      "proposed_count": 1,
+      "rationale": "BPR\u2019s pairwise ordering gradient depends directly on the score difference magnitude; scaling it (alpha>1) should increase gradient for hard violations and better align with within-user top-k ranking.",
+      "rejection": null,
+      "run_id": "kj_20260831T051951445352Z_research",
+      "status": "failed",
+      "updated_at": "2026-08-31T05:21:40.674211+00:00"
+    }
+  ],
+  "updated_at": "2026-08-31T07:40:48.773696+00:00"
+}

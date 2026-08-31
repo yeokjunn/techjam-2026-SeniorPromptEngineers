@@ -273,6 +273,13 @@ class AuxiliaryLabelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_aux_labels(np.zeros((len(self.AUX) + 1, 5)), self.spec())
 
+    def test_aux_labels_accepts_integer_index_slice(self):
+        spec = self.spec()
+        full = self.build(spec)
+        indices = np.array([1, 3], dtype=np.int32)
+        sliced = build_aux_labels(indices, spec)
+        np.testing.assert_array_equal(sliced, full[indices])
+
 
 class RegistryContractTests(unittest.TestCase):
     """The registry entries must match what the trusted builders actually provide."""

@@ -45,6 +45,7 @@ from src.evaluation.official import (
     REPO_ROOT,
     TRAIN_END,
     TRAIN_START,
+    load_random_validation,
     load_test_meta,
     load_train_valid,
 )
@@ -70,7 +71,7 @@ RECENCY_CAP_DAYS = 14
 DEFAULT_SMOOTHING = 20.0
 DEFAULT_SCHEME = "prior_days"
 SCHEMES = ("prior_days", "leave_one_out")
-SPLITS = ("train", "valid", "test")
+SPLITS = ("train", "valid", "test", "random_valid")
 
 # Kit row layout: (date, user_id, video_id, author_id, tab, duration_ms, long_view)
 _DATE, _USER, _VIDEO, _AUTHOR, _TAB, _DURATION, _LABEL = range(7)
@@ -152,9 +153,12 @@ def _split_rows(spec: dict, split: str, expected: int) -> tuple[list, list, dict
     data_dir = _resolve_data_dir(spec)
     try:
         splits = _cached_train_valid(str(data_dir))
-        target = (
-            _cached_test_rows(str(data_dir), expected) if split == "test" else splits[split]
-        )
+        if split == "test":
+            target = _cached_test_rows(str(data_dir), expected)
+        elif split == "random_valid":
+            target = load_random_validation(data_dir)
+        else:
+            target = splits[split]
         uploads = _cached_upload_ordinals(str(data_dir))
     except (OSError, KeyError) as exc:
         raise FeatureDataUnavailable(
@@ -510,6 +514,9 @@ def build_aux_labels(rows, spec: dict) -> np.ndarray:
     order. ``is_click`` and ``is_like`` are binary; ``play_time`` is ``log1p`` compressed and
     min-max scaled on train.
 
+    Accepts either the full train row matrix (where ``len(rows) == len(train)``) or a 1D integer
+    array/list of row indices to slice directly.
+
     **Train-only by construction.** A loss touches train rows only, so no valid/test path exists
     and none may be added -- this raises for any other split rather than silently returning
     something a scorer could misuse.
@@ -523,19 +530,35 @@ def build_aux_labels(rows, spec: dict) -> np.ndarray:
     if not heads:
         raise ValueError("At least one auxiliary head must be enabled.")
 
-    expected = len(rows)
     columns = _aux_columns(spec)
     available = len(columns["is_click"])
-    if available != expected:
-        raise ValueError(
-            f"Auxiliary train columns have {available} rows but {expected} were passed; "
-            "row order and length must match the kit's."
-        )
 
-    targets = np.empty((expected, len(heads)), dtype=np.float32)
+    is_index_slice = False
+    row_indices = None
+    if isinstance(rows, np.ndarray) and np.issubdtype(rows.dtype, np.integer) and rows.ndim == 1:
+        if len(rows) != available:
+            is_index_slice = True
+            row_indices = rows
+    elif isinstance(rows, (list, tuple)) and len(rows) > 0 and isinstance(rows[0], (int, np.integer)) and len(rows) != available:
+        is_index_slice = True
+        row_indices = np.asarray(rows, dtype=np.int64)
+
+    if not is_index_slice:
+        expected = len(rows)
+        if available != expected:
+            raise ValueError(
+                f"Auxiliary train columns have {available} rows but {expected} were passed; "
+                "row order and length must match the kit's."
+            )
+
+    full_len = available if is_index_slice else len(rows)
+    targets = np.empty((full_len, len(heads)), dtype=np.float32)
     for index, head in enumerate(heads):
         values = columns[head]
         targets[:, index] = (
             _scaled_play_time(values) if head == "play_time" else values
         ).astype(np.float32)
+
+    if is_index_slice and row_indices is not None:
+        return targets[row_indices]
     return targets

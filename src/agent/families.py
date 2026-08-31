@@ -62,6 +62,28 @@ TRUSTED_CALL_SIGNATURES = {
     "build_aux_labels": "(rows, spec)",
 }
 
+TRUSTED_CALL_RETURNS = {
+    "sample_bpr_pairs": (
+        "returns (positives, negatives), both int64 row indices of shape (n_pairs,), parallel "
+        "and 1-D"
+    ),
+    "sample_softmax_groups": (
+        "returns (positives, negatives) row indices: positives (n_groups,), negatives "
+        "(n_groups, negatives_per_group) -- already 2-D, do NOT reshape"
+    ),
+    "build_features": (
+        "returns (len(rows), enabled_groups) int32, already offset by field_offset. Call once "
+        "per split with spec['split'] matching the rows you pass: the row count is checked "
+        "against the trusted split"
+    ),
+    "build_aux_labels": "returns (len(rows), enabled_heads) float32 in [0, 1], train split only",
+    "FMRanker": (
+        "the trusted FM: sparse field-index gather plus Adam. Do NOT re-implement it with a "
+        "dense one-hot matrix -- that overflows to NaN and breaks attribution against the "
+        "official baseline"
+    ),
+}
+
 # Literals, deliberately not imported from ``src.models.features``: ``types.py`` imports this
 # module, so this import must stay light (no numpy). ``tests/test_features.py`` pins them equal
 # to the feature module's own tuples, so the duplication cannot drift silently.
@@ -182,18 +204,26 @@ def _render_grid_value(value: Any) -> str:
     return ", ".join(repr(item) if isinstance(item, str) else str(item) for item in value)
 
 
+def _signature(call: str) -> str:
+    qualified = _qualified(call)
+    sig = TRUSTED_CALL_SIGNATURES.get(call, "()")
+    rendered = f"{qualified}{sig}"
+    returns = TRUSTED_CALL_RETURNS.get(call)
+    return f"{rendered} -- {returns}" if returns else rendered
+
+
 def builder_brief(name: str) -> str:
     """Prompt text for the Builder: the mandatory trusted calls plus the approved grid.
 
     Consumed by ``roles.py`` so no role prompt has to track the family list by hand.
     """
     entry = FAMILIES[name]
-    lines = []
+    lines = [
+        "candidate_id must match [A-Za-z0-9_-]{1,80} -- letters, digits, underscore and hyphen "
+        "only. No dots, spaces or other punctuation (it becomes a directory name).",
+    ]
     for group in required_call_groups(name):
-        rendered = ", ".join(
-            f"{_qualified(call)}{TRUSTED_CALL_SIGNATURES.get(call, '()')}"
-            for call in group
-        )
+        rendered = ", ".join(_signature(call) for call in group)
         if len(group) == 1:
             lines.append(f"You must call {rendered}.")
         else:

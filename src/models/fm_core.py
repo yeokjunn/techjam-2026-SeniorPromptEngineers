@@ -39,8 +39,15 @@ class FMRanker:
         scores = self.b + self.W[features].sum(axis=1) + interactions
         return scores, embeddings, summed
 
-    def gradients(self, features: np.ndarray, score_gradients: np.ndarray):
-        _, embeddings, summed = self.logits(features)
+    def gradients(
+        self,
+        features: np.ndarray,
+        score_gradients: np.ndarray,
+        embeddings: np.ndarray | None = None,
+        summed: np.ndarray | None = None,
+    ):
+        if embeddings is None or summed is None:
+            _, embeddings, summed = self.logits(features)
         grad_v = np.zeros_like(self.V)
         grad_w = np.zeros_like(self.W)
         np.add.at(grad_w, features, score_gradients[:, None])

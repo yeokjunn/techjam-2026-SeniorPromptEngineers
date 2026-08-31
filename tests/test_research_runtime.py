@@ -116,8 +116,100 @@ class RuntimeSchemaTests(unittest.TestCase):
             self.assertIn("primary=0.605", text)
             self.assertIn("https://arxiv.org/abs/1205.2618", text)
 
+    def test_discovery_store_persists_non_web_failure_with_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "discoveries.json"
+            store = DiscoveryStore(path)
+            decision = ResearchDecision.from_dict(research_payload("bpr", needs_web=True))
+            node = ExperimentNode(
+                2, "failed_bpr", decision.hypothesis_id, "bpr", "explore",
+                decision.parameters, "failed",
+            )
+            store.record_proposal(2, decision, run_id="run-2")
+            store.record_outcome(
+                2, decision, node, 0.6016, run_id="run-2", failure="training diverged"
+            )
+
+            text = DiscoveryStore(path).prompt_text()
+            self.assertIn("run=run-2", text)
+            self.assertIn("training diverged", text)
+            self.assertIn("parameters=", text)
+
 
 class PolicyTests(unittest.TestCase):
+    def test_official_convergence_stops_even_with_pending_replications(self):
+        state = RunState("run", "running", "now", 0.6016)
+        state.pending_replications = [{"source_experiment": "lead", "seed": 2}]
+        for iteration, score in enumerate((0.6017, 0.6018, 0.6019), start=1):
+            state.nodes.append(ExperimentNode(
+                iteration, f"e{iteration}", f"h{iteration}", "bpr", "explore",
+                {}, "success", {"primary": score},
+            ))
+        self.assertFalse(SearchPolicy(0.002, 3, [1, 2]).should_stop(state))
+        state.nodes.append(ExperimentNode(
+            4, "e4", "h4", "bpr", "explore", {}, "success", {"primary": 0.6019},
+        ))
+        self.assertTrue(SearchPolicy(0.002, 3, [1, 2]).should_stop(state))
+
+    def test_family_exploration_prefers_an_underexplored_non_best_family(self):
+        state = RunState("run", "running", "now", 0.6016)
+        state.best_experiment_id = "lead"
+        state.best_metrics = {"primary": 0.604}
+        state.nodes.append(ExperimentNode(
+            1, "lead", "lead_bpr", "bpr", "explore", {}, "success",
+            {"primary": 0.604}, duration_seconds=10,
+        ))
+        state.proposal_attempts = 1
+        context = SearchPolicy(0.002, 3, []).search_context(state)
+        self.assertEqual(context["allocation"], "family_explore")
+        self.assertNotEqual(context["family"], "bpr")
+
+    def test_beam_is_bounded_and_cost_aware(self):
+        state = RunState("run", "running", "now", 0.6016, meaningful_best=0.6016)
+        nodes = [
+            ExperimentNode(1, "fast", "fast_mechanism", "bpr", "explore", {}, "success", {"primary": 0.604}, duration_seconds=10),
+            ExperimentNode(2, "slow", "slow_mechanism", "group_softmax", "explore", {}, "success", {"primary": 0.604}, duration_seconds=100),
+            ExperimentNode(3, "history", "history_mechanism", "history_features", "explore", {}, "success", {"primary": 0.603}, duration_seconds=20),
+            ExperimentNode(4, "multi", "multi_mechanism", "multi_task", "explore", {}, "success", {"primary": 0.6025}, duration_seconds=20),
+        ]
+        state.nodes.extend(nodes)
+        frontier = SearchPolicy(0.002, 3, []).refresh_frontier(state)
+        self.assertLessEqual(len(frontier), 3)
+        ranks = {item["experiment_id"]: item["priority"] for item in frontier}
+        self.assertIn("fast", ranks)
+        if "slow" in ranks:
+            self.assertGreater(ranks["fast"], ranks["slow"])
+
+    def test_failed_parent_is_never_admitted(self):
+        state = RunState("run", "running", "now", 0.6016)
+        state.nodes.append(ExperimentNode(1, "bad", "same_mechanism", "bpr", "explore", {}, "failed"))
+        decision = ResearchDecision.from_dict(research_payload("bpr"))
+        admitted = SearchPolicy(0.002, 3, []).admit_decision(
+            state, decision, {"parent_experiment": "bad"}
+        )
+        self.assertIsNone(admitted.parent_experiment)
+
+    def test_duplicate_is_blocked_before_training(self):
+        state = RunState("run", "running", "now", 0.6016)
+        policy = SearchPolicy(0.002, 3, [])
+        decision = ResearchDecision.from_dict(research_payload("bpr"))
+        policy.commit_decision(state, decision)
+        with self.assertRaisesRegex(ValueError, "Duplicate or near-duplicate"):
+            policy.admit_decision(state, decision, {"parent_experiment": None})
+        self.assertEqual(state.search_stats["duplicates_avoided"], 1)
+
+    def test_two_failures_close_branch_and_resume_round_trip(self):
+        state = RunState("run", "running", "now", 0.6016)
+        policy = SearchPolicy(0.002, 3, [])
+        for index in (1, 2):
+            node = ExperimentNode(index, f"failed_{index}", f"different_mechanism_{index}", "multi_task", "explore", {}, "failed")
+            state.nodes.append(node)
+            policy.observe_outcome(state, node)
+        self.assertIn("family:multi_task", state.closed_branches)
+        restored = RunState.from_dict(json.loads(json.dumps(state.to_dict())))
+        self.assertEqual(restored.closed_branches, state.closed_branches)
+        self.assertLessEqual(len(restored.search_frontier), 3)
+
     def test_family_coverage_is_reported_not_required(self):
         state = RunState("run", "running", "now", 0.6016, meaningful_best=0.6016)
         cov = sorted(coverage_families())
@@ -127,7 +219,7 @@ class PolicyTests(unittest.TestCase):
                     i, family, f"h{i}", family, "explore", {}, "success", {"primary": 0.601}
                 )
             )
-        self.assertIsNone(required_family(state))
+        self.assertEqual(required_family(state), cov[-1])
         self.assertFalse(coverage_complete(state))
         state.nodes.append(
             ExperimentNode(
@@ -148,11 +240,69 @@ class PolicyTests(unittest.TestCase):
     def test_state_round_trip_preserves_completed_nodes(self):
         state = RunState("run", "running", "now", 0.6016)
         state.nodes.append(
-            ExperimentNode(1, "x", "h", "bpr", "explore", {}, "success", {"primary": 0.6})
+            ExperimentNode(
+                1,
+                "x",
+                "h",
+                "bpr",
+                "explore",
+                {},
+                "success",
+                {"primary": 0.6},
+                topk_diagnostics={"top5_hit_rate": 0.5},
+            )
         )
         restored = RunState.from_dict(json.loads(json.dumps(state.to_dict())))
         self.assertEqual(len(restored.nodes), 1)
         self.assertEqual(restored.nodes[0].experiment_id, "x")
+        self.assertEqual(restored.nodes[0].topk_diagnostics["top5_hit_rate"], 0.5)
+
+    def test_ndcg_focus_adds_acquisition_bonus_without_changing_best_metric(self):
+        state = RunState(
+            "run",
+            "running",
+            "now",
+            0.6016,
+            meaningful_best=0.6016,
+            best_metrics={"GAUC": 0.6720, "nDCG@5": 0.5360, "primary": 0.6040},
+        )
+        state.nodes.extend(
+            [
+                ExperimentNode(
+                    1,
+                    "plain",
+                    "plain",
+                    "bpr",
+                    "explore",
+                    {},
+                    "success",
+                    {"GAUC": 0.6700, "nDCG@5": 0.5360, "primary": 0.6030},
+                    duration_seconds=10,
+                ),
+                ExperimentNode(
+                    2,
+                    "hard",
+                    "hard_negative",
+                    "bpr",
+                    "explore",
+                    {"hard_negative_strategy": "baseline_score"},
+                    "success",
+                    {"GAUC": 0.6690, "nDCG@5": 0.5390, "primary": 0.6040},
+                    duration_seconds=10,
+                ),
+            ]
+        )
+        policy = SearchPolicy(
+            0.002,
+            3,
+            [],
+            ndcg_focus={"enabled": True, "ndcg_lag_trigger": 0.003, "min_gauc_lead": 0.002},
+        )
+        frontier = policy.refresh_frontier(state)
+        hard = next(item for item in frontier if item["experiment_id"] == "hard")
+        self.assertGreater(hard["ndcg_bonus"], 0.0)
+        policy.observe_success(state, state.nodes[0])
+        self.assertEqual(state.best_experiment_id, "official_fm_seed0" if state.best_experiment_id else None)
 
 
 class PromptStructureTests(unittest.TestCase):
@@ -255,7 +405,7 @@ class PromptStructureTests(unittest.TestCase):
             state = RunState("run", "running", "now", 0.6016)
             roles.research(state, 2, "bpr")
             prompt = provider.calls[0]["prompt"]
-            self.assertIn("PERSISTENT WEB DISCOVERIES:", prompt)
+            self.assertIn("PERSISTENT CROSS-RUN RESEARCH MEMORY:", prompt)
             self.assertIn("https://arxiv.org/abs/1205.2618", prompt)
 
     def test_builder_prompt_requires_test_scores(self):
@@ -266,6 +416,7 @@ class PromptStructureTests(unittest.TestCase):
         self.assertIn("Return `test_scores`", BASE_CANDIDATE_CONTRACT)
 
     def test_builder_prompt_matches_sandbox_and_unittest_runner(self):
+        self.assertIn("src.models.features", BASE_CANDIDATE_CONTRACT)
         self.assertIn("Never call getattr", BASE_CANDIDATE_CONTRACT)
         self.assertIn("never import from parent packages", BASE_CANDIDATE_CONTRACT)
         self.assertIn("python -m unittest -v test_candidate.py", BASE_CANDIDATE_CONTRACT)

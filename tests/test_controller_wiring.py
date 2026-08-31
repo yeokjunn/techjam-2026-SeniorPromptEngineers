@@ -488,11 +488,19 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
                     covered = successful_state("bpr", "group_softmax")
                     self.assertTrue(policy.coverage_complete(covered))
                     self.assertIsNone(policy.required_family(covered))
-                    self.assertIsNone(policy.required_family(successful_state("bpr")))
+                    self.assertEqual(
+                        policy.required_family(successful_state("bpr")),
+                        "group_softmax",
+                    )
                     # The stop rule itself, which is what the run hangs on: with
                     # coverage read off `family_names()` this is False forever and
                     # the run can only end on a budget, never `converged`.
-                    covered.stagnant_iterations = 3
+                    covered.nodes.append(
+                        ExperimentNode(
+                            3, "e3", "h3", "bpr", "explore", {}, "success",
+                            {"primary": 0.601},
+                        )
+                    )
                     self.assertTrue(policy.SearchPolicy(0.002, 3, [1, 2]).should_stop(covered))
 
         # E's `coverage_families()` does not exist yet, so `policy.py` falls back
@@ -522,9 +530,9 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
             self.assertTrue(policy.coverage_complete(only_bpr))
             self.assertIsNone(policy.required_family(only_bpr))
 
-        # No history, no steer — unchanged, and the reason `required_family`
-        # cannot simply return `sorted(missing)[0]` unconditionally.
-        self.assertIsNone(policy.required_family(successful_state()))
+        # With no scored history, diversity scheduling starts from the first
+        # uncovered registered family.
+        self.assertEqual(policy.required_family(successful_state()), "bpr")
 
 
 # --------------------------------------------------------------------------- #

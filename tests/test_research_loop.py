@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def parameters(family: str) -> dict:
-    return {
+    values = {
         "seed": 0,
         "k": 16,
         "learning_rate": 0.001,
@@ -25,6 +25,33 @@ def parameters(family: str) -> dict:
         "negatives_per_group": 4 if family == "group_softmax" else None,
         "temperature": 1.0 if family == "group_softmax" else None,
     }
+    if family == "history_features":
+        values.update(
+            {
+                "batch_size": 2048,
+                "negatives_per_positive": 1,
+                "smoothing": 20.0,
+                "scheme": "prior_days",
+                "use_user_rate": False,
+                "use_user_author": False,
+                "use_user_tab": False,
+                "use_recency": True,
+                "use_video_age": False,
+                "use_tab_cross": False,
+            }
+        )
+    if family == "multi_task":
+        values.update(
+            {
+                "batch_size": 2048,
+                "negatives_per_positive": 1,
+                "aux_weight": 0.1,
+                "use_is_click": True,
+                "use_is_like": False,
+                "use_play_time": False,
+            }
+        )
+    return values
 
 
 def research(family: str) -> dict:
@@ -57,7 +84,39 @@ def critic() -> dict:
     }
 
 
+def rejected_critic() -> dict:
+    return {
+        "approved": False,
+        "decision": "reject",
+        "rationale": "implementation mechanism is underspecified",
+        "concerns": ["missing concrete trusted-helper usage"],
+        "next_focus": "revise with the exact helper and leakage-safe split semantics",
+    }
+
+
 def code(family: str) -> str:
+    if family == "history_features":
+        return '''import numpy as np
+from src.experiments.contracts import CandidateOutput
+from src.models.sampling import sample_bpr_pairs
+from src.models.features import build_features
+
+def run(context, parameters):
+    sample_bpr_pairs(context.train_users, context.train_y, np.random.default_rng(0), 1)
+    build_features(context.train_x, {"split": "train", "use_recency": True})
+    return CandidateOutput(np.zeros(len(context.valid_x)), {"weights": np.zeros(1)}, [], {"pairs": 1})
+'''
+    if family == "multi_task":
+        return '''import numpy as np
+from src.experiments.contracts import CandidateOutput
+from src.models.sampling import sample_bpr_pairs
+from src.models.features import build_aux_labels
+
+def run(context, parameters):
+    sample_bpr_pairs(context.train_users, context.train_y, np.random.default_rng(0), 1)
+    build_aux_labels(context.train_x, {"split": "train", "use_is_click": True})
+    return CandidateOutput(np.zeros(len(context.valid_x)), {"weights": np.zeros(1)}, [], {"pairs": 1})
+'''
     sampler = "sample_bpr_pairs" if family == "bpr" else "sample_softmax_groups"
     final_argument = "1" if family == "bpr" else "4"
     return f'''import numpy as np
@@ -104,7 +163,37 @@ class FakeExecutor:
         )
 
 
+class LowFidelityFailureExecutor(FakeExecutor):
+    def train(self, iteration, manifest, workspace, run_dir):
+        return ExperimentOutcome(
+            status="failed",
+            metrics=None,
+            duration_seconds=0.01,
+            error="proxy failed",
+            failure_class="crash",
+        )
+
+
 class ResearchLoopTests(unittest.TestCase):
+    def test_low_fidelity_failure_cannot_replace_best(self):
+        provider = ScriptedProvider([research("bpr"), critic(), manifest("bpr")])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, config_path = research_config(root, max_iterations=1, max_proposals=1)
+            config["research"] = {
+                "search": {
+                    "low_fidelity": {"enabled": True, "max_epochs": 2, "max_primary_drop": 0.01}
+                }
+            }
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            loop = ResearchLoop(config, config_path, provider=provider, baseline_summary=BASELINE_SUMMARY)
+            loop.executor = LowFidelityFailureExecutor()
+            run_dir = loop.run()
+            state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["best_experiment_id"], "official_fm_seed0")
+            self.assertEqual(state["search_stats"]["low_fidelity_pruned"], 1)
+            self.assertEqual(state["nodes"][0]["status"], "failed")
+
     def test_mocked_loop_covers_both_families_and_persists_resume_state(self):
         responses = [
             research("bpr"),
@@ -186,6 +275,69 @@ class ResearchLoopTests(unittest.TestCase):
                 self.assertIn("completed", statuses, stage)
             self.assertTrue((run_dir / "changes" / "001_candidate_bpr.patch").is_file())
             self.assertEqual(len(provider.calls), 8)
+
+    def test_critic_rejection_reprompts_researcher_without_burning_iteration(self):
+        first = research("bpr")
+        first["hypothesis_id"] = "h_bpr_rejected"
+        second = research("bpr")
+        second["hypothesis_id"] = "h_bpr"
+        responses = [
+            first,
+            rejected_critic(),
+            second,
+            critic(),
+            manifest("bpr"),
+            critic(),
+        ]
+        provider = ScriptedProvider(responses)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, config_path = research_config(
+                root,
+                max_iterations=1,
+                max_proposals=2,
+                max_role_reprompts=1,
+            )
+            loop = ResearchLoop(
+                config,
+                config_path,
+                provider=provider,
+                baseline_summary=BASELINE_SUMMARY,
+            )
+            loop.executor = FakeExecutor()
+            run_dir = loop.run()
+            summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+            records = [
+                json.loads(line)
+                for line in (run_dir / "iterations.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            memory = [
+                json.loads(line)
+                for line in (run_dir / "research_memory.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+            self.assertEqual(summary["iterations"], 1)
+            self.assertEqual(summary["training_attempts"], 1)
+            self.assertEqual(loop.state.proposal_attempts, 2)
+            self.assertEqual(records[0]["status"], "success")
+            self.assertEqual(records[0]["proposal"]["hypothesis_id"], "h_bpr")
+            self.assertEqual(
+                [call["role"] for call in provider.calls],
+                [
+                    "researcher",
+                    "critic_preflight",
+                    "researcher",
+                    "critic_preflight",
+                    "builder",
+                    "critic_postflight",
+                ],
+            )
+            self.assertIn("PREVIOUS ATTEMPT REJECTED", provider.calls[2]["prompt"])
+            self.assertIn("implementation mechanism is underspecified", provider.calls[2]["prompt"])
+            self.assertEqual(
+                [item["type"] for item in memory if item.get("type") == "critic_preflight_rejection"],
+                ["critic_preflight_rejection"],
+            )
 
     def test_debugger_repairs_are_capped_at_two(self):
         invalid_manifest = manifest("bpr")
@@ -463,30 +615,19 @@ class TrainingFailureExecutor:
 class OfficialConvergenceReportingTests(unittest.TestCase):
     """T4 / I6, I-9: the organizers' verdict is reported beside the harness stop."""
 
-    def test_official_convergence_is_reported_when_the_harness_keeps_going(self):
-        """A genuinely converged run whose `stop_reason` is a budget, not `converged`.
-
-        Three scored iterations sit inside epsilon of the baseline, so the
-        organizers' rule fires on the third; the harness agenda is elsewhere and
-        the run ends on the candidate cap, which the loop checks before
-        `should_stop`. That is exactly the I6 complaint — a converged run
-        reporting a budget as its reason — and it is why the two numbers are
-        reported separately.
-
-        The plan's sketch follows the current best lead instead of enforcing
-        family coverage. The candidate cap stands in as the harness agenda that
-        outlives the rule.
-        """
+    def test_official_convergence_terminates_the_run(self):
+        """A converged run stops as converged even when a budget is also reached."""
         script = [
             research("bpr"), critic(), manifest("bpr"), critic(),
             research("group_softmax"), critic(), manifest("group_softmax"), critic(),
-            research("group_softmax"), critic(), manifest("group_softmax"), critic(),
+            research("history_features"), critic(), manifest("history_features"), critic(),
+            research("multi_task"), critic(), manifest("multi_task"), critic(),
         ]
         provider = ScriptedProvider(script)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config, config_path = research_config(
-                root, max_iterations=3, max_training_attempts=10
+                root, max_iterations=4, max_training_attempts=10
             )
             loop = ResearchLoop(
                 config,
@@ -498,11 +639,10 @@ class OfficialConvergenceReportingTests(unittest.TestCase):
             run_dir = loop.run()
             summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 
-            self.assertEqual(summary["iterations"], 3)
+            self.assertEqual(summary["iterations"], 4)
             self.assertTrue(summary["converged_official"])
-            self.assertEqual(summary["converged_official_iteration"], 3)
-            self.assertNotEqual(summary["stop_reason"], "converged")
-            self.assertEqual(summary["stop_reason"], "candidate_budget_reached")
+            self.assertEqual(summary["converged_official_iteration"], 4)
+            self.assertEqual(summary["stop_reason"], "converged")
             memory = [
                 json.loads(line)
                 for line in (run_dir / "research_memory.jsonl")
@@ -511,7 +651,7 @@ class OfficialConvergenceReportingTests(unittest.TestCase):
             ]
             self.assertEqual(
                 [item for item in memory if item.get("type") == "convergence"],
-                [{"type": "convergence", "iteration": 3, "official": True}],
+                [{"type": "convergence", "iteration": 4, "official": True}],
             )
 
 

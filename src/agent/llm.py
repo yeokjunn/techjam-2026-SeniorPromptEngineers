@@ -434,9 +434,11 @@ class OpenAIResponsesProvider:
 
         started = time.monotonic()
         max_attempts = max(1, int(max_retries or self.max_retries))
+        requested_output_tokens = int(request["max_output_tokens"])
         response = None
         retries = 0
-        for attempt in range(max_attempts):
+        attempt = 0
+        while attempt < max_attempts:
             try:
                 response = self.client.responses.create(**request)
             except Exception as exc:
@@ -445,17 +447,34 @@ class OpenAIResponsesProvider:
                     raise
                 time.sleep(delay)
                 retries += 1
+                attempt += 1
                 continue
 
             status = str(getattr(response, "status", "") or "")
             output_text = getattr(response, "output_text", "") or ""
             if status == "incomplete" or not output_text:
                 details = getattr(response, "incomplete_details", None)
+                reason = (
+                    details.get("reason")
+                    if isinstance(details, dict)
+                    else getattr(details, "reason", None)
+                )
                 error = IncompleteResponse(
                     f"OpenAI response {getattr(response, 'id', '')} was incomplete "
                     f"or contained no output text; details={details!r}."
                 )
-                if attempt + 1 >= max_attempts:
+                # A role-specific cap (notably the compact EDA caps) can be too
+                # small once reasoning tokens are included. Retrying the exact
+                # same request cannot fix that. Give max-token truncations one
+                # expanded rescue attempt, even when the caller configured one
+                # ordinary attempt, and grow only up to the run-wide LLM cap.
+                if reason == "max_output_tokens" and requested_output_tokens < self.max_output_tokens:
+                    requested_output_tokens = min(
+                        self.max_output_tokens, requested_output_tokens * 2
+                    )
+                    request["max_output_tokens"] = requested_output_tokens
+                    max_attempts = max(max_attempts, attempt + 2)
+                elif attempt + 1 >= max_attempts:
                     raise error
                 time.sleep(
                     min(
@@ -464,6 +483,7 @@ class OpenAIResponsesProvider:
                     )
                 )
                 retries += 1
+                attempt += 1
                 continue
             break
 
@@ -685,6 +705,7 @@ class OpenAICompatibleChatProvider:
                 f"{self.provider_name} response {getattr(response, 'id', '')} "
                 "contained invalid JSON."
             ) from exc
+
         try:
             self._validate(instance=data, schema=schema)
         except self._validation_error as exc:

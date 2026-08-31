@@ -48,9 +48,10 @@ FEATURE_CONTRACTS = {
 
 
 CANDIDATE_OUTPUT_CONTRACT = """RUNTIME API CARD: src.experiments.contracts.CandidateOutput
-- Return CandidateOutput(validation_scores=..., checkpoint_state=..., training_trace=..., diagnostics=..., test_scores=...).
+- Return CandidateOutput(validation_scores=..., checkpoint_state=..., training_trace=..., diagnostics=..., test_scores=..., random_validation_scores=...).
 - validation_scores length must equal len(context.valid_x), finite, same row order.
 - test_scores must be finite scores for context.test_x in the same row order when context.test_x is not None; otherwise None.
+- random_validation_scores should be model scores for context.random_valid_x when present. This is a diagnostic random-exposure split; never use it for training, early stopping, checkpoint selection, or hyperparameter selection.
 - checkpoint_state must be a dict of numpy arrays from the selected model state."""
 
 

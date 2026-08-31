@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import math
 import shutil
 import time
 from dataclasses import asdict, replace
@@ -13,6 +14,7 @@ from typing import Any
 from ..evaluation.datacard import render_data_card
 from ..evaluation.gate import run_gate
 from ..evaluation.official import BASELINE_TOLERANCE, within_baseline_tolerance
+from ..models.ensemble import try_blend_candidates
 from .audit import ResearchAudit
 from .candidate_runner import CandidateExecutor, CandidateWorkspace, repaired_manifest
 from .catalog import MethodCatalog
@@ -29,9 +31,8 @@ from .errors import LLMError
 from .llm import LLMProvider, build_provider
 from .policy import (
     SearchPolicy,
-    required_family,
-    sanitize_parameters,
     scored_primaries,
+    sanitize_parameters,
 )
 from .report import render_reports
 from .roles import ResearchRoles
@@ -109,6 +110,25 @@ def _cached_data_card(data_dir: str) -> str:
     return render_data_card(Path(data_dir))
 
 
+KUAIRAND_PURE_REQUIRED_FILES = (
+    "log_random_4_22_to_5_08_pure.csv",
+    "log_standard_4_08_to_4_21_pure.csv",
+    "log_standard_4_22_to_5_08_pure.csv",
+    "user_features_pure.csv",
+    "video_features_basic_pure.csv",
+    "video_features_statistic_pure.csv",
+)
+
+
+def _validate_kuairand_pure_data_dir(data_dir: Path) -> None:
+    missing = [name for name in KUAIRAND_PURE_REQUIRED_FILES if not (data_dir / name).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"KuaiRand-Pure data directory is incomplete: {data_dir}. "
+            f"Missing required files: {', '.join(missing)}"
+        )
+
+
 def _repo_relative(path: Path) -> str:
     """A POSIX path relative to the repo root when it lives there, else absolute.
 
@@ -127,16 +147,20 @@ def _official_convergence_iteration(
 ) -> int | None:
     """The iteration of the scored node whose prefix first meets the official rule.
 
-    ``seq[0]`` is the baseline seed rather than an iteration, so the number
-    reported is the node's own ``iteration`` and not the prefix length. ``None``
+    The official baseline is an external reference, not an iteration in this
+    autonomous run, so it is excluded from the convergence sequence. ``None``
     when the rule never fires.
     """
-    # Same filter as policy.scored_primaries; the index below depends on it.
-    scored = [node for node in state.nodes if node.status == "success" and node.metrics]
-    sequence = [state.baseline_primary] + scored_primaries(state)
+    # Every successful scored iteration counts, including exact seed
+    # replications. Failed/rejected attempts have no validation score.
+    scored = [
+        node for node in state.nodes
+        if node.status == "success" and node.metrics
+    ]
+    sequence = scored_primaries(state)
     for length in range(patience + 1, len(sequence) + 1):
         if official_converged(sequence[:length], epsilon, patience):
-            return scored[length - 2].iteration
+            return scored[length - 1].iteration
     return None
 
 
@@ -341,6 +365,11 @@ class ResearchLoop:
         self.config = config
         self.config_path = config_path
         self.data_dir = _resolve_repo_path(config["data_dir"])
+        self.strict_data_contract = bool(
+            config.get("strict_kuairand_pure_data", baseline_summary is None)
+        )
+        if self.strict_data_contract:
+            _validate_kuairand_pure_data_dir(self.data_dir)
         self.generated_root = _resolve_repo_path(config.get("generated_root", "generated_experiments"))
         self.run_root = _resolve_repo_path(config.get("run_root", "runs"))
         self.discovery_store = DiscoveryStore(
@@ -359,6 +388,8 @@ class ResearchLoop:
         llm_config = config["llm"]
         self.provider = provider or build_provider(config)
         research_config = dict(config.get("research") or {})
+        search_config = dict(research_config.get("search") or {})
+        self.low_fidelity = dict(search_config.get("low_fidelity") or {})
         eda_config = dict(config.get("eda") or {})
         self.eda_enabled = bool(eda_config.get("enabled", False))
         self.eda_required = bool(eda_config.get("required", False))
@@ -394,7 +425,7 @@ class ResearchLoop:
                 status="running",
                 started_at=datetime.now(timezone.utc).isoformat(),
                 baseline_primary=baseline_primary,
-                meaningful_best=baseline_primary,
+                meaningful_best=None,
                 best_metrics=dict(self.baseline_summary["best"]["metrics"]),
                 best_experiment_id="official_fm_seed0",
                 best_artifact_path=self.baseline_summary["best"].get("artifact_path"),
@@ -414,22 +445,20 @@ class ResearchLoop:
                 },
             )
             self.audit.write_text_atomic(self.run_dir / "interventions.jsonl", "")
-            # I-4: the data card the Researcher's prompt prefix carries. Owner
-            # D renders it, Owner C reads it back off ``state.data_card_path``
-            # (``roles.py:58-71``, appended at ``:85-86``), and the run start is
-            # where the two meet. An operator who named a card in the config
-            # gets that path verbatim: naming one is not a request to make one,
-            # and C's reader already tolerates a file that is not there
-            # (``roles.py:66-69``), so checking it here would only lose the run
-            # earlier. An empty card — no dataset on disk — leaves no file and
-            # no path, so the prompt gains no heading with nothing under it and
-            # the operator gets no line to misread as an error. New runs only:
-            # a resume already carries the path in ``state.json``.
+            # The EDA and proposal roles must be grounded in the configured
+            # KuaiRand-Pure data directory. Generate the card from the same
+            # directory candidates will train against, and fail early if it
+            # cannot be produced.
             configured_card = config.get("data_card_path")
             if isinstance(configured_card, str) and configured_card:
-                self.state.data_card_path = configured_card
+                data_card_path = _resolve_repo_path(configured_card)
+                if self.strict_data_contract and not data_card_path.is_file():
+                    raise FileNotFoundError(f"Configured data card does not exist: {data_card_path}")
+                self.state.data_card_path = _repo_relative(data_card_path)
             else:
                 card = _cached_data_card(str(self.data_dir))
+                if self.strict_data_contract and not card.strip():
+                    raise RuntimeError(f"Failed to render KuaiRand-Pure data card from {self.data_dir}")
                 if card.strip():
                     card_path = self.run_dir / "DATA_CARD.md"
                     self.audit.write_text_atomic(card_path, card)
@@ -466,6 +495,9 @@ class ResearchLoop:
             epsilon=float(self.convergence["epsilon"]),
             patience=int(self.convergence["patience"]),
             replication_seeds=list(config.get("replication_seeds", [1, 2])),
+            beam_width=int(search_config.get("beam_width", 3)),
+            max_lineage_depth=int(search_config.get("max_lineage_depth", 3)),
+            ndcg_focus=dict(research_config.get("ndcg_focus", {})),
         )
         self.executor = CandidateExecutor(
             REPO_ROOT,
@@ -647,6 +679,8 @@ class ResearchLoop:
         record = {
             "status": "completed",
             "iteration": iteration,
+            "data_dir": _repo_relative(self.data_dir),
+            "data_card_path": self.state.data_card_path,
             "plan": plan.to_dict(),
             "report": report.to_dict(),
             "feature_candidates": [asdict(item) for item in report.feature_candidates],
@@ -666,6 +700,8 @@ class ResearchLoop:
         record = {
             "status": "failed",
             "iteration": iteration,
+            "data_dir": _repo_relative(self.data_dir),
+            "data_card_path": self.state.data_card_path,
             "plan": None if plan is None else plan.to_dict(),
             "report": None,
             "feature_candidates": [],
@@ -762,25 +798,15 @@ class ResearchLoop:
             experiment_id=f"rejected_{decision.hypothesis_id}",
             objective="Persist the rejected proposal and resumable run state.",
         )
-        node = ExperimentNode(
-            iteration=iteration,
-            experiment_id=f"rejected_{decision.hypothesis_id}",
-            hypothesis_id=decision.hypothesis_id,
-            family=decision.family,
-            action=decision.action,
-            parameters=decision.parameters,
-            status="critic_rejected",
-            parent_experiment=decision.parent_experiment,
+        self.discovery_store.record_rejection(
+            iteration, decision, critic, run_id=self.state.run_id
         )
-        self.state.nodes.append(node)
-        self.discovery_store.record_rejection(iteration, decision, critic)
-        # I3: state first, ledger second. ``record_iteration`` appends to
-        # ``iterations.jsonl``; a crash between the two used to replay the
-        # iteration on resume and duplicate the line. This order loses at most
-        # one ledger line instead — D de-duplicates by ``iteration`` anyway.
+        self.policy.observe_rejection(self.state, decision, critic.rationale)
         self._save()
-        self.audit.record_iteration(
+        self.audit.append_jsonl(
+            self.run_dir / "research_memory.jsonl",
             {
+                "type": "critic_rejection_terminal",
                 "iteration": iteration,
                 "eda_artifact_path": eda_artifact_path,
                 "proposal": decision.to_dict(),
@@ -797,7 +823,7 @@ class ResearchLoop:
                 "status": "critic_rejected",
                 "manual_intervention": self.state.manual_interventions
                 > self._interventions_at_iteration_start,
-            }
+            },
         )
         self.audit.finish_activity(
             persistence,
@@ -808,6 +834,88 @@ class ResearchLoop:
             },
         )
 
+    @staticmethod
+    def _critic_revision_feedback(critic: CriticDecision) -> str:
+        concerns = "; ".join(critic.concerns)
+        parts = [
+            "PREVIOUS ATTEMPT REJECTED by critic preflight before code generation.",
+            f"Rationale: {critic.rationale}",
+        ]
+        if concerns:
+            parts.append(f"Concerns: {concerns}")
+        if critic.next_focus:
+            parts.append(f"Next focus: {critic.next_focus}")
+        parts.append(
+            "Revise the proposal directly; do not repeat the same hypothesis_id or unsupported mechanism."
+        )
+        return " ".join(parts)
+
+    def _propose_until_preflight_approved(
+        self,
+        iteration: int,
+        eda_report: EDAReport | None,
+        max_proposals: int,
+    ) -> tuple[ResearchDecision, CriticDecision]:
+        """Use Critic preflight rejection as Researcher feedback before burning an iteration."""
+        maximum = int(self.budgets.get("max_role_reprompts", 2))
+        feedback: str | None = None
+        revision = 0
+        while True:
+            if self.state.proposal_attempts >= max_proposals:
+                raise RuntimeError("proposal_budget_reached")
+            self.state.proposal_attempts += 1
+            search_context = self.policy.search_context(self.state)
+            required = search_context["family"]
+            decision = self._role_call(
+                "researcher",
+                iteration,
+                lambda fb, seq=0: self.roles.research(
+                    self.state,
+                    iteration,
+                    required,
+                    feedback=feedback if fb is None else fb,
+                    sequence=revision + seq,
+                    eda_report=eda_report,
+                    search_context=search_context,
+                ),
+            )
+            decision = self.policy.admit_decision(self.state, decision, search_context)
+            self.discovery_store.record_proposal(
+                iteration, decision, run_id=self.state.run_id
+            )
+            preflight = self._role_call(
+                "critic_preflight",
+                iteration,
+                lambda fb, seq=0: self.roles.critic_preflight(
+                    self.state,
+                    iteration,
+                    decision,
+                    feedback=fb,
+                    sequence=revision + seq,
+                    eda_report=eda_report,
+                ),
+            )
+            if preflight.approved:
+                return decision, preflight
+            self.audit.append_jsonl(
+                self.run_dir / "research_memory.jsonl",
+                {
+                    "type": "critic_preflight_rejection",
+                    "iteration": iteration,
+                    "proposal_attempt": self.state.proposal_attempts,
+                    "hypothesis_id": decision.hypothesis_id,
+                    "family": decision.family,
+                    "rationale": preflight.rationale,
+                    "concerns": list(preflight.concerns),
+                    "next_focus": preflight.next_focus,
+                    "will_revise": revision < maximum,
+                },
+            )
+            if revision >= maximum:
+                return decision, preflight
+            revision += 1
+            feedback = self._critic_revision_feedback(preflight)
+
     def _parent_sources(self, parent_experiment: str | None) -> dict[str, str]:
         if not parent_experiment:
             return {}
@@ -815,7 +923,7 @@ class ResearchLoop:
             (item for item in self.state.nodes if item.experiment_id == parent_experiment),
             None,
         )
-        if node is None or not node.candidate_dir:
+        if node is None or node.status != "success" or not node.candidate_dir:
             return {}
         directory = Path(node.candidate_dir)
         if not directory.is_absolute():
@@ -952,6 +1060,56 @@ class ResearchLoop:
         parent_sources = self._parent_sources(decision.parent_experiment)
         execution_attempt = 0
         outcome = None
+        # Optional promotion gate. It changes only the epoch budget and uses the
+        # same trusted validation path; proxy results are never observed by the
+        # search policy and therefore cannot replace the validation-best state.
+        if (
+            validation_error is None
+            and bool(self.low_fidelity.get("enabled", False))
+            and int(manifest.parameters.get("epochs", 1))
+            > int(self.low_fidelity.get("max_epochs", 2))
+        ):
+            if (
+                self.max_training_attempts is not None
+                and self.state.training_attempts >= self.max_training_attempts
+            ):
+                validation_error = "Training-attempt budget reached before low-fidelity screening."
+            else:
+                proxy_parameters = dict(manifest.parameters)
+                proxy_parameters["epochs"] = int(self.low_fidelity.get("max_epochs", 2))
+                proxy_manifest = replace(manifest, parameters=proxy_parameters)
+                self.state.training_attempts += 1
+                screening = self.audit.start_activity(
+                    iteration,
+                    "low_fidelity_screen",
+                    experiment_id=manifest.candidate_id,
+                    objective="Run a bounded proxy before granting the full training budget.",
+                )
+                proxy = self.executor.train(iteration, proxy_manifest, workspace, self.run_dir)
+                finite_proxy = (
+                    proxy.status == "success"
+                    and proxy.metrics is not None
+                    and all(math.isfinite(float(value)) for value in proxy.metrics.values())
+                )
+                threshold = self.state.baseline_primary - float(
+                    self.low_fidelity.get("max_primary_drop", 0.01)
+                )
+                promoted = finite_proxy and float(proxy.metrics["primary"]) >= threshold
+                self.audit.finish_activity(
+                    screening,
+                    status="completed" if promoted else "failed",
+                    metrics=proxy.metrics,
+                    error=None if promoted else (proxy.error or "Proxy did not clear promotion threshold."),
+                    agent_note={"promoted": promoted, "threshold": threshold},
+                )
+                self.state.search_stats["low_fidelity_screens"] = int(
+                    self.state.search_stats.get("low_fidelity_screens", 0)
+                ) + 1
+                if not promoted:
+                    self.state.search_stats["low_fidelity_pruned"] = int(
+                        self.state.search_stats.get("low_fidelity_pruned", 0)
+                    ) + 1
+                    validation_error = proxy.error or "Low-fidelity proxy did not clear promotion threshold."
         # I-3: a timeout buys this candidate one Debugger pass and no more. Every
         # retry is a full training run charged to the six-hour wall clock, and a
         # candidate that did not fit its time budget usually does not fit it the
@@ -1049,7 +1207,10 @@ class ResearchLoop:
                 iteration,
                 decision,
                 outcome.metrics,
-                outcome.diagnostics,
+                {
+                    **outcome.diagnostics,
+                    "diagnostic_metrics": outcome.diagnostic_metrics,
+                },
             )
             status = "success"
             metrics = outcome.metrics
@@ -1059,18 +1220,62 @@ class ResearchLoop:
             # ``state.json``, ``best.json`` and ``summary.json`` — files that are
             # committed and read back on another machine.
             artifact = (
-                _repo_relative(Path(outcome.artifact_path)) if outcome.artifact_path else None
+                _repo_relative(_resolve_repo_path(outcome.artifact_path))
+                if outcome.artifact_path
+                else None
+            )
+            test_scores_path = (
+                _repo_relative(_resolve_repo_path(outcome.test_scores_path))
+                if outcome.test_scores_path
+                else None
+            )
+            validation_scores_path = (
+                _repo_relative(_resolve_repo_path(outcome.validation_scores_path))
+                if outcome.validation_scores_path
+                else None
             )
         else:
             postflight = None
             status = "failed"
             metrics = None
             artifact = None
+            test_scores_path = None
+            validation_scores_path = None
 
         try:
             candidate_dir = str(workspace.directory.relative_to(REPO_ROOT))
         except ValueError:
             candidate_dir = str(workspace.directory)
+        parent_node = self.policy._node(self.state, decision.parent_experiment)
+        deltas: dict[str, float] = {}
+        if metrics:
+            baseline = self.baseline_summary.get("best", {}).get("metrics", {})
+            parent_metrics = parent_node.metrics if parent_node is not None else None
+            for metric_name, delta_name in (
+                ("GAUC", "delta_gauc"),
+                ("nDCG@5", "delta_ndcg5"),
+                ("primary", "delta_primary"),
+            ):
+                if metric_name in metrics:
+                    deltas[f"{delta_name}_vs_baseline"] = float(metrics[metric_name]) - float(
+                        baseline.get(metric_name, self.state.baseline_primary)
+                    )
+                    if parent_metrics and metric_name in parent_metrics:
+                        deltas[f"{delta_name}_vs_parent"] = float(metrics[metric_name]) - float(
+                            parent_metrics[metric_name]
+                        )
+        topk_diagnostics = outcome.topk_diagnostics if outcome is not None else {}
+        ndcg_context = self.policy.search_context(self.state).get("ndcg_focus", {})
+        search_metadata = {
+            **deltas,
+            "ndcg_focus_applied": bool(ndcg_context.get("enabled"))
+            and (bool(ndcg_context.get("active")) or bool(topk_diagnostics)),
+            "hard_negative_strategy": manifest.parameters.get(
+                "hard_negative_strategy",
+                manifest.parameters.get("negative_sampler"),
+            ),
+            "blend_components": manifest.parameters.get("blend_components"),
+        }
         node = ExperimentNode(
             iteration=iteration,
             experiment_id=manifest.candidate_id,
@@ -1080,10 +1285,18 @@ class ResearchLoop:
             parameters=manifest.parameters,
             status=status,
             metrics=metrics,
+            diagnostic_metrics=(
+                outcome.diagnostic_metrics if outcome is not None else {}
+            ),
+            topk_diagnostics=topk_diagnostics,
             artifact_path=artifact,
             candidate_dir=candidate_dir,
+            test_scores_path=test_scores_path,
+            validation_scores_path=validation_scores_path,
             parent_experiment=decision.parent_experiment,
             replicated_from=replicated_from,
+            search=search_metadata,
+            duration_seconds=(0.0 if outcome is None else float(outcome.duration_seconds)),
         )
         self.state.nodes.append(node)
         self.discovery_store.record_outcome(
@@ -1091,10 +1304,14 @@ class ResearchLoop:
             decision,
             node,
             self.state.baseline_primary,
+            run_id=self.state.run_id,
+            failure=None if outcome is None else outcome.error,
         )
         if status == "success":
             self.policy.observe_success(self.state, node)
             self._note_official_convergence()
+        else:
+            self.policy.observe_outcome(self.state, node)
 
         persistence = self.audit.start_activity(
             iteration,
@@ -1219,6 +1436,11 @@ class ResearchLoop:
         max_proposals = self.max_proposals
 
         while True:
+            # The official convergence verdict is a terminal condition, not an
+            # informational flag and not subordinate to queued follow-ups.
+            if self.policy.should_stop(self.state):
+                self.state.stop_reason = "converged"
+                break
             if self._elapsed() >= max_wall_clock:
                 self.state.stop_reason = "wall_clock_budget_reached"
                 break
@@ -1231,9 +1453,6 @@ class ResearchLoop:
             if self.state.iteration_count >= max_iterations:
                 self.state.stop_reason = "candidate_budget_reached"
                 break
-            if self.policy.should_stop(self.state):
-                self.state.stop_reason = "converged"
-                break
             # Bound before the try so the error handler can always name the pass,
             # and remember whether this pass ever charged a proposal (see the
             # no-progress guard in the handler).
@@ -1241,6 +1460,8 @@ class ResearchLoop:
             proposals_before = self.state.proposal_attempts
             self._interventions_at_iteration_start = self.state.manual_interventions
             try:
+                # Replicate a meaningful lead immediately. Replications are
+                # scored iterations and must not remain queued past convergence.
                 if self.state.pending_replications:
                     task = self.state.pending_replications[0]
                     self._replication(task)
@@ -1252,35 +1473,31 @@ class ResearchLoop:
                     self.state.stop_reason = "proposal_budget_reached"
                     break
 
-                self.state.proposal_attempts += 1
                 eda_report, eda_artifact_path = self._run_eda(iteration)
-                decision = self._role_call(
-                    "researcher",
-                    iteration,
-                    lambda fb, seq=0: self.roles.research(
-                        self.state,
+                try:
+                    decision, preflight = self._propose_until_preflight_approved(
                         iteration,
-                        required_family(self.state, float(self.convergence["epsilon"])),
-                        feedback=fb,
-                        sequence=seq,
-                        eda_report=eda_report,
-                    ),
-                )
-                self.discovery_store.record_proposal(iteration, decision)
-                preflight = self._role_call(
-                    "critic_preflight",
-                    iteration,
-                    lambda fb, seq=0: self.roles.critic_preflight(
-                        self.state,
+                        eda_report,
+                        max_proposals,
+                    )
+                except RuntimeError as exc:
+                    if str(exc) == "proposal_budget_reached":
+                        self.state.stop_reason = "proposal_budget_reached"
+                        break
+                    raise
+                if not preflight.approved and preflight.admission != "hard_reject":
+                    preflight = self._role_call(
+                        "preflight_adjudicator",
                         iteration,
-                        decision,
-                        feedback=fb,
-                        sequence=seq,
-                        eda_report=eda_report,
-                    ),
-                )
+                        lambda fb, seq=0: self.roles.critic_adjudicate(
+                            self.state,
+                            iteration,
+                            decision,
+                            preflight,
+                            eda_report=eda_report,
+                        ),
+                    )
                 if not preflight.approved:
-                    self.state.iteration_count += 1
                     self._record_rejection(
                         iteration,
                         decision,
@@ -1302,6 +1519,7 @@ class ResearchLoop:
                         eda_report=eda_report,
                     ),
                 )
+                self.policy.commit_decision(self.state, decision)
                 # A proposal does not become a candidate iteration until the
                 # Builder has returned a valid manifest. Charging the iteration
                 # before this call makes repeated incomplete Builder responses
@@ -1374,13 +1592,12 @@ class ResearchLoop:
         self.state.status = "completed"
         self._save()
         # I6 / I-9: the organizers' verdict, reported beside the harness's stop
-        # and never in place of it. `should_stop` is gated on unresolved
-        # replications/follow-ups rather than family coverage, so a run can
-        # satisfy the epsilon/N rule and still spend the next pass attributing a
-        # promising lead before stopping.
+        # and never in place of it. The official baseline remains the external
+        # target, but it is not an autonomous-run iteration and does not consume
+        # convergence patience.
         epsilon = float(self.convergence["epsilon"])
         patience = int(self.convergence["patience"])
-        official_sequence = [self.state.baseline_primary] + scored_primaries(self.state)
+        official_sequence = scored_primaries(self.state)
         summary = {
             "run_id": self.state.run_id,
             "status": self.state.status,
@@ -1390,6 +1607,12 @@ class ResearchLoop:
             "manual_interventions": self.state.manual_interventions,
             "token_usage": self.state.token_usage.to_dict(),
             "wall_clock_seconds": self.state.wall_clock_seconds,
+            "search": {
+                "frontier": self.state.search_frontier,
+                "closed_branches": self.state.closed_branches,
+                "stats": self.state.search_stats,
+                "estimated_seed_noise": self.policy.estimated_seed_noise(self.state),
+            },
             "converged_official": official_converged(official_sequence, epsilon, patience),
             "converged_official_iteration": _official_convergence_iteration(
                 self.state, epsilon, patience
@@ -1417,11 +1640,26 @@ class ResearchLoop:
         # ``summary.json`` is the one file the organizers read, and its survival
         # must not depend on another module keeping that promise. Keyword
         # arguments so a signature change cannot silently reorder the four paths.
-        node_dir = (
-            _resolve_repo_path(self.state.best_candidate_dir)
-            if self.state.best_candidate_dir
-            else self.run_dir
+        # Automated Ensembling & Blending (MLE-STAR style)
+        ensemble_result = try_blend_candidates(
+            run_dir=self.run_dir,
+            state=self.state,
+            data_dir=self.data_dir,
+            generated_root=self.generated_root,
         )
+        summary["ensemble"] = ensemble_result.to_dict()
+
+        if ensemble_result.status == "ok" and ensemble_result.ensemble_node_dir:
+            node_dir = _resolve_repo_path(ensemble_result.ensemble_node_dir)
+            summary["best"]["ensemble_blended"] = True
+            summary["best"]["ensemble_metrics"] = ensemble_result.metrics
+            summary["best"]["ensemble_weights"] = ensemble_result.weights
+        else:
+            node_dir = (
+                _resolve_repo_path(self.state.best_candidate_dir)
+                if self.state.best_candidate_dir
+                else self.run_dir
+            )
         try:
             gate_result = run_gate(
                 run_dir=self.run_dir,
@@ -1457,6 +1695,14 @@ class ResearchLoop:
                     "action": node.action,
                     "status": node.status,
                     "metrics": node.metrics,
+                    "diagnostic_metrics": node.diagnostic_metrics,
+                    "topk_diagnostics": node.topk_diagnostics,
+                    "ndcg_focus_applied": bool((node.search or {}).get("ndcg_focus_applied")),
+                    "hard_negative_strategy": (node.search or {}).get("hard_negative_strategy"),
+                    "blend_components": (node.search or {}).get("blend_components"),
+                    "delta_gauc": (node.search or {}).get("delta_gauc_vs_baseline"),
+                    "delta_ndcg5": (node.search or {}).get("delta_ndcg5_vs_baseline"),
+                    "delta_primary": (node.search or {}).get("delta_primary_vs_baseline"),
                     "delta_vs_baseline": None
                     if not node.metrics
                     else float(node.metrics["primary"]) - self.state.baseline_primary,

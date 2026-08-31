@@ -30,6 +30,16 @@ weighted auxiliary term over the *same* shared FM embeddings:
 loss = ranking_loss + aux_weight * mean_t( binary_cross_entropy(head_t, target_t) )
 ```
 
+### Usage Pattern
+```python
+# 1. Build targets upfront once before the epoch loop:
+aux_spec = {"split": "train", "use_is_click": True, "use_is_like": False}
+aux_train = build_aux_labels(context.train_x, aux_spec)  # (n_train, n_heads)
+
+# 2. Slice during mini-batch iteration:
+batch_aux = aux_train[batch_indices]
+```
+
 `src.models.features.build_aux_labels(rows, spec)` returns `(n, t)` float32
 targets in `[0, 1]`, one column per enabled head:
 

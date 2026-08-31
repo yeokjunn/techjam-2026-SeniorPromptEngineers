@@ -23,6 +23,17 @@ value buckets from seven interior quantile edges computed on train values only (
 ``kuairand-starter-kit/data.py:32-33``), plus a reserved slot for "no history / unknown". Unknown
 is deliberately its own slot rather than the prior bucket, so the model can learn it separately.
 
+**The ``video_rate`` group.** The per-video train-window ``long_view`` rate is the strongest
+single signal measured on this dataset: ordering by it alone scores primary 0.5807 against
+0.4827 for a random ordering, and blended with the FM it added +0.0021. The kit ships a
+ready-made version of it in ``video_features_statistic_pure.csv``, which a leakage audit
+rejected -- that file's counting window spans the test dates, so reading it is reading a label
+from the future. This group is the train-only replacement, and it also *predicts test behaviour
+better* than the leaky file (Spearman 0.869 vs 0.831). It is an ordinary ``RATE_GROUPS`` member
+and so inherits the scheme, smoothing and unknown-slot discipline above with no new mechanism:
+in particular a video seen only in valid/test rows has no train table entry and lands in
+``UNKNOWN_SLOT``, never in a bucket derived from its own future rows.
+
 ``build_aux_labels`` serves the sibling ``multi_task`` family with auxiliary train targets
 (``is_click``, ``is_like``, scaled ``play_time``). It is train-only by construction: a loss touches
 train rows only, so no valid/test path exists and none may be added.
@@ -50,9 +61,19 @@ from src.evaluation.official import (
 )
 
 
-GROUPS = ("user_rate", "user_author", "user_tab", "recency", "video_age", "tab_cross")
+#: Group order fixes column order, so ``video_rate`` is *appended*: inserting it would shift the
+#: field layout of every proposal already expressed against the six original groups.
+GROUPS = (
+    "user_rate",
+    "user_author",
+    "user_tab",
+    "recency",
+    "video_age",
+    "tab_cross",
+    "video_rate",
+)
 #: Groups whose value is a smoothed long_view rate over a key; the rest are computed per row.
-RATE_GROUPS = ("user_rate", "user_author", "user_tab", "tab_cross")
+RATE_GROUPS = ("user_rate", "user_author", "user_tab", "tab_cross", "video_rate")
 
 SLOTS_PER_GROUP = 9
 VALUE_BUCKETS = SLOTS_PER_GROUP - 1  # -> VALUE_BUCKETS - 1 interior quantile edges
@@ -143,9 +164,23 @@ def _split_rows(spec: dict, split: str, expected: int) -> tuple[list, list, dict
         for required in ("train", split):
             if required not in override:
                 raise ValueError(f"spec['history_rows'] must provide a {required!r} entry.")
+        # ...and an unguarded *write* channel into the train table if it is not bounded
+        # here. Candidate code can reach labelled validation rows (this module re-exports
+        # ``load_train_valid``), and both ``safety.validate_source`` and
+        # ``validate_family_contract`` accept a spec that hands them over as "train"
+        # history — which would fold valid labels into every rate group and so into the
+        # promotion decision. Bounded with the same discipline the rest of the module
+        # uses (``build_aux_labels`` at :492, ``official.py:60``): the date is checked
+        # *before* any other column is read, so a non-train label is never touched.
+        train_rows = [
+            row for row in override["train"] if TRAIN_START <= int(row[_DATE]) <= TRAIN_END
+        ]
         return (
-            list(override["train"]),
-            list(override[split]),
+            train_rows,
+            # The train split scores against its own rows, so it gets the bounded list
+            # too — otherwise the row-count check below would compare a clamped history
+            # against an unclamped target.
+            train_rows if split == "train" else list(override[split]),
             dict(spec.get("video_upload_dates") or {}),
         )
 
@@ -199,7 +234,16 @@ def _rate_key(group: str, row: tuple, duration_bucket: int) -> Any:
         return (row[_USER], row[_AUTHOR])
     if group == "user_tab":
         return (row[_USER], row[_TAB])
-    return (row[_TAB], duration_bucket)
+    if group == "video_rate":
+        # The one video-side rate: keyed by the video alone, so it is *not* constant within a
+        # user and therefore contributes through GAUC's within-user ranking directly, unlike
+        # the user-side groups which only act through crosses.
+        return row[_VIDEO]
+    if group == "tab_cross":
+        return (row[_TAB], duration_bucket)
+    # Explicit, so a group added to RATE_GROUPS without its own branch fails here
+    # instead of silently sharing tab_cross's table.
+    raise ValueError(f"No rate key defined for group {group!r}.")
 
 
 def _smoothed(positives: float, count: float, prior: float, smoothing: float) -> float:

@@ -251,9 +251,12 @@ def run(context, parameters):
     def test_coverage_families_is_the_minimum_set_not_every_family(self):
         self.assertEqual(
             coverage_families(),
-            frozenset({"bpr", "group_softmax", "history_features", "multi_task"}),
+            frozenset({"bpr", "group_softmax", "history_features"}),
         )
         self.assertTrue(coverage_families().issubset(family_names()))
+        # Strictly a subset: a family that has never succeeded must not be able
+        # to make `should_stop` unsatisfiable.
+        self.assertNotEqual(coverage_families(), family_names())
 
     def test_family_entries_stay_hashable_despite_grid_dicts(self):
         self.assertEqual(len({FAMILIES["bpr"], FAMILIES["bpr"]}), 1)

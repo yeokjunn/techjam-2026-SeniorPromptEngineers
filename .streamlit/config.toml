@@ -1,0 +1,43 @@
+# Run Ledger theme — the single palette authority for both modes.
+#
+# Streamlit paints every ground, ink, and piece of chrome from the
+# [theme.light] / [theme.dark] sections below and repaints them LIVE when
+# the viewer flips the theme in the app menu (no reload). The custom CSS in
+# src/ui/app.py names no mode-specific color at all: it derives every tone
+# from `currentColor` (the live theme ink) via color-mix(), plus a few fixed
+# mid-tone hues validated on both grounds. tests/test_ui_app.py asserts the
+# CSS stays palette-free and this file keeps both theme sections.
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+font = "Archivo, sans-serif"
+headingFont = "Archivo, sans-serif"
+codeFont = "IBM Plex Mono, monospace"
+baseRadius = "10px"
+chartCategoricalColors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"]
+
+[theme.light]
+backgroundColor = "#F3F5F4"
+secondaryBackgroundColor = "#ECF1EF"
+textColor = "#1B2421"
+primaryColor = "#14606B"
+linkColor = "#14606B"
+borderColor = "#C0CCC7"
+dataframeBorderColor = "#DCE3E0"
+dataframeHeaderBackgroundColor = "#ECF1EF"
+codeBackgroundColor = "#ECF1EF"
+codeTextColor = "#14606B"
+
+[theme.dark]
+backgroundColor = "#0F1517"
+secondaryBackgroundColor = "#1B2528"
+textColor = "#E4ECE9"
+primaryColor = "#5FB0BC"
+linkColor = "#5FB0BC"
+borderColor = "#354449"
+dataframeBorderColor = "#263237"
+dataframeHeaderBackgroundColor = "#1B2528"
+codeBackgroundColor = "#1B2528"
+codeTextColor = "#5FB0BC"

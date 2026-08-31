@@ -386,6 +386,279 @@ class DashboardLoaderTests(unittest.TestCase):
             snapshot = load_run_snapshot(run_dir)
             self.assertEqual(len(snapshot.debugger_events), 2)
 
+    def test_load_llm_calls_tolerates_partial_and_foreign_files(self):
+        from src.ui.loaders import load_llm_calls
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            passes = run_dir / "passes"
+            passes.mkdir(parents=True)
+            (passes / "001_researcher_0.json").write_text(
+                json.dumps(
+                    {
+                        "recorded_at": "2026-08-30T16:05:00+00:00",
+                        "prompt": "You are one role.",
+                        "result": {
+                            "role": "researcher",
+                            "model": "deepseek-v4-pro",
+                            "latency_seconds": 42.5,
+                            "retries": 1,
+                            "usage": {
+                                "input_tokens": 6000,
+                                "output_tokens": 4000,
+                                "total_tokens": 10000,
+                                "cached_tokens": 500,
+                            },
+                            "data": {"family": "bpr", "hypothesis": "Pairwise loss helps."},
+                            "sources": [{"title": "BPR paper", "url": "https://arxiv.org/abs/1205.2618"}],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (passes / "001_critic_preflight_0.json").write_text(
+                json.dumps(
+                    {
+                        "recorded_at": "2026-08-30T16:06:00+00:00",
+                        "result": {
+                            "role": "critic_preflight",
+                            "data": {
+                                "approved": True,
+                                "decision": "approved_as_proposed",
+                                "concerns": ["Guard the empty-pair case."],
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # A file the harness is mid-writing, and one with a foreign name.
+            (passes / "002_builder_0.json").write_text('{"recorded_at": "2026-', encoding="utf-8")
+            (passes / "notes.json").write_text("{}", encoding="utf-8")
+
+            calls = load_llm_calls(run_dir)
+            self.assertEqual([c.role for c in calls], ["researcher", "critic_preflight"])
+            first = calls[0]
+            self.assertEqual(first.iteration, 1)
+            self.assertEqual(first.family, "researcher")
+            self.assertEqual(first.total_tokens, 10000)
+            self.assertEqual(first.cached_tokens, 500)
+            self.assertEqual(first.retries, 1)
+            self.assertIn("[bpr]", first.gist)
+            self.assertEqual(first.sources[0]["title"], "BPR paper")
+            second = calls[1]
+            self.assertEqual(second.family, "critic")
+            self.assertEqual(second.model, "unknown")
+            self.assertIn("approved_as_proposed", second.gist)
+            self.assertIn("Guard the empty-pair case.", second.gist)
+
+    def test_load_memory_events_filters_typed_records(self):
+        from src.ui.loaders import load_memory_events
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            lines = [
+                json.dumps({"role": "researcher", "iteration": 1, "usage": {}}),
+                json.dumps(
+                    {
+                        "type": "role_retry",
+                        "label": "researcher",
+                        "iteration": 2,
+                        "reprompt": 1,
+                        "error": "missing field: hypothesis",
+                        "error_type": "RoleOutputInvalid",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "controller_error",
+                        "iteration": 3,
+                        "kind": "harness",
+                        "error": "Request timed out.",
+                        "error_type": "APITimeoutError",
+                    }
+                ),
+                json.dumps({"type": "convergence", "iteration": 4}),
+            ]
+            (run_dir / "research_memory.jsonl").write_text(
+                "\n".join(lines) + "\n", encoding="utf-8"
+            )
+            events = load_memory_events(run_dir)
+            self.assertEqual([e.kind for e in events], ["role_retry", "controller_error"])
+            self.assertEqual(events[0].reprompt, 1)
+            self.assertEqual(events[0].label, "researcher")
+            self.assertEqual(events[1].label, "harness")
+            self.assertEqual(events[1].error_type, "APITimeoutError")
+
+    def test_snapshot_surfaces_honest_story_fields_and_iteration_failures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            (run_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "honest",
+                        "status": "completed",
+                        "stop_reason": "iteration_budget_reached",
+                        "converged_official": True,
+                        "converged_official_iteration": 3,
+                        "max_scored_primary": 0.6042,
+                        "best_replicated": {"n": 3, "median_primary": 0.6033, "spread": 0.0004},
+                        "best": {
+                            "experiment_id": "bpr_best",
+                            "metrics": {"GAUC": 0.67, "nDCG@5": 0.5368, "primary": 0.6034},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "run_config.json").write_text(
+                json.dumps({"llm": {"max_total_tokens": 600000}, "budgets": {"max_iterations": 50}}),
+                encoding="utf-8",
+            )
+            (run_dir / "baseline_selection.json").write_text(
+                json.dumps(
+                    {
+                        "selected": "runs/prior/summary.json",
+                        "skipped": [{"path": "runs/old/summary.json", "reason": "revision_mismatch"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "interventions.jsonl").write_text("", encoding="utf-8")
+            (run_dir / "DATA_CARD.md").write_text("# Dataset Profile\n", encoding="utf-8")
+            (run_dir / "iterations.jsonl").write_text(
+                json.dumps(
+                    {
+                        "iteration": 1,
+                        "repairs": 2,
+                        "proposal": {"family": "bpr", "hypothesis": "h"},
+                        "outcome": {
+                            "status": "failed",
+                            "failure_class": "timeout",
+                            "error": "Experiment exceeded 900s",
+                        },
+                        "status": "failed",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            snapshot = load_run_snapshot(run_dir)
+            self.assertIs(snapshot.converged_official, True)
+            self.assertEqual(snapshot.converged_official_iteration, 3)
+            self.assertAlmostEqual(snapshot.max_scored_primary, 0.6042)
+            self.assertEqual(snapshot.best_replicated["n"], 3)
+            self.assertEqual(snapshot.token_cap, 600000)
+            self.assertEqual(snapshot.baseline_selection["selected"], "runs/prior/summary.json")
+            self.assertEqual(snapshot.interventions, ())
+            self.assertTrue(snapshot.interventions_recorded)
+            self.assertIn("Dataset Profile", snapshot.data_card_markdown)
+            item = snapshot.iterations[0]
+            self.assertEqual(item.failure_class, "timeout")
+            self.assertEqual(item.error, "Experiment exceeded 900s")
+            self.assertEqual(item.repairs, 2)
+
+    def test_snapshot_derives_max_scored_primary_for_running_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            (run_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "live",
+                        "status": "running",
+                        "baseline_primary": 0.6015,
+                        "nodes": [
+                            {"status": "success", "metrics": {"primary": 0.6021}},
+                            {"status": "success", "metrics": {"primary": 0.6034}},
+                            {"status": "failed", "metrics": {"primary": 0.9999}},
+                            {"status": "success", "metrics": {}},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            snapshot = load_run_snapshot(run_dir)
+            # summary.json does not exist yet: the raw max comes from scored nodes
+            # only (the failed node's number must not leak into the story).
+            self.assertAlmostEqual(snapshot.max_scored_primary, 0.6034)
+            self.assertIsNone(snapshot.converged_official)
+            self.assertFalse(snapshot.interventions_recorded)
+            self.assertIsNone(snapshot.data_card_markdown)
+
+    def test_mid_run_convergence_signal_comes_from_research_memory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            (run_dir / "state.json").write_text(
+                json.dumps({"run_id": "live", "status": "running", "baseline_primary": 0.6015}),
+                encoding="utf-8",
+            )
+            (run_dir / "research_memory.jsonl").write_text(
+                json.dumps({"iteration": 3, "official": True, "type": "convergence"}) + "\n",
+                encoding="utf-8",
+            )
+            snapshot = load_run_snapshot(run_dir)
+            # summary.json does not exist yet, but the verdict is on disk and
+            # must not be reported as pending.
+            self.assertIs(snapshot.converged_official, True)
+            self.assertEqual(snapshot.converged_official_iteration, 3)
+
+    def test_snapshot_falls_back_to_state_meters_without_resources_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            (run_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "old",
+                        "status": "running",
+                        "baseline_primary": 0.6015,
+                        "iteration_count": 4,
+                        "training_attempts": 5,
+                        "wall_clock_seconds": 120.5,
+                        "token_usage": {"total_tokens": 9000},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            snapshot = load_run_snapshot(run_dir, include_details=False)
+            self.assertEqual(snapshot.resources.get("iteration_count"), 4)
+            self.assertEqual(snapshot.resources.get("token_usage", {}).get("total_tokens"), 9000)
+
+    def test_submission_validator_aggregates_row_errors(self):
+        header = "row_id,user_id,video_id,score\n"
+        body = "".join(f"{i},u{i},v{i},\n" for i in range(500))
+        check = validate_submission(header + body)
+        self.assertFalse(check.valid)
+        # One aggregated line for 500 bad scores, not 500 error lines.
+        self.assertLessEqual(len(check.errors), 3)
+        self.assertTrue(any("500 row(s) have a non-finite score" in e for e in check.errors))
+
+    def test_load_interventions_distinguishes_missing_empty_and_filled(self):
+        from src.ui.loaders import load_interventions
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            entries, recorded = load_interventions(run_dir)
+            self.assertEqual((entries, recorded), ((), False))
+
+            (run_dir / "interventions.jsonl").write_text("", encoding="utf-8")
+            entries, recorded = load_interventions(run_dir)
+            self.assertEqual(entries, ())
+            self.assertTrue(recorded)
+
+            (run_dir / "interventions.jsonl").write_text(
+                json.dumps({"at": "2026-08-30T00:00:00Z", "action": "restarted worker"}) + "\n",
+                encoding="utf-8",
+            )
+            entries, recorded = load_interventions(run_dir)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["action"], "restarted worker")
 
 
 if __name__ == "__main__":

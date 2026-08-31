@@ -118,7 +118,7 @@ class RuntimeSchemaTests(unittest.TestCase):
 
 
 class PolicyTests(unittest.TestCase):
-    def test_family_coverage_is_reported_not_required(self):
+    def test_family_coverage_is_steered_at_until_it_is_complete(self):
         state = RunState("run", "running", "now", 0.6016, meaningful_best=0.6016)
         cov = sorted(coverage_families())
         for i, family in enumerate(cov[:-1], start=1):
@@ -127,7 +127,10 @@ class PolicyTests(unittest.TestCase):
                     i, family, f"h{i}", family, "explore", {}, "success", {"primary": 0.601}
                 )
             )
-        self.assertIsNone(required_family(state))
+        # While *any* coverage family is missing the loop is steered at one: the
+        # old `len(missing) > 1` carve-out stopped steering exactly where the
+        # convergence gate starts demanding that last family's success.
+        self.assertIsNotNone(required_family(state))
         self.assertFalse(coverage_complete(state))
         state.nodes.append(
             ExperimentNode(

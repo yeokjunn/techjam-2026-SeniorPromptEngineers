@@ -54,10 +54,9 @@ class FMRanker:
     def apply_gradients(
         self, grad_v: np.ndarray, grad_w: np.ndarray, grad_b: float = 0.0
     ) -> None:
-        grad_v = grad_v + self.l2 * self.V
-        grad_w = grad_w + self.l2 * self.W
         self.t += 1
         beta1, beta2, epsilon = 0.9, 0.999, 1e-8
+        decay = self.learning_rate * self.l2
         for parameter, gradient, mean, variance in (
             (self.V, grad_v, self.mV, self.vV),
             (self.W, grad_w, self.mW, self.vW),
@@ -71,6 +70,16 @@ class FMRanker:
             parameter -= self.learning_rate * mean_hat / (
                 np.sqrt(variance_hat) + epsilon
             )
+            # Decoupled (AdamW-style) L2: folding it into the gradient lets Adam's
+            # scale normalisation turn it into an ~lr-sized pull to zero whatever
+            # l2 is, so ids missing from a batch decay to exactly 0. Decay after
+            # the step instead, and only on the rows this batch actually touched.
+            if decay:
+                touched = gradient != 0.0
+                if touched.ndim > 1:
+                    touched = touched.any(axis=tuple(range(1, touched.ndim)))
+                rows = np.flatnonzero(touched)
+                parameter[rows] -= decay * parameter[rows]
         self.b -= np.float32(self.learning_rate * grad_b)
 
     def predict(self, features: np.ndarray, batch_size: int = 200_000) -> np.ndarray:

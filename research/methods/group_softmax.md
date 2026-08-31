@@ -61,9 +61,18 @@ Three properties to design around rather than assert against:
 - Same-user negatives only
 - `K`: 4 or 8
 - Temperature: 0.5, 1.0, or 2.0
-- FM embedding dimension fixed at 16 for attribution
-- Learning rate: 0.0003, 0.0005, or 0.001
+- FM embedding dimension `k`: 8, 16, 32, or 64
+- `l2`: 0.0, 1e-6, 1e-4, 1e-3, or 1e-2 (decoupled decay, so 1e-6 is the "off" end)
+- Learning rate: 0.0003, 0.0005, 0.001, 0.002, or 0.005
 - Batch size: 512, 1024, or 2048 groups
+
+`k`, `l2` and `learning_rate` are searchable here, not fixed: read each from `parameters`, and
+treat this family's grid in `src/agent/families.py` as the authority on the permitted values. The
+kit's flat k-sweep (k = 8/16/32 -> 0.5895/0.5902/0.5887,
+`kuairand-starter-kit/README.en.md:133-139`) was measured under **pointwise logloss**, so it says
+where a pointwise model saturates, not where a listwise one does — and the loss is exactly what
+this family changes. Move `learning_rate` with `k`: a wider embedding trained at a rate tuned for
+k = 16 looks like a capacity dead end when it is an optimisation one.
 
 ## Known failure modes
 

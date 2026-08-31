@@ -13,16 +13,47 @@ from .types import ExperimentNode, RunState
 # (`families.FAMILIES`, `_coverage_families()`) are live on every call.
 FAMILIES = families.family_names()
 
-# The pair the harness stop rule was written against, and the fallback for
-# `families.coverage_families()` until Owner E's T3 adds it. Deliberately NOT
-# `family_names()`: a third registered family would then make `should_stop`
-# unsatisfiable and every run could only end on a budget.
+# The pair the harness stop rule was written against. Owner E's T3 has landed, so
+# `families.coverage_families()` is what actually runs and this is now only the
+# fallback for a registry that does not expose it. Deliberately NOT `family_names()`,
+# and the registry set is narrower than it for the same reason: a family that has
+# never succeeded would make `should_stop` unsatisfiable and every run could only end
+# on a budget.
 _MINIMUM_COVERAGE = frozenset({"bpr", "group_softmax"})
 
 # A promising family needs a small exploitation window before the agent is
 # allowed to diversify. This keeps the loop from jumping to a new family before
 # it has attributed the best observed result with controlled follow-ups.
 BEST_FAMILY_FOLLOWUP_ATTEMPTS = 2
+
+# How much a score must beat the incumbent by before it is allowed to *displace*
+# it as the run's best, and before a lead over the baseline may engage the
+# exploit lock.
+#
+# Why a margin at all: candidate primaries carry seed noise of about
+# sigma = 9e-4 (measured), and `best_metrics` was an unprotected running maximum
+# over as many as 50 draws. Under the null — every candidate equal to the
+# baseline — the expected maximum of 50 such draws sits roughly +0.002 above the
+# mean, which is the entire size of the "gain" the loop used to report. A bare
+# `>` therefore promotes noise, and, because the follow-up window is counted
+# from the best node, each noisy promotion also renewed the exploit lock.
+#
+# Why 0.001: it is ~1.1 sigma of the measured noise, so a promotion is more
+# likely than not to be real rather than lucky, and it is the smallest delta the
+# recommender literature treats as meaningful on GAUC/nDCG-scale metrics. It is
+# deliberately *below* the convergence `epsilon` (0.002): the stagnation ratchet
+# is a separate and stricter rule whose semantics T5 pins, and this must not
+# silently restate it.
+DEFAULT_PROMOTION_MARGIN = 0.001
+
+# The measurement the margin above was derived from, named so the reports can
+# cite the shipped number instead of restating it: sample sigma over three runs
+# of byte-identical candidate code, identical parameters and identical seed
+# (0.6019538 / 0.6035695 / 0.6020290), whose spread comes from per-process string
+# hash order in `sampling.eligible_user_indices`, not from the seed parameter.
+# Source: `.superpowers/sdd/A-loop-robustness/investigation/2-noise-floor.md` §2.
+# Reporting only — no decision reads it.
+MEASURED_SEED_SIGMA = 0.00091
 
 # The parameters every family takes: name -> (coercion, fallback). The fallbacks
 # are today's, so an entry that carries no `defaults` behaves exactly as before.
@@ -50,10 +81,19 @@ _FAMILY_KEYS: dict[str, dict[str, tuple[Callable[[Any], Any], Any]]] = {
 _Check = tuple[str, Callable[[Any], bool], str]
 
 _SHARED_BOUNDS: tuple[_Check, ...] = (
-    # `k` stays pinned at 16: the kit already measured the k-sweep (8/16/32 →
-    # 0.5895/0.5902/0.5887) as a dead end, `kuairand-starter-kit/README.en.md:133-139`.
-    ("k", lambda value: value == 16,
-     "Ranking-loss attribution requires k=16 in the first research run."),
+    # `k` is a registry grid key on every shipped family (`families.py:79-83`,
+    # `SHARED_GRID`/`RANKING_CAPACITY_GRID`), so the grid decides which widths
+    # are approved and an off-grid `k` must be rejected in the grid's own
+    # wording. The old entry pinned `k == 16` with the prose "Ranking-loss
+    # attribution requires k=16 in the first research run." — which the schema
+    # unfreeze made factually wrong (the ranking families now allow 8/16/32/64)
+    # *and* which the legacy-message lookup below preferred over the grid
+    # message, so `k=128` was rejected for the wrong reason. What is left here is
+    # only a sanity floor/ceiling for a family that ships no grid at all, in the
+    # same shape and for the same reason as `_BATCH_SIZE_SANITY` below; 1024 is
+    # 16x the widest gridded value, so it blocks no plausible variation.
+    ("k", lambda value: 1 <= value <= 1024,
+     "k must be between 1 and 1024."),
     ("learning_rate", lambda value: value in {0.0003, 0.0005, 0.001},
      "learning_rate is outside the approved method-card search space."),
     ("epochs", lambda value: 1 <= value <= 40, "epochs must be between 1 and 40."),
@@ -233,22 +273,33 @@ def _latest_needs_best_fallback(state: RunState, epsilon: float) -> bool:
     return float(latest.metrics["primary"]) + float(epsilon) < best_primary
 
 
-def exploit_family(state: RunState, epsilon: float = 0.002) -> str | None:
+def exploit_family(
+    state: RunState,
+    epsilon: float = 0.002,
+    margin: float = DEFAULT_PROMOTION_MARGIN,
+) -> str | None:
     """Family that should be pursued before broad exploration.
 
     The loop exploits a best lead when either:
     * the most recent different family failed/regressed and should fall back; or
     * the best family has not yet received a small controlled follow-up window.
 
-    The threshold for a lead is intentionally `> baseline`, not `> epsilon`,
-    because sub-epsilon improvements still need attribution before the run can
-    defensibly move on.
+    The threshold for a lead is `> baseline + margin`, not `> epsilon`, because
+    sub-epsilon improvements still need attribution before the run can
+    defensibly move on — but a lead *inside the seed noise* is not a lead at
+    all, and the lock must not engage on one. This is the same `margin` that
+    gates promotion in `SearchPolicy.observe_success`, deliberately: the lock
+    engages on exactly the leads that are allowed to be recorded as best, and
+    the follow-up counter — which is measured from the best node
+    (`_followups_after_best`) — therefore resets on exactly those too. Keying
+    the two on different thresholds is what let a sub-noise lead renew its own
+    exploitation window indefinitely.
     """
     best_family = _best_family(state)
     best_primary = _best_primary(state)
     if best_family is None or best_primary is None:
         return None
-    if best_primary <= float(state.baseline_primary):
+    if best_primary <= float(state.baseline_primary) + float(margin):
         return None
     if _latest_needs_best_fallback(state, epsilon):
         return best_family
@@ -257,8 +308,12 @@ def exploit_family(state: RunState, epsilon: float = 0.002) -> str | None:
     return None
 
 
-def required_family(state: RunState, epsilon: float = 0.002) -> str | None:
-    lead = exploit_family(state, epsilon)
+def required_family(
+    state: RunState,
+    epsilon: float = 0.002,
+    margin: float = DEFAULT_PROMOTION_MARGIN,
+) -> str | None:
+    lead = exploit_family(state, epsilon, margin)
     if lead is not None:
         return lead
 
@@ -266,14 +321,13 @@ def required_family(state: RunState, epsilon: float = 0.002) -> str | None:
     if not completed:
         return None
     missing = _coverage_families() - completed
-    if len(missing) > 1:
-        # Owner C's steer (652c0a8): with several uncovered families, prefer the
-        # underexplored / underperforming one. Unreachable until a third
-        # coverage family exists (E's `coverage_families()`).
+    if missing:
+        # Owner C's steer (652c0a8): while any coverage family is uncovered,
+        # prefer the underexplored / underperforming one. `len(missing) > 1`
+        # stopped steering exactly where the stop gate starts biting — the loop
+        # was never pushed at the *last* uncovered family whose success
+        # `_may_stop_for_convergence` now demands.
         return next_family_hint(state)
-    # Missing coverage is advisory, not a hard family lock. Otherwise one good
-    # result in `history_features` immediately forces an unrelated BPR run before
-    # attribution/fallback can happen.
     return None
 
 
@@ -294,10 +348,10 @@ def sanitize_parameters(family: str, raw: dict[str, Any]) -> dict[str, Any]:
     """Coerce and validate a proposal's parameters against the family registry.
 
     The family's `grid` is the authority for every key it names; keys it does not
-    name keep the bounds hard-coded above. `Family` carries no `grid`/`defaults`
-    yet (`families.py:8-12`), so both `getattr`s return `{}` and the hard-coded
-    path is what actually runs until Owner E's T3 lands — at which point the
-    grid takes over key by key, with no edit here.
+    name keep the bounds hard-coded above. `Family` now carries `grid`/`defaults`
+    (`families.py:28-29`), so the grid is what actually runs, key by key; the
+    `getattr`s stay because they are also what lets a registry entry ship without
+    either field and fall back to the hard-coded bounds unchanged.
     """
     entry = families.FAMILIES.get(family)
     if entry is None:
@@ -352,10 +406,20 @@ def sanitize_parameters(family: str, raw: dict[str, Any]) -> dict[str, Any]:
 
 
 class SearchPolicy:
-    def __init__(self, epsilon: float, patience: int, replication_seeds: list[int]):
+    def __init__(
+        self,
+        epsilon: float,
+        patience: int,
+        replication_seeds: list[int],
+        promotion_margin: float = DEFAULT_PROMOTION_MARGIN,
+    ):
         self.epsilon = float(epsilon)
         self.patience = int(patience)
         self.replication_seeds = [int(seed) for seed in replication_seeds]
+        # Keyword-with-default rather than a fourth positional: every existing
+        # construction site (`research_controller.py:468`, the tests) keeps
+        # working and gets the documented default.
+        self.promotion_margin = float(promotion_margin)
 
     def observe_success(self, state: RunState, node: ExperimentNode) -> None:
         assert node.metrics is not None
@@ -363,13 +427,22 @@ class SearchPolicy:
         # One ratchet, in `convergence.py` (I7). `node` is already on
         # `state.nodes` when the loop calls this, and the baseline seeds the
         # sequence exactly as `meaningful_best` is seeded at the run's start
-        # (`research_controller.py:329`) — so recomputing from scratch is what
+        # (`research_controller.py:400`) — so recomputing from scratch is what
         # the old incremental update said, and is right after a resume too.
         state.meaningful_best, state.stagnant_iterations = stagnation(
             [state.baseline_primary] + scored_primaries(state), self.epsilon
         )
 
-        if state.best_metrics is None or score > float(state.best_metrics["primary"]):
+        # The promotion gate (see `DEFAULT_PROMOTION_MARGIN`). A bare `>` here
+        # made `best_*` an unprotected maximum over every draw of a noisy
+        # measurement; requiring the margin means a recorded best is one the
+        # measurement can actually distinguish from the one it replaces. Only
+        # these four fields are gated: the ratchet above is computed from the
+        # full score sequence and its semantics are unchanged.
+        if (
+            state.best_metrics is None
+            or score > float(state.best_metrics["primary"]) + self.promotion_margin
+        ):
             state.best_metrics = dict(node.metrics)
             state.best_experiment_id = node.experiment_id
             state.best_artifact_path = node.artifact_path
@@ -388,5 +461,5 @@ class SearchPolicy:
         return (
             state.stagnant_iterations >= self.patience
             and not state.pending_replications
-            and exploit_family(state, self.epsilon) is None
+            and exploit_family(state, self.epsilon, self.promotion_margin) is None
         )

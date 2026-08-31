@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+import dataclasses
+import inspect
 import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from ..experiments.contracts import CandidateOutput
+from ..models import sampling as trusted_sampling
 from .activity import ROLE_OBJECTIVES, summarize_role_output
 from .audit import ResearchAudit
 from .catalog import MethodCatalog
-from .discoveries import DiscoveryStore
+from .discoveries import DiscoveryStore, campaign_prompt_block
 from .errors import RoleOutputInvalid
 from .families import FAMILIES, builder_brief, family_names
 from .llm import LLMCallResult, LLMProvider, normalize_parameters
 from .policy import sanitize_parameters
 from .runtime_contracts import runtime_contract_prompt
+from .safety import ALLOWED_DUNDER_NAMES, FORBIDDEN_ATTRIBUTES, FORBIDDEN_CALLS, FORBIDDEN_TEXT
 from .types import (
     CandidateManifest,
     CriticDecision,
@@ -35,6 +40,14 @@ Every role response is parsed as JSON; never return Markdown, commentary, or tex
 single requested JSON object."""
 
 
+# Aggregate-only, train/valid-only statistics measured by ``src/ui/profile_data.py``
+# and written to ``artifacts/ui/kuairand_pure_eda.json``. The EDA roles cannot compute
+# anything, so this file is the only channel by which the per-user and duration
+# distributions they keep asking for can reach them.
+DEFAULT_MEASURED_PROFILE_PATH = "artifacts/ui/kuairand_pure_eda.json"
+MEASURED_PROFILE_CHAR_LIMIT = 3000
+
+
 # The organizers measured these; they are not guesses (kuairand-starter-kit/README.en.md:120-170).
 # Lives in the cacheable stable prefix, so it is charged once per run, not once per call.
 SEARCH_SPACE_GUIDANCE = """SEARCH-SPACE EVIDENCE (measured by the organizers; do not re-derive):
@@ -42,7 +55,6 @@ SEARCH_SPACE_GUIDANCE = """SEARCH-SPACE EVIDENCE (measured by the organizers; do
 Already tried and yielding nothing -- do not spend an iteration re-testing these:
 - More static feature fields: primary 0.5940 with all 13 CWM fields vs 0.5950 with the 5 -- no
   gain. The user_id x video_id cross already absorbs most of the learnable signal.
-- More capacity: embedding k = 8/16/32 gives 0.5895/0.5902/0.5887 -- flat. Keep k = 16.
 - First-order terms on purely user-side features contribute EXACTLY 0, because ranking is within
   a user and a constant does not reorder that user's list. User-side signal can only pay off
   through cross terms with item-side features.
@@ -55,7 +67,10 @@ Untested directions, in the organizers' own order of likelihood, mapped to regis
 3. Multi-objective auxiliary signals (is_click, is_like, play_time_ms) supporting long_view --
    family `multi_task`.
 
-The bottleneck is NOT features-as-more-columns and NOT capacity. Prefer a direction this run has
+The bottleneck is NOT features-as-more-columns. The kit's k-sweep (k = 8/16/32 giving
+0.5895/0.5902/0.5887, flat) was measured under POINTWISE logloss only and says nothing about where
+a ranking loss saturates, so k, l2 and learning_rate are all searchable within each family's
+registry grid, which is the authority on their permitted values. Prefer a direction this run has
 not yet tried over another point on a grid you have already sampled, unless the recorded evidence
 specifically justifies repeating it."""
 
@@ -64,17 +79,25 @@ BASE_CANDIDATE_CONTRACT = """candidate.py must define `run(context, parameters) 
 Use only numpy, collections, math, time, src.models.fm_core.FMRanker, src.models.sampling,
 and src.experiments.contracts.CandidateOutput. The context provides train_x, train_y, train_users,
 valid_x, valid_users, field_dimension, evaluate_validation(scores), and test_x (which may be None).
+Every one of those attributes always exists — read `context.test_x` directly, and expect None when
+there is no test split.
 Build the model with src.models.fm_core.FMRanker. Do NOT re-implement the factorization machine:
 it gathers sparse field indices, so a dense one-hot formulation over ~40k fields overflows to NaN
 and, even when it converges, breaks attribution against the official baseline. Its entire API is:
 
-    model = FMRanker(dimension, embedding_dim=16, learning_rate=..., l2=1e-6, seed=...)
+    model = FMRanker(dimension, embedding_dim=int(parameters["k"]),
+                     learning_rate=float(parameters["learning_rate"]),
+                     l2=float(parameters.get("l2", 1e-6)), seed=int(parameters["seed"]))
     scores, embeddings, summed = model.logits(features)   # features: int32 (n, n_fields) indices
     grad_v, grad_w, grad_b = model.gradients(features, score_gradients)  # d(loss)/d(score), (n,)
     model.apply_gradients(grad_v, grad_w, grad_b)         # Adam + L2 are applied inside
     scores = model.predict(features)                      # (n,) chunked, for validation/test
     state = model.state_dict()                            # {"V", "W", "b"} COPIES -> checkpoint_state
     model.load_state_dict(state)                          # restore, e.g. best epoch on early stop
+
+Take every hyperparameter from `parameters` -- those are the approved grid values -- and never
+hard-code k, learning_rate, or l2. Only the ranking-loss families carry an `l2` key, which is why
+the constructor above reads it with a `.get` default rather than `parameters["l2"]`.
 
 state_dict() returns copies, not views, so writing into them does not change the model: to
 restore a checkpoint call load_state_dict(state). Do not hand-roll the restore -- "b" is a
@@ -117,6 +140,44 @@ Prefer real trusted runtime components on tiny synthetic arrays; if a mock is ne
 the fake public method signatures must exactly match the real API."""
 
 
+def _is_required(f: dataclasses.Field) -> bool:
+    return f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+
+
+_CANDIDATE_OUTPUT_FIELD_LINES = "\n".join(
+    f"- {f.name}: {f.type} ({'required' if _is_required(f) else 'optional'})"
+    for f in dataclasses.fields(CandidateOutput)
+)
+# Rendered from Owner B's dataclass at import time so the prompt cannot drift when the contract changes.
+CANDIDATE_OUTPUT_BLOCK = f"""CandidateOutput accepts exactly these fields and no others:
+{_CANDIDATE_OUTPUT_FIELD_LINES}
+Construct CandidateOutput with plain keyword arguments. Never introspect the class, its signature, or its fields at runtime."""
+
+
+# Rendered from Owner E's sets at import time so the prompt cannot drift when the guard changes.
+FORBIDDEN_SOURCE_BLOCK = f"""FORBIDDEN IN GENERATED SOURCE (the safety validator rejects the candidate outright):
+- calls: {", ".join(sorted(FORBIDDEN_CALLS))}
+- attribute calls: {", ".join(sorted(FORBIDDEN_ATTRIBUTES))}
+- text fragments anywhere in the file: {", ".join(sorted(FORBIDDEN_TEXT))}
+- any attribute or bare name beginning with `__` (for example __dict__, __class__,
+  __dataclass_fields__); {", ".join(sorted(ALLOWED_DUNDER_NAMES))} is the only one permitted
+Use only the objects handed to you in the context. Never read or write files, never import
+subprocess/urllib/requests, never reference the raw dataset by name."""
+
+
+# Rendered from Owner E's registry + `src.models.sampling` at import time so the prompt cannot
+# drift when a sampler signature changes.
+_TRUSTED_SAMPLER_NAMES = sorted({entry.trusted_sampler for entry in FAMILIES.values()})
+_TRUSTED_SAMPLER_LINES = "\n".join(
+    f"- {name}{inspect.signature(getattr(trusted_sampling, name))}"
+    for name in _TRUSTED_SAMPLER_NAMES
+)
+TRUSTED_SAMPLER_BLOCK = f"""TRUSTED SAMPLER SIGNATURES (src.models.sampling) — call these exactly as written and never
+guess the parameter order or names:
+{_TRUSTED_SAMPLER_LINES}
+Pass a numpy Generator (np.random.default_rng(seed)) as rng — never an int seed."""
+
+
 HISTORY_FEATURE_SPLIT_CONTRACT = """For history_features only: src.models.features.build_features defaults to split='train'.
 Always pass an explicit split-specific spec:
   train_spec = dict(spec, split='train', field_offset=context.field_dimension)
@@ -125,6 +186,75 @@ Always pass an explicit split-specific spec:
 Call build_features(context.train_x, train_spec), build_features(context.valid_x, valid_spec),
 and build_features(context.test_x, test_spec) when test_x is not None. Use feature_dimension(spec)
 for the added FM index width, not train_extra.shape[1]."""
+
+
+def _render_measured_profile(profile: dict[str, Any]) -> str:
+    """Digest ``artifacts/ui/kuairand_pure_eda.json`` into a few prompt lines.
+
+    Pure formatting over a mapping the harness already wrote: every section is
+    optional, so a profile regenerated with a different schema loses only the
+    sections it no longer carries. The 20 ``activity_by_date`` rows are
+    summarised rather than dumped -- the per-day rate range is the
+    decision-relevant part and the full table is the dashboard's job.
+    """
+    lines: list[str] = []
+    provenance = str(profile.get("provenance", "")).strip()
+    if provenance:
+        lines.append(provenance)
+    splits = profile.get("splits")
+    if isinstance(splits, dict):
+        rows = []
+        for name in ("train", "valid"):
+            item = splits.get(name)
+            if isinstance(item, dict):
+                rows.append(
+                    f"| {name} | {int(item.get('rows', 0)):,} | "
+                    f"{int(item.get('users', 0)):,} | "
+                    f"{int(item.get('positives', 0)):,} | "
+                    f"{float(item.get('positive_rate', 0.0)):.4f} |"
+                )
+        if rows:
+            lines.append("")
+            lines.append("| split | rows | users | positives | positive rate |")
+            lines.append("|---|---|---|---|---|")
+            lines.extend(rows)
+        for key in ("impressions_per_user", "positives_per_user"):
+            for name in ("train", "valid"):
+                item = splits.get(name)
+                quantiles = item.get(key) if isinstance(item, dict) else None
+                if isinstance(quantiles, dict):
+                    rendered = ", ".join(
+                        f"{point}={int(quantiles[point])}"
+                        for point in ("min", "p25", "p50", "p75", "p95", "max")
+                        if point in quantiles
+                    )
+                    if rendered:
+                        lines.append(f"- {name} {key}: {rendered}")
+    histogram = profile.get("duration_histogram")
+    if isinstance(histogram, list) and histogram:
+        buckets = "; ".join(
+            f"{item.get('seconds')}: {int(item.get('rows', 0)):,}"
+            for item in histogram
+            if isinstance(item, dict)
+        )
+        if buckets:
+            lines.append("")
+            lines.append("Video-duration histogram (rows per bucket, seconds):")
+            lines.append(buckets)
+    activity = profile.get("activity_by_date")
+    if isinstance(activity, list) and activity:
+        rates = [
+            float(item.get("positive_rate", 0.0))
+            for item in activity
+            if isinstance(item, dict)
+        ]
+        if rates:
+            lines.append("")
+            lines.append(
+                f"Daily activity: {len(rates)} logged days; "
+                f"per-day positive rate {min(rates):.4f} to {max(rates):.4f}."
+            )
+    return "\n".join(lines).strip()
 
 
 class ResearchRoles:
@@ -140,7 +270,9 @@ class ResearchRoles:
         eda_researcher_max_output_tokens: int = 1000,
         eda_builder_max_output_tokens: int = 1200,
         eda_max_retries: int = 1,
+        measured_profile_path: str | Path | None = None,
         discovery_store: DiscoveryStore | None = None,
+        campaign_log_path: str | Path | None = None,
     ):
         self.provider = provider
         self.catalog = catalog
@@ -151,8 +283,17 @@ class ResearchRoles:
         self.eda_researcher_max_output_tokens = int(eda_researcher_max_output_tokens)
         self.eda_builder_max_output_tokens = int(eda_builder_max_output_tokens)
         self.eda_max_retries = int(eda_max_retries)
+        # Fixed for the life of the instance, so one cached string is enough;
+        # the data card is keyed by path because ``state`` can carry a new one.
+        self.measured_profile_path = measured_profile_path
         self.discovery_store = discovery_store
+        # Cross-run memory. Default ``None`` — "this caller configured no log" —
+        # so a role constructed directly in a test or a script never picks up
+        # whatever campaign log happens to be checked into the repo.
+        self.campaign_log_path = campaign_log_path
         self._data_card_cache: dict[str | None, str] = {}
+        self._measured_profile_cache: str | None = None
+        self._campaign_cache: str | None = None
 
     def _data_card_text(self, state: RunState) -> str:
         """Read and memoize data card text to keep the stable prefix byte-identical across calls."""
@@ -169,8 +310,62 @@ class ResearchRoles:
         self._data_card_cache[card_path] = result
         return result
 
-    def _stable_prefix(self, state: RunState, family: str | None) -> str:
-        """Build the cacheable prompt prefix: task, contract, method cards, data card."""
+    def _measured_profile_text(self) -> str:
+        """Render the precomputed aggregate profile as a bounded prompt block.
+
+        Reads only a JSON file the harness already wrote; computes nothing. An
+        absent, unreadable or malformed file yields ``""`` -- exactly the
+        tolerance ``_data_card_text`` gives a missing card -- so a run never dies
+        for a cosmetic prompt section. Memoized like the card: the EDA prefix is
+        rebuilt on every EDA call and must stay byte-identical across them.
+        """
+        if self._measured_profile_cache is not None:
+            return self._measured_profile_cache
+        text = ""
+        if self.measured_profile_path is not None:
+            try:
+                profile = json.loads(
+                    Path(self.measured_profile_path).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                profile = None
+            if isinstance(profile, dict):
+                try:
+                    text = _render_measured_profile(profile)
+                except (TypeError, ValueError):
+                    # A key of the right name holding the wrong kind of value is
+                    # still a malformed profile, and is worth no more than a
+                    # missing one: drop the block rather than the run.
+                    text = ""
+                if len(text) > MEASURED_PROFILE_CHAR_LIMIT:
+                    text = text[:MEASURED_PROFILE_CHAR_LIMIT].rstrip() + "\n… (truncated)"
+        self._measured_profile_cache = text
+        return text
+
+    def _campaign_text(self) -> str:
+        """Memoized ``PRIOR CAMPAIGNS`` block, or ``""`` when there is no log.
+
+        Memoized for the same reason the data card is: this string sits in the
+        cacheable stable prefix, which must stay byte-identical across every call
+        of a run. The log is only ever appended to at *run end*, so re-reading it
+        mid-run could not add anything anyway.
+        """
+        if self._campaign_cache is None:
+            self._campaign_cache = campaign_prompt_block(self.campaign_log_path)
+        return self._campaign_cache
+
+    def _stable_prefix(
+        self, state: RunState, family: str | None, *, campaigns: bool = False
+    ) -> str:
+        """Build the cacheable prompt prefix: task, contract, method cards, data card.
+
+        ``campaigns`` adds the ``PRIOR CAMPAIGNS`` block, and only the Researcher
+        passes it: the spec scopes cross-run memory to the proposing role, and
+        "do not re-test what these already measured flat" is an instruction the
+        Builder, Debugger and Critics cannot act on but could be steered by.
+        Keeping it out of their prefixes also keeps their four prompt caches at
+        the bytes they had before this wave.
+        """
         method_card_key = None
         if family is not None:
             method_card_key = Path(FAMILIES[family].method_card).stem
@@ -182,9 +377,18 @@ class ResearchRoles:
 
 {BASE_CANDIDATE_CONTRACT}
 
+{CANDIDATE_OUTPUT_BLOCK}
+
+{FORBIDDEN_SOURCE_BLOCK}
+
+{TRUSTED_SAMPLER_BLOCK}
+
 {method_cards}"""
         if data_card:
             prefix += f"\n\nDATA CARD:\n{data_card}"
+        campaign_block = self._campaign_text() if campaigns else ""
+        if campaign_block:
+            prefix += f"\n\n{campaign_block}"
         return prefix
 
     def _eda_prefix(self, state: RunState) -> str:
@@ -198,6 +402,13 @@ and leakage-safe feature hypotheses compatible with registered families: {', '.j
 """
         if data_card:
             prefix += f"\nDATA CARD:\n{data_card}"
+        profile = self._measured_profile_text()
+        if profile:
+            prefix += (
+                "\nMEASURED PROFILE (aggregate train/valid statistics already computed from the"
+                " real dataset -- quote these numbers; never re-derive or contradict them):\n"
+                f"{profile}\n"
+            )
         return prefix
 
     def _call(
@@ -291,10 +502,12 @@ and leakage-safe feature hypotheses compatible with registered families: {', '.j
     ) -> EDAResearchPlan:
         volatile_block = f"""ROLE: EDA Researcher
 Plan one compact, leakage-safe EDA pass that can inform the next ranking experiment.
-Use the DATA CARD, current experiment history, and known KuaiRand-Pure task constraints.
+Use the DATA CARD, the MEASURED PROFILE, current experiment history, and known KuaiRand-Pure task constraints.
+Every question must be answerable from those measured blocks or from a registered-family experiment; do not request a statistic no one will compute.
 Prioritize feature engineering ideas that can be tested by registered families.
 Do not request hidden-test information, raw-data mutation, evaluator changes, or broad repository rewrites.
 Return concise JSON: at most 4 questions, 4 feature hypotheses, 4 risks, and 4 artifacts.
+Output ONLY the JSON object — no reasoning preamble.
 
 RESEARCH STATE:
 {self._state_summary(state)}
@@ -324,10 +537,12 @@ RESEARCH STATE:
     ) -> EDAReport:
         volatile_block = f"""ROLE: EDA Builder
 Produce a compact UI-visible EDA and feature-engineering report from this plan.
-You may infer only from the supplied DATA CARD and experiment history; do not invent exact statistics that are not present.
+You may infer only from the supplied DATA CARD, MEASURED PROFILE, and RESEARCH STATE; every `evidence` field must quote a number that appears verbatim in one of them. Do not invent statistics.
+Findings about the search rather than the data must cite the measured GAUC / nDCG@5 / primary values in RESEARCH STATE.
 Separate observations from implications. Every feature candidate must state implementation scope and leakage risk.
 Favor feature candidates compatible with src.models.features, history_features, multi_task, BPR, or group_softmax.
 Return concise JSON: at most 3 findings, 3 feature candidates, and 3 UI notes. One sentence per field.
+Output ONLY the JSON object — no reasoning preamble.
 
 EDA PLAN:
 {json.dumps(plan.to_dict(), indent=2, sort_keys=True)}
@@ -381,7 +596,8 @@ RESEARCH STATE:
 Propose one controlled experiment anywhere in the algorithmic stack -- the loss, the
 feature set, or the training objective. {family_rule}
 {search_rule}
-All parameter fields in the schema must be present; use null only for parameters irrelevant to the family.
+The nine core parameter fields must all be present; emit a family-specific key only when this family's approved search space lists it.
+Pre-register the outcome: emit `predicted_delta`, a signed float giving the change in validation primary you expect this candidate to produce against the CURRENT best in RESEARCH STATE (negative if you expect it to be worse) -- predict honestly; you will be scored on calibration, not on optimism.
 Return one concise JSON decision. Keep rationale and hypothesis to one sentence each.
 Do not repeat a previous failed proposal or reuse its hypothesis_id.
 
@@ -396,7 +612,7 @@ RESEARCH STATE:
 """
         if feedback:
             volatile_block += f"\nPREVIOUS ATTEMPT REJECTED: {feedback}"
-        prompt = f"{self._stable_prefix(state, required_family)}\n\n{volatile_block}"
+        prompt = f"{self._stable_prefix(state, required_family, campaigns=True)}\n\n{volatile_block}"
         result = self._call(
             state,
             iteration,

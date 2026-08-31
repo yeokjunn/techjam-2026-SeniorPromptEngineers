@@ -9,7 +9,7 @@
   "baseline_config": "configs/baseline.json",
   "data_card_path": null,
   "llm": {
-    "provider": "openai",
+    "provider": "openai_compatible",
     "model": "deepseek-chat",
     "reasoning_effort": "low",
     "verbosity": "low",

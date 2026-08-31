@@ -167,9 +167,10 @@ for their account.
 The run first reuses a passing official-FM run; if none exists it automatically
 reproduces the baseline gate. A promising family is now given a short controlled
 follow-up window before broad exploration, and a failed or clearly regressed new
-family falls back to the current validation-best family. Family coverage is
-reported for auditability, but it is not a hard lock that overrides attribution
-of the best lead. An improvement greater than `0.002` queues exact seed-1 and
+family falls back to the current validation-best family. Family coverage is a
+hard gate on the `converged` stop — a run may only report convergence once every
+family in `families.COVERAGE_FAMILIES` has a successful node, or its proposal
+budget is spent. An improvement greater than `0.002` queues exact seed-1 and
 seed-2 replications.
 
 Resume an interrupted research run with:

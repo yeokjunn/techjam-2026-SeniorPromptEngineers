@@ -134,6 +134,7 @@ class ResearchLoopTests(unittest.TestCase):
                 "generated_root": str(root / "generated"),
                 "method_catalog": str(REPO_ROOT / "research" / "methods"),
                 "discovery_store": str(root / "discoveries.json"),
+                "campaign_log": str(root / "campaign_log.md"),
                 "official_validation_baseline": 0.6016,
                 "llm": {"max_total_tokens": 1000},
                 "budgets": {
@@ -216,6 +217,7 @@ class ResearchLoopTests(unittest.TestCase):
                 "generated_root": str(root / "generated"),
                 "method_catalog": str(REPO_ROOT / "research" / "methods"),
                 "discovery_store": str(root / "discoveries.json"),
+                "campaign_log": str(root / "campaign_log.md"),
                 "official_validation_baseline": 0.6016,
                 "llm": {"max_total_tokens": 1000},
                 "budgets": {
@@ -418,6 +420,7 @@ def research_config(root: Path, **budgets: int) -> tuple[dict, Path]:
         "generated_root": str(root / "generated"),
         "method_catalog": str(REPO_ROOT / "research" / "methods"),
         "discovery_store": str(root / "discoveries.json"),
+        "campaign_log": str(root / "campaign_log.md"),
         "official_validation_baseline": 0.6016,
         "llm": {"max_total_tokens": 1000},
         "budgets": {
@@ -476,7 +479,31 @@ class OfficialConvergenceReportingTests(unittest.TestCase):
         The plan's sketch follows the current best lead instead of enforcing
         family coverage. The candidate cap stands in as the harness agenda that
         outlives the rule.
+
+        The lead has to be a *real* one for the script to hold: the promotion
+        margin (`policy.DEFAULT_PROMOTION_MARGIN`) means a candidate only
+        becomes the best, and only engages the exploit lock, once it is
+        distinguishable from seed noise. `FakeExecutor`'s 0.602 is +0.0004 over
+        the baseline — inside the noise — so the loop would (rightly) steer the
+        third pass at an uncovered family instead of following it. 0.6031 is
+        +0.0015: over the margin, still inside epsilon, so the organizers' rule
+        still fires on the third iteration, which is what this test is about.
         """
+
+        class MeaningfulLeadExecutor(FakeExecutor):
+            def train(self, iteration, manifest, workspace, run_dir):
+                outcome = super().train(iteration, manifest, workspace, run_dir)
+                if manifest.family != "bpr":
+                    # Only the scored metrics: `dict.fromkeys` overwrote every
+                    # key, `users`/`rows` included, with the primary.
+                    outcome.metrics = {
+                        **(outcome.metrics or {}),
+                        "primary": 0.6031,
+                        "GAUC": 0.6031,
+                        "nDCG@5": 0.6031,
+                    }
+                return outcome
+
         script = [
             research("bpr"), critic(), manifest("bpr"), critic(),
             research("group_softmax"), critic(), manifest("group_softmax"), critic(),
@@ -494,7 +521,7 @@ class OfficialConvergenceReportingTests(unittest.TestCase):
                 provider=provider,
                 baseline_summary=BASELINE_SUMMARY,
             )
-            loop.executor = FakeExecutor()
+            loop.executor = MeaningfulLeadExecutor()
             run_dir = loop.run()
             summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 

@@ -30,9 +30,9 @@ from .errors import LLMError
 from .llm import LLMProvider, build_provider
 from .policy import (
     SearchPolicy,
+    research_primaries,
     required_family,
     sanitize_parameters,
-    scored_primaries,
 )
 from .report import render_reports
 from .roles import ResearchRoles
@@ -151,9 +151,14 @@ def _official_convergence_iteration(
     reported is the node's own ``iteration`` and not the prefix length. ``None``
     when the rule never fires.
     """
-    # Same filter as policy.scored_primaries; the index below depends on it.
-    scored = [node for node in state.nodes if node.status == "success" and node.metrics]
-    sequence = [state.baseline_primary] + scored_primaries(state)
+    # Exact seed replications estimate variance; convergence is based on three
+    # successful non-replication research runs.  Keep this filter identical to
+    # policy.research_primaries so the reported iteration cannot drift.
+    scored = [
+        node for node in state.nodes
+        if node.status == "success" and node.metrics and node.action != "replicate"
+    ]
+    sequence = [state.baseline_primary] + research_primaries(state)
     for length in range(patience + 1, len(sequence) + 1):
         if official_converged(sequence[:length], epsilon, patience):
             return scored[length - 2].iteration
@@ -1502,7 +1507,7 @@ class ResearchLoop:
         # promising lead before stopping.
         epsilon = float(self.convergence["epsilon"])
         patience = int(self.convergence["patience"])
-        official_sequence = [self.state.baseline_primary] + scored_primaries(self.state)
+        official_sequence = [self.state.baseline_primary] + research_primaries(self.state)
         summary = {
             "run_id": self.state.run_id,
             "status": self.state.status,

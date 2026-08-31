@@ -127,7 +127,7 @@ class PolicyTests(unittest.TestCase):
                     i, family, f"h{i}", family, "explore", {}, "success", {"primary": 0.601}
                 )
             )
-        self.assertIsNone(required_family(state))
+        self.assertEqual(required_family(state), cov[-1])
         self.assertFalse(coverage_complete(state))
         state.nodes.append(
             ExperimentNode(

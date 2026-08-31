@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def parameters(family: str) -> dict:
-    return {
+    values = {
         "seed": 0,
         "k": 16,
         "learning_rate": 0.001,
@@ -25,6 +25,22 @@ def parameters(family: str) -> dict:
         "negatives_per_group": 4 if family == "group_softmax" else None,
         "temperature": 1.0 if family == "group_softmax" else None,
     }
+    if family == "history_features":
+        values.update(
+            {
+                "batch_size": 2048,
+                "negatives_per_positive": 1,
+                "smoothing": 20.0,
+                "scheme": "prior_days",
+                "use_user_rate": False,
+                "use_user_author": False,
+                "use_user_tab": False,
+                "use_recency": True,
+                "use_video_age": False,
+                "use_tab_cross": False,
+            }
+        )
+    return values
 
 
 def research(family: str) -> dict:
@@ -68,6 +84,17 @@ def rejected_critic() -> dict:
 
 
 def code(family: str) -> str:
+    if family == "history_features":
+        return '''import numpy as np
+from src.experiments.contracts import CandidateOutput
+from src.models.sampling import sample_bpr_pairs
+from src.models.features import build_features
+
+def run(context, parameters):
+    sample_bpr_pairs(context.train_users, context.train_y, np.random.default_rng(0), 1)
+    build_features(context.train_x, {"split": "train", "use_recency": True})
+    return CandidateOutput(np.zeros(len(context.valid_x)), {"weights": np.zeros(1)}, [], {"pairs": 1})
+'''
     sampler = "sample_bpr_pairs" if family == "bpr" else "sample_softmax_groups"
     final_argument = "1" if family == "bpr" else "4"
     return f'''import numpy as np
@@ -553,7 +580,7 @@ class OfficialConvergenceReportingTests(unittest.TestCase):
         script = [
             research("bpr"), critic(), manifest("bpr"), critic(),
             research("group_softmax"), critic(), manifest("group_softmax"), critic(),
-            research("group_softmax"), critic(), manifest("group_softmax"), critic(),
+            research("history_features"), critic(), manifest("history_features"), critic(),
         ]
         provider = ScriptedProvider(script)
         with tempfile.TemporaryDirectory() as directory:

@@ -335,36 +335,41 @@ and 32.02 seconds wall-clock. Source:
 
 ## Latest verified autonomous integration run
 
-Latest local live run `20260830T175102340187Z_research` completed with
-`stop_reason: converged` at iteration 5 under the official epsilon `0.002`,
-patience-3 rule. It used 5 training attempts, 7 proposal attempts, 325,690
-reported LLM tokens, 1,510.00 seconds wall-clock, 0 GPU-hours, and 0 manual
-interventions.
+Latest local live run `kj_20260831T020238331867Z_research` completed with
+`stop_reason: converged` at iteration 12 under the official epsilon `0.002`,
+patience-3 rule. It used 13 training attempts, 44 proposal attempts, 1,855,199
+reported LLM tokens, 3,664.28 seconds wall-clock, 0 GPU-hours, and 0 manual
+interventions. It stopped by convergence, not by the 50-iteration or six-hour
+hard limits.
 
 | Iteration | Candidate | Family | Status | Primary | Notes |
 |---:|---|---|---|---:|---|
-| 1 | `hf_prior_user_author_recency_decay_v1_bpr_bce` | `history_features` | failed | — | Candidate unpacked the validation metrics dict as a tuple; bounded debugger repair did not rescue this run. |
-| 2 | `hf_prior_days_recency_candidate_author_overlap_v2_bpr` | `history_features` | success | **0.6039** | Best single checkpoint, but all history toggles were false; effectively baseline FM fields trained with BPR. |
-| 3 | `hf_prior_days_recency_candidate_author_overlap_v2_bpr_seed1` | `history_features` | success | 0.6033 | Exact seed replication; did not improve by more than `0.002`. |
-| 4 | `hf_prior_days_recency_candidate_author_overlap_v2_bpr_seed2` | `history_features` | success | 0.6035 | Exact seed replication; did not improve by more than `0.002`. |
-| 5 | `bpr_margin_softplus_0p1` | `bpr` | success | 0.6034 | Margin-BPR follow-up; did not improve by more than `0.002`, triggering convergence after 3 stagnant successes. |
+| 1 | `bpr_temp_clipped_2neg_historydecay_kgap` | `bpr` | success | 0.6036 | Initial BPR lead over the official FM validation baseline. |
+| 2 | `bpr_temp_clipped_2neg_historydecay_kgap_seed1` | `bpr` | success | 0.6033 | Exact seed replication. |
+| 3 | `bpr_temp_clipped_2neg_historydecay_kgap_seed2` | `bpr` | success | **0.6037** | Best single checkpoint. |
+| 4 | `gs_group_softmax_temp_1_seed123_lr5e4_bs1024_k16_k4_ep6_pat2` | `group_softmax` | success | 0.6033 | Different objective family, below best. |
+| 5 | `hist_feat_bpr_prior_smooth_v1` | `history_features` | success | 0.6027 | Preserved history feature groups but did not improve top-line score. |
+| 6-11 | multi-task and BPR probes | mixed | failed/rejected | — | Failures and critic rejections were logged but did not count as convergence evidence. |
+| 12 | `bpr_stratified_neg_same_tab_v1` | `bpr` | success | 0.6033 | Third stagnant non-replication success; official convergence verdict latched. |
 
 Best single-checkpoint validation metrics from that run:
 
 | GAUC | nDCG@5 | Primary | Delta vs official 0.6016 |
 |---:|---:|---:|---:|
-| 0.6702 | 0.5375 | **0.6039** | **+0.0023** |
+| 0.6701 | 0.5373 | **0.6037** | **+0.0021** |
 
-The final ensemble blended the four successful candidates and reached validation
-primary `0.6046` with GAUC `0.6711` and nDCG@5 `0.5380`. The label-free
+The final ensemble blended four diverse successful candidates and reached validation
+primary `0.6048` with GAUC `0.6718` and nDCG@5 `0.5378`. The label-free
 submission gate passed on 170,588 test rows. The run artifacts remain generated
 outputs under `runs/` and are intentionally not committed in this PR. Source:
-[`summary.json`](runs/20260830T175102340187Z_research/summary.json).
+[`summary.json`](runs/kj_20260831T020238331867Z_research/summary.json).
 
-The misleading iteration-2 configuration motivated a contract fix: a
-`history_features` proposal must now enable at least one history group, a
-`multi_task` proposal must enable at least one auxiliary head, and the Builder
-cannot silently change the Researcher's approved `use_*` signal selection.
+This run motivated the current harness fixes: convergence is reported over
+successful non-replication research scores, seed replications remain variance
+evidence, failed/rejected candidates do not count as stagnation evidence, the
+policy uses a deterministic 70/30 explore/exploit schedule, and the Debugger is
+explicitly forbidden from repairing history-feature failures by disabling the
+approved `use_*` signals.
 
 Previously committed integration run `20260829T060130480764Z_research` executed
 the real BPR trainer and the label-free submission gate:
@@ -401,10 +406,11 @@ Conductor: research_controller.ResearchLoop
 
 - The latest live-LLM run converged locally and passed the label-free submission
   gate; hidden-test score remains unknown and must not guide model selection.
-- The harness lacks the append-only `intervene` command and separate persisted
-  official-convergence verdict.
-- Only BPR and group-softmax are currently registered; sequence features,
-  multi-task feedback, and repeated-seed variance estimates remain next steps.
+- Validation lift remains modest and close to seed variance, so future work
+  should prioritize more diverse, leakage-safe history contrast and calibrated
+  score blending rather than relying on the official FM-like baseline signal.
+- Multi-task proposals are registered but the latest live run exposed reliability
+  failures in generated auxiliary-head implementations that still need hardening.
 
 ## Team contributions
 

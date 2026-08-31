@@ -6,6 +6,7 @@ import unittest
 from src.agent.convergence import ConvergenceTracker, official_converged
 from src.agent.policy import (
     SearchPolicy,
+    exploration_slot,
     exploit_family,
     family_experiment_score,
     next_family_hint,
@@ -91,7 +92,7 @@ class PolicyTests(unittest.TestCase):
         )
         self.assertEqual(next_family_hint(state), "bpr")
 
-    def test_promising_best_family_is_exploited_before_coverage(self):
+    def test_first_seven_attempts_explore_then_three_exploit(self):
         state = RunState(
             run_id="demo",
             status="running",
@@ -106,82 +107,47 @@ class PolicyTests(unittest.TestCase):
             action="explore",
             parameters={},
             status="success",
-            metrics={"GAUC": 0.6695, "nDCG@5": 0.5366, "primary": 0.603063},
+            metrics={"GAUC": 0.6705, "nDCG@5": 0.5380, "primary": 0.6043},
         )
         state.nodes.append(best)
         state.best_experiment_id = best.experiment_id
         state.best_metrics = dict(best.metrics or {})
-
+        self.assertTrue(exploration_slot(state))
+        self.assertIsNone(exploit_family(state))
+        for iteration in range(2, 8):
+            state.nodes.append(
+                ExperimentNode(iteration, f"e{iteration}", "h", "bpr", "explore", {}, "success", {"primary": 0.60})
+            )
+        self.assertFalse(exploration_slot(state))
         self.assertEqual(exploit_family(state), "history_features")
         self.assertEqual(required_family(state), "history_features")
-        self.assertEqual(next_family_hint(state), "history_features")
 
-    def test_bad_new_family_falls_back_to_best_family(self):
+    def test_failed_family_gets_one_recovery_then_diversifies(self):
         state = RunState(
             run_id="demo",
             status="running",
             started_at="2026-01-01T00:00:00Z",
             baseline_primary=0.6016,
         )
-        best = ExperimentNode(
+        failed = ExperimentNode(
             iteration=1,
-            experiment_id="cand_hf_tabcross_prior_days_v1",
+            experiment_id="broken_history",
             hypothesis_id="hf_tabcross_prior_days_v1",
             family="history_features",
             action="explore",
             parameters={},
-            status="success",
-            metrics={"GAUC": 0.6695, "nDCG@5": 0.5366, "primary": 0.603063},
+            status="failed",
         )
-        bpr = ExperimentNode(
-            iteration=2,
-            experiment_id="cand_bpr_sameuser_v3",
-            hypothesis_id="cand_bpr_sameuser_v3",
-            family="bpr",
-            action="explore",
-            parameters={},
-            status="success",
-            metrics={"GAUC": 0.6553, "nDCG@5": 0.5306, "primary": 0.592949},
-        )
-        state.nodes.extend([best, bpr])
-        state.best_experiment_id = best.experiment_id
-        state.best_metrics = dict(best.metrics or {})
-
-        self.assertEqual(exploit_family(state), "history_features")
+        state.nodes.append(failed)
         self.assertEqual(required_family(state), "history_features")
-
-    def test_convergence_waits_for_best_family_followups(self):
-        state = RunState(
-            run_id="demo",
-            status="running",
-            started_at="2026-01-01T00:00:00Z",
-            baseline_primary=0.6016,
-            stagnant_iterations=3,
+        state.nodes.append(
+            ExperimentNode(2, "broken_history_2", "h", "history_features", "explore", {}, "failed")
         )
-        best = ExperimentNode(
-            iteration=1,
-            experiment_id="cand_hf_tabcross_prior_days_v1",
-            hypothesis_id="hf_tabcross_prior_days_v1",
-            family="history_features",
-            action="explore",
-            parameters={},
-            status="success",
-            metrics={"GAUC": 0.6695, "nDCG@5": 0.5366, "primary": 0.603063},
-        )
-        state.nodes.append(best)
-        state.best_experiment_id = best.experiment_id
-        state.best_metrics = dict(best.metrics or {})
-        policy = SearchPolicy(0.002, 3, [])
+        self.assertNotEqual(required_family(state), "history_features")
 
-        self.assertFalse(policy.should_stop(state))
-
-        state.nodes.extend(
-            [
-                ExperimentNode(2, "hf_ablate_1", "h", "history_features", "exploit", {}, "success", {"primary": 0.6020}),
-                ExperimentNode(3, "hf_ablate_2", "h", "history_features", "exploit", {}, "success", {"primary": 0.6019}),
-            ]
-        )
-        self.assertTrue(policy.should_stop(state))
+    def test_convergence_stops_after_three_non_replication_successes(self):
+        state = RunState("demo", "running", "now", 0.6016, stagnant_iterations=3)
+        self.assertTrue(SearchPolicy(0.002, 3, []).should_stop(state))
 
 
 class OfficialConvergenceTests(unittest.TestCase):

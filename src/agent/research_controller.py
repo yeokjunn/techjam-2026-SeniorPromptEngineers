@@ -473,6 +473,11 @@ class ResearchLoop:
             self.data_dir,
             experiment_timeout_seconds=int(self.budgets["experiment_timeout_seconds"]),
             test_timeout_seconds=int(self.budgets["test_timeout_seconds"]),
+            # Seeds per candidate. The published baseline is a 5-seed mean with std 0.0008,
+            # so a single-seed candidate is drawn from a distribution about as wide as the
+            # improvement being claimed. Default 1 keeps existing configs behaving exactly
+            # as before; the production config raises it.
+            candidate_seeds=int(self.budgets.get("candidate_seeds", 1)),
         )
         self.consecutive_harness_errors = 0
         # I10: how many interventions were on file when this pass began, so the

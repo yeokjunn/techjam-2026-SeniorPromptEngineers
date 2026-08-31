@@ -37,11 +37,12 @@
     "max_training_attempts": 50,
     "max_proposals": 100,
     "max_wall_clock_seconds": 21600,
-    "experiment_timeout_seconds": 900,
+    "experiment_timeout_seconds": 2400,
     "test_timeout_seconds": 60,
     "max_debug_repairs": 2,
     "max_consecutive_harness_errors": 3,
-    "max_role_reprompts": 3
+    "max_role_reprompts": 3,
+    "candidate_seeds": 3
   },
   "convergence": {
     "epsilon": 0.002,

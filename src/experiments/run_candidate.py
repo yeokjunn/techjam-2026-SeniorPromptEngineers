@@ -160,6 +160,70 @@ def validate_and_persist_output(
     }
 
 
+def _seed_plan(parameters: dict, candidate_seeds: int) -> list[int]:
+    """Seeds to train this candidate on.
+
+    One seed reproduces the previous behaviour exactly, so this is a strict generalisation:
+    the mean over a single seed is that seed's own value and nothing downstream shifts.
+
+    Consecutive seeds from the proposed one, rather than a random draw, so a candidate is
+    reproducible from its manifest alone -- the parameters record seed=s and the run is
+    always s, s+1, ... s+n-1.
+    """
+    base = int(parameters.get("seed", 0))
+    count = max(1, int(candidate_seeds))
+    return [base + offset for offset in range(count)]
+
+
+def _score_run(output, valid_users, valid_y) -> dict[str, float]:
+    """Validate one run's scores and return its full validation metrics.
+
+    Runs the same shape/finiteness checks as `validate_and_persist_output`, because a seed
+    that produces NaN must fail the whole candidate rather than be quietly averaged away.
+    """
+    if not isinstance(output, CandidateOutput):
+        raise TypeError("Candidate run() must return CandidateOutput.")
+    scores = np.asarray(output.validation_scores)
+    if scores.ndim != 1 or len(scores) != len(valid_y):
+        raise ValueError("Validation scores have the wrong shape.")
+    if not np.all(np.isfinite(scores)):
+        raise ValueError("Validation scores contain NaN or Inf.")
+    return official_evaluate(valid_users, valid_y, scores)
+
+
+def _apply_seed_aggregate(payload: dict, runs: list, representative_seed: int) -> None:
+    """Replace the reported metrics with the mean across seeds, and record the spread.
+
+    Why the mean becomes `metrics`: the baseline's published number is a 5-seed mean with a
+    std of 0.0008, while a candidate was scored on one seed. A single-seed result is drawn
+    from a distribution roughly as wide as the entire improvement being claimed, which is why
+    a 0.6039 candidate replicated at 0.6025 and 0.6024. Averaging makes the number the run
+    selects on, converges on and reports the same denoised quantity.
+
+    `primary_std` is the sample spread, and is what turns "+0.0024" into "+0.0024 +/- s" --
+    the difference between a claim a reader can question and one they can check.
+    """
+    metrics = payload["metrics"]
+    keys = {key for _, _, seed_metrics in runs for key in seed_metrics}
+    for key in keys:
+        values = [seed_metrics[key] for _, _, seed_metrics in runs if key in seed_metrics]
+        if values and all(isinstance(value, (int, float)) for value in values):
+            metrics[key] = float(sum(values) / len(values))
+
+    primaries = [seed_metrics["primary"] for _, _, seed_metrics in runs]
+    metrics["seeds_run"] = float(len(primaries))
+    if len(primaries) > 1:
+        mean = sum(primaries) / len(primaries)
+        variance = sum((value - mean) ** 2 for value in primaries) / (len(primaries) - 1)
+        metrics["primary_std"] = float(variance ** 0.5)
+    else:
+        metrics["primary_std"] = 0.0
+    payload["seed_primaries"] = {
+        str(seed): float(seed_metrics["primary"]) for seed, _, seed_metrics in runs
+    }
+    payload["representative_seed"] = int(representative_seed)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Execute one generated candidate safely.")
     parser.add_argument("--candidate", required=True, type=Path)
@@ -169,7 +233,8 @@ def main() -> None:
     parser.add_argument("--artifact-dir", required=True, type=Path)
     args = parser.parse_args()
 
-    parameters = json.loads(args.spec.read_text(encoding="utf-8"))["parameters"]
+    spec = json.loads(args.spec.read_text(encoding="utf-8"))
+    parameters = spec["parameters"]
     splits = load_train_valid(args.data_dir)
     # Test features only: the kit derives bucket edges and every vocab from
     # splits['train'] alone, so this third key changes nothing about train/valid
@@ -209,7 +274,18 @@ def main() -> None:
         test_x=test_x,
     )
     module = _load_candidate(args.candidate)
-    output = module.run(context, parameters)
+    seeds = _seed_plan(parameters, spec.get("candidate_seeds", 1))
+    runs: list[tuple[int, CandidateOutput, dict[str, float]]] = []
+    for seed in seeds:
+        output = module.run(context, {**parameters, "seed": seed})
+        runs.append((seed, output, _score_run(output, valid_users, valid_y)))
+
+    # The representative run is the one whose primary is closest to the mean, so the
+    # checkpoint and test scores we actually submit match the number we report. Picking the
+    # best seed instead would submit a model that scores above its own reported estimate.
+    mean_primary = sum(metrics["primary"] for _, _, metrics in runs) / len(runs)
+    seed, output, _ = min(runs, key=lambda run: abs(run[2]["primary"] - mean_primary))
+
     payload = validate_and_persist_output(
         output,
         tuple(valid_users),
@@ -217,6 +293,7 @@ def main() -> None:
         args.artifact_dir,
         expected_test_rows=int(test_x.shape[0]),
     )
+    _apply_seed_aggregate(payload, runs, representative_seed=seed)
     _write_json_atomic(args.result, payload)
 
 

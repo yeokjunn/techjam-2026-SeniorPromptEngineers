@@ -80,12 +80,17 @@ class CandidateExecutor:
         experiment_timeout_seconds: int,
         test_timeout_seconds: int,
         max_output_chars: int = 200_000,
+        candidate_seeds: int = 1,
     ):
         self.repo_root = repo_root
         self.data_dir = data_dir
         self.experiment_timeout_seconds = int(experiment_timeout_seconds)
         self.test_timeout_seconds = int(test_timeout_seconds)
         self.max_output_chars = int(max_output_chars)
+        # How many consecutive seeds each candidate is trained on before its metrics are
+        # averaged. 1 is the historical behaviour; the default stays 1 so every existing
+        # caller and test is unaffected.
+        self.candidate_seeds = max(1, int(candidate_seeds))
 
     def _environment(self, workspace: CandidateWorkspace) -> dict[str, str]:
         """Minimal scratch environment for candidate subprocesses (review C3)."""
@@ -144,7 +149,14 @@ class CandidateExecutor:
         spec_path = artifact_dir / "spec.json"
         result_path = artifact_dir / "result.json"
         spec_path.write_text(
-            json.dumps({"parameters": manifest.parameters}, indent=2), encoding="utf-8"
+            json.dumps(
+                {
+                    "parameters": manifest.parameters,
+                    "candidate_seeds": self.candidate_seeds,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
         )
         command = [
             sys.executable,

@@ -251,20 +251,31 @@ def run(context, parameters):
     def test_coverage_families_is_the_minimum_set_not_every_family(self):
         self.assertEqual(
             coverage_families(),
-            frozenset({"bpr", "group_softmax", "history_features", "multi_task"}),
+            frozenset({"bpr", "group_softmax", "history_features"}),
         )
         self.assertTrue(coverage_families().issubset(family_names()))
+        # Strictly a subset: a family that has never succeeded must not be able
+        # to make `should_stop` unsatisfiable.
+        self.assertNotEqual(coverage_families(), family_names())
 
     def test_family_entries_stay_hashable_despite_grid_dicts(self):
         self.assertEqual(len({FAMILIES["bpr"], FAMILIES["bpr"]}), 1)
         self.assertEqual(len(set(FAMILIES.values())), len(FAMILIES))
 
     def test_builder_brief_names_the_mandatory_calls_and_the_grid(self):
+        import inspect
+
+        from src.models.sampling import sample_bpr_pairs
+
         brief = builder_brief("bpr")
-        self.assertIn(
-            "src.models.sampling.sample_bpr_pairs(users, labels, rng, negatives_per_positive)",
-            brief,
-        )
+        # The signature is rendered, not a bare call: the Builder must not guess arg order.
+        # families._signature reads it off the real function, so assert against that rather
+        # than a hand-copied argument list, which could drift from the API.
+        expected = str(inspect.signature(sample_bpr_pairs))
+        self.assertIn(f"src.models.sampling.sample_bpr_pairs{expected}", brief)
+        for parameter in ("users", "labels", "rng", "negatives_per_positive"):
+            with self.subTest(parameter=parameter):
+                self.assertIn(parameter, brief)
         self.assertIn("learning_rate: 0.0003, 0.0005, 0.001", brief)
         self.assertIn("seed: 0-999", brief)
         self.assertIn("negatives_per_positive: 1, 2", brief)

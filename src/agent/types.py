@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -10,6 +11,23 @@ def _required(value: dict[str, Any], name: str, expected_type):
     if name not in value or not isinstance(value[name], expected_type):
         raise ValueError(f"{name!r} is required and must be {expected_type}")
     return value[name]
+
+
+def _finite_float_or_none(value: Any) -> float | None:
+    """A real number, or ``None`` for anything that is not one.
+
+    Used for genuinely optional numeric fields, where "the model did not answer"
+    and "the model answered with junk" deserve the same treatment: absent. NaN
+    and the infinities are rejected too — they would silently poison every mean
+    computed downstream, which is worse than the field simply being missing.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 @dataclass(frozen=True)
@@ -107,6 +125,11 @@ class ResearchDecision:
     needs_web_search: bool = False
     parent_experiment: str | None = None
     web_searched: bool = False
+    #: Pre-registration. The signed change in validation primary the Researcher
+    #: predicts for this candidate *against the current best*, scored against the
+    #: realized delta at summary time. Optional in the schema, so `None` — "this
+    #: proposal was not pre-registered" — is a normal value, never an error.
+    predicted_delta: float | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ResearchDecision":
@@ -128,6 +151,7 @@ class ResearchDecision:
             needs_web_search=bool(value.get("needs_web_search", False)),
             parent_experiment=value.get("parent_experiment"),
             web_searched=bool(value.get("web_searched", False)),
+            predicted_delta=_finite_float_or_none(value.get("predicted_delta")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -341,6 +365,13 @@ class RunState:
     stop_reason: str | None = None
     wall_clock_seconds: float = 0.0
     data_card_path: str | None = None
+    #: Pre-registration ledger: one
+    #: ``{iteration, experiment_id, predicted_delta, realized_delta, reference_primary}``
+    #: record per *scored* candidate whose decision carried a prediction. Run
+    #: state rather than session state so a resumed run keeps the pairs it has
+    #: already earned; a `state.json` written before this field existed simply
+    #: resumes with an empty ledger.
+    calibration: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "RunState":

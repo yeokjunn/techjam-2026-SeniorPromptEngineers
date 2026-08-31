@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .errors import IncompleteResponse, LLMError, RoleOutputInvalid, TokenBudgetExceeded
-from .families import family_names
+from .families import FAMILIES, family_names
 from .types import TokenUsage
 
 
@@ -31,7 +31,11 @@ def load_project_environment(env_path: str | Path | None = None) -> bool:
     return bool(load_dotenv(dotenv_path=path, override=False))
 
 
-PARAMETER_PROPERTIES = {
+# The nine parameters every family has always been able to emit. They stay in
+# `required` verbatim: `required` used to be `list(PARAMETER_PROPERTIES)`, so once
+# the registry-derived keys below joined `properties` that expression would have
+# made every one of them mandatory and broken *every* existing nine-key proposal.
+BASE_PARAMETER_PROPERTIES: dict[str, dict[str, Any]] = {
     "seed": {"type": "integer"},
     "k": {"type": "integer"},
     "learning_rate": {"type": "number"},
@@ -42,10 +46,63 @@ PARAMETER_PROPERTIES = {
     "negatives_per_group": {"type": ["integer", "null"]},
     "temperature": {"type": ["number", "null"]},
 }
+
+
+def _grid_property(allowed: Any) -> dict[str, Any]:
+    """A permissive-but-typed schema entry inferred from a registry grid entry.
+
+    The *grid* is the authority on which values are legal -- `policy.sanitize_parameters`
+    membership-tests against it and re-prompts with the reason -- so the schema only has to
+    carry the JSON type. A `range` is an integer bound; a tuple is typed from its members,
+    with `bool` checked before `int` because `isinstance(True, int)` is True in Python.
+    """
+    if isinstance(allowed, range):
+        return {"type": "integer"}
+    values = tuple(allowed)
+    if values and all(isinstance(value, bool) for value in values):
+        return {"type": "boolean"}
+    if values and all(isinstance(value, str) for value in values):
+        return {"type": "string"}
+    if values and all(isinstance(value, int) and not isinstance(value, bool) for value in values):
+        return {"type": "integer"}
+    if values and all(
+        isinstance(value, (int, float)) and not isinstance(value, bool) for value in values
+    ):
+        return {"type": "number"}
+    # A heterogeneous grid entry: nothing ships one today. Name the scalar types
+    # explicitly rather than returning `{}` — a typeless property is rejected
+    # outright on the strict Responses path, and the grid still has the final say
+    # on which of these values is actually legal.
+    return {"type": ["boolean", "integer", "number", "string"]}
+
+
+def _registry_parameter_properties() -> dict[str, dict[str, Any]]:
+    """The nine base keys plus every family-specific grid key in the registry.
+
+    Without this the schema was a hard-coded nine with `additionalProperties: false`, so a
+    knob registered in `families.py` -- `history_features`' `use_*`/`scheme`/`smoothing`,
+    `multi_task`'s `aux_weight` -- could never be emitted by the model and those families
+    collapsed to their frozen defaults. Sorted so the schema is byte-stable across runs
+    (it is prompt-cached and, for the OpenAI-compatible provider, inlined into the prompt).
+    """
+    properties = dict(BASE_PARAMETER_PROPERTIES)
+    for name in sorted(FAMILIES):
+        grid = FAMILIES[name].grid or {}
+        for key in sorted(grid):
+            if key not in properties:
+                properties[key] = _grid_property(grid[key])
+    return properties
+
+
+PARAMETER_PROPERTIES = _registry_parameter_properties()
+# Only the original nine. A derived key is optional by construction: a family that does not
+# register it must not be forced to emit it, and `sanitize_parameters` fills any it omits
+# from `Family.defaults`.
+PARAMETER_REQUIRED = list(BASE_PARAMETER_PROPERTIES)
 PARAMETER_SCHEMA = {
     "type": "object",
     "properties": PARAMETER_PROPERTIES,
-    "required": list(PARAMETER_PROPERTIES),
+    "required": PARAMETER_REQUIRED,
     "additionalProperties": False,
 }
 
@@ -184,6 +241,13 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "needs_web_search": {"type": "boolean"},
             "parent_experiment": {"type": ["string", "null"]},
+            # Pre-registration: the signed change in validation primary this
+            # proposal predicts *against the current best*, scored against the
+            # realized delta in `summary["calibration"]`. Deliberately absent
+            # from `required` — a run whose model never emits it must keep
+            # working, and `ResearchDecision.predicted_delta` then stays None.
+            # `_strict_object_schema` restates it for the strict Responses path.
+            "predicted_delta": {"type": ["number", "null"]},
         },
         "required": [
             "hypothesis_id",
@@ -239,6 +303,85 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         ],
         "additionalProperties": False,
     },
+}
+
+
+def _strict_parameter_schema() -> dict[str, Any]:
+    """`PARAMETER_SCHEMA` restated for OpenAI's strict structured outputs.
+
+    Strict mode requires `required` to name *every* key in `properties`, so the
+    9-of-26 split that keeps registry-derived keys optional on the chat path is a
+    request-time 400 here — classified `harness`, never re-prompted, so the run
+    aborts. Optional is therefore expressed the only way strict mode allows:
+    every key is required, and every *derived* (non-core) key's type is unioned
+    with `"null"` so "this family does not have this knob" is still sayable.
+    `normalize_parameters` drops those nulls and `sanitize_parameters` fills the
+    family's defaults, exactly as when the key was simply omitted. The nine core
+    keys keep their own types untouched, and the chat provider keeps validating
+    against `PARAMETER_SCHEMA` unchanged.
+    """
+    properties: dict[str, dict[str, Any]] = {}
+    for name, prop in PARAMETER_PROPERTIES.items():
+        if name in BASE_PARAMETER_PROPERTIES:
+            properties[name] = prop
+            continue
+        declared = prop.get("type")
+        types = list(declared) if isinstance(declared, list) else [declared]
+        if "null" not in types:
+            types = types + ["null"]
+        properties[name] = {**prop, "type": types}
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
+
+
+STRICT_PARAMETER_SCHEMA = _strict_parameter_schema()
+
+
+def _strict_object_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """A top-level role schema restated for OpenAI's strict structured outputs.
+
+    Two rewrites, both the same rule `_strict_parameter_schema` applies one level
+    down: a `parameters` property is swapped for its strict spelling, and any
+    property the chat schema leaves *out* of `required` is made required with
+    `"null"` unioned into its type — strict mode has no other way to spell
+    optional. Derived from `required` rather than from a list of known keys, so a
+    new optional property (`predicted_delta`) is picked up here by construction
+    instead of becoming a request-time 400 that aborts the run.
+
+    A schema whose `required` already names every property — every one but
+    `research_decision` today — comes back byte-identical, because `properties`
+    preserves insertion order and each hand-written `required` is written in that
+    same order.
+
+    Top level only. Every *nested* object in `SCHEMAS` (`evidence.items`) is
+    hand-written strict-compliant, so there is nothing to rewrite there today; a
+    new optional key on a nested object would need this same treatment applied
+    recursively, and would otherwise be the request-time 400 this function exists
+    to prevent.
+    """
+    properties = dict(schema["properties"])
+    if "parameters" in properties:
+        properties["parameters"] = STRICT_PARAMETER_SCHEMA
+    required = set(schema.get("required", ()))
+    for name, prop in properties.items():
+        if name in required:
+            continue
+        declared = prop.get("type")
+        types = list(declared) if isinstance(declared, list) else [declared]
+        if "null" not in types:
+            types = types + ["null"]
+        properties[name] = {**prop, "type": types}
+    return {**schema, "properties": properties, "required": list(properties)}
+
+
+# The Responses provider's view of `SCHEMAS`: the same contracts, spelled the one
+# way strict structured outputs accept.
+STRICT_SCHEMAS: dict[str, dict[str, Any]] = {
+    name: _strict_object_schema(schema) for name, schema in SCHEMAS.items()
 }
 
 
@@ -305,6 +448,38 @@ def _extract_sources(output: Any) -> tuple[list[str], list[dict[str, str]]]:
                 )
     unique = {(source["title"], source["url"]): source for source in sources}
     return tool_calls, list(unique.values())
+
+
+# DeepSeek-style reasoning models return the chain of thought in a field of its
+# own and spend the completion budget on it, so a capped call can come back with
+# an empty ``content`` while the JSON object the role was asked for already sits
+# in the reasoning text. Ordered most-authoritative first.
+MESSAGE_TEXT_FIELDS = ("content", "reasoning_content", "reasoning")
+
+
+def _message_field(message: Any, field: str) -> Any:
+    if isinstance(message, dict):
+        return message.get(field)
+    return getattr(message, field, None)
+
+
+def _message_output_text(message: Any) -> str:
+    """The text to parse from one chat-completions message.
+
+    ``content`` is the answer field and always wins when it holds anything but
+    whitespace. Falling back to the reasoning fields turns the two observed
+    dead-end replies -- an empty ``content`` and a whitespace-only one -- into a
+    call ``_parse_json`` can still recover the outermost JSON object from; a
+    reasoning blob with no JSON in it fails downstream as ``RoleOutputInvalid``,
+    which is re-promptable exactly like the ``IncompleteResponse`` it replaces.
+    """
+    if message is None:
+        return ""
+    for field in MESSAGE_TEXT_FIELDS:
+        text = str(_message_field(message, field) or "").strip()
+        if text:
+            return text
+    return ""
 
 
 def _parse_json(text: str) -> Any:
@@ -415,7 +590,7 @@ class OpenAIResponsesProvider:
                 "format": {
                     "type": "json_schema",
                     "name": schema_name,
-                    "schema": SCHEMAS[schema_name],
+                    "schema": STRICT_SCHEMAS[schema_name],
                     "strict": True,
                 },
             },
@@ -664,7 +839,7 @@ class OpenAICompatibleChatProvider:
 
             choices = getattr(response, "choices", None) or []
             message = getattr(choices[0], "message", None) if choices else None
-            output_text = str(getattr(message, "content", "") or "")
+            output_text = _message_output_text(message)
             if output_text:
                 break
             error = IncompleteResponse(
@@ -688,9 +863,15 @@ class OpenAICompatibleChatProvider:
         try:
             self._validate(instance=data, schema=schema)
         except self._validation_error as exc:
+            # The key path, not just the message: a bare "None is not of type
+            # 'boolean'" tells a re-prompt nothing it can act on, and with the
+            # registry-derived schema there are 26 properties it could be about.
+            path = getattr(exc, "json_path", None) or ".".join(
+                str(part) for part in getattr(exc, "absolute_path", ())
+            )
             raise RoleOutputInvalid(
                 f"{self.provider_name} response {getattr(response, 'id', '')} "
-                f"failed schema {schema_name!r}: {exc.message}"
+                f"failed schema {schema_name!r} at {path or '$'}: {exc.message}"
             ) from exc
 
         usage_obj = _to_plain(getattr(response, "usage", None)) or {}

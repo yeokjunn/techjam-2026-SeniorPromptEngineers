@@ -98,6 +98,9 @@ class CandidateExecutor:
             {
                 "PYTHONPATH": str(self.repo_root),
                 "PYTHONDONTWRITEBYTECODE": "1",
+                # Fixed hash seed: set/dict iteration order otherwise varies per
+                # process and makes identical candidates score differently.
+                "PYTHONHASHSEED": "0",
                 "HOME": str(workspace.directory),
                 "TMPDIR": str(workspace.directory),
                 "TEMP": str(workspace.directory),

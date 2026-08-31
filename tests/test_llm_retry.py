@@ -187,6 +187,7 @@ class OfflineSmokeTests(unittest.TestCase):
                     "generated_root": str(root / "generated"),
                     "method_catalog": str(REPO_ROOT / "research" / "methods"),
                     "discovery_store": str(root / "discoveries.json"),
+                    "campaign_log": str(root / "campaign_log.md"),
                 }
             )
             config_path = root / "offline_smoke.json"

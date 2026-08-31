@@ -11,7 +11,8 @@ from .families import required_call_groups
 
 
 FM_RANKER_CONTRACT = """RUNTIME API CARD: src.models.fm_core.FMRanker
-- Instantiate: FMRanker(dimension, embedding_dim=16, learning_rate=lr, l2=1e-6, seed=seed).
+- Instantiate: FMRanker(dimension, embedding_dim=int(parameters["k"]), learning_rate=float(parameters["learning_rate"]), l2=float(parameters.get("l2", 1e-6)), seed=int(parameters["seed"])).
+- Every hyperparameter comes from `parameters`, which already holds the approved grid values; never hard-code k, learning_rate, or l2. Only the ranking-loss families carry an `l2` key, hence the `.get` default.
 - logits(features) returns (scores, embeddings, summed); use logits(...)[0] for scores.
 - gradients(features, score_gradients) expects dLoss/dScore, not binary labels, and returns (grad_v, grad_w, grad_b).
 - apply_gradients(grad_v, grad_w, grad_b=0.0) takes three unpacked gradient values; never call apply_gradients(grads, lr).

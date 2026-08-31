@@ -12,12 +12,15 @@ def eligible_user_indices(
     negatives: dict[str, list[int]] = collections.defaultdict(list)
     for index, (user, label) in enumerate(zip(users, labels)):
         (positives if float(label) > 0.5 else negatives)[user].append(index)
+    # sorted(): set iteration order is permuted by PYTHONHASHSEED, and this
+    # dict's order is what the samplers below feed to rng.choice — unsorted,
+    # byte-identical candidates score differently run to run.
     return {
         user: (
             np.asarray(positives[user], dtype=np.int64),
             np.asarray(negatives[user], dtype=np.int64),
         )
-        for user in positives.keys() & negatives.keys()
+        for user in sorted(positives.keys() & negatives.keys())
     }
 
 

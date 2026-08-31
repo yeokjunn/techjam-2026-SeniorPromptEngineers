@@ -11,7 +11,7 @@ responsibility rather than the gate's:
   lives next to the code that writes it, instead of being borrowed from another
   owner's implementation detail.
 * **The four arguments go by keyword, and ``node_dir`` is absolute.**
-  ``policy.py:220`` stores ``best_candidate_dir`` **repo-relative**, so building
+  ``policy.py:440`` stores ``best_candidate_dir`` **repo-relative**, so building
   the path with ``Path(...)`` resolved it against the *process* working
   directory — wrong for every process not launched from the repo root. The
   recorder below therefore accepts keyword arguments only, and the loop runs
@@ -48,7 +48,7 @@ from src.evaluation.gate import GateResult
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# The shape ``_execute`` stores (``research_controller.py:717``) and ``policy.py:269``
+# The shape ``_execute`` stores (``research_controller.py:1088``) and ``policy.py:440``
 # copies onto the state: relative to the repo root, no leading slash. Nothing has
 # to exist on disk — the gate is a double in both tests.
 CANDIDATE_DIR = "generated_experiments/20260829T000000Z_research/1/candidate_bpr"
@@ -90,6 +90,7 @@ def wired_loop():
             "generated_root": str(root / "generated"),
             "method_catalog": str(REPO_ROOT / "research" / "methods"),
             "discovery_store": str(root / "discoveries.json"),
+            "campaign_log": str(root / "campaign_log.md"),
             "official_validation_baseline": 0.6016,
             "llm": {"max_total_tokens": 1000},
             "budgets": {
@@ -324,10 +325,12 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
         shipped = policy.sanitize_parameters("bpr", BPR_RAW)
         self.assertEqual(shipped["batch_size"], 2048)
         self.assertEqual(shipped["negatives_per_positive"], 1)
+        # `k` and `learning_rate` are now registry-grid keys (k: 8/16/32/64,
+        # lr up to 0.005), so the off-bound probes moved off the widened grids.
         for override in (
             {"batch_size": 256},
-            {"k": 8},
-            {"learning_rate": 0.002},
+            {"k": 128},
+            {"learning_rate": 0.02},
             {"epochs": 99},
         ):
             key = sorted(override)[0]
@@ -392,14 +395,18 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
                     self.assertIn(sorted(override)[0], str(off_grid.exception))
 
             # A key the grid does *not* name keeps today's bound and today's
-            # message — `k` in particular stays pinned at 16, because the kit
-            # already measured the k-sweep as a dead end
-            # (`kuairand-starter-kit/README.en.md:133-139`).
+            # message. `k` was the example while it was pinned at 16 by the
+            # kit's k-sweep; the ranking families' grids now carry `k`
+            # (8/16/32/64), so an off-grid width is the grid's business and is
+            # rejected in the grid's wording (`tests/test_honest_promotion.py`).
+            # `patience`, which no grid names, is what still demonstrates the
+            # hard-coded fallback.
             with self.assertRaises(ValueError) as pinned:
-                policy.sanitize_parameters("bpr", {**BPR_RAW, "batch_size": 256, "k": 32})
+                policy.sanitize_parameters(
+                    "bpr", {**BPR_RAW, "batch_size": 256, "patience": 9}
+                )
             self.assertEqual(
-                str(pinned.exception),
-                "Ranking-loss attribution requires k=16 in the first research run.",
+                str(pinned.exception), "patience must be between 1 and 6."
             )
 
             # A raw key that is neither shared nor in the grid is dropped, not
@@ -442,13 +449,15 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
                 4096,
             )
             # And the rest of the shared bounds reach the new family unchanged.
+            # (`patience` rather than `k`, for the reason given above: `k` is a
+            # registry grid key now, so it is no longer a shared-bound example.)
             with self.assertRaises(ValueError) as still_pinned:
                 policy.sanitize_parameters(
-                    "history_features", {**shared_only, "batch_size": 4096, "k": 32}
+                    "history_features",
+                    {**shared_only, "batch_size": 4096, "patience": 9},
                 )
             self.assertEqual(
-                str(still_pinned.exception),
-                "Ranking-loss attribution requires k=16 in the first research run.",
+                str(still_pinned.exception), "patience must be between 1 and 6."
             )
 
         # Both shipped families pin their own `batch_size` — E's grid now, the
@@ -488,7 +497,12 @@ class RegistryDrivenPolicyTests(unittest.TestCase):
                     covered = successful_state("bpr", "group_softmax")
                     self.assertTrue(policy.coverage_complete(covered))
                     self.assertIsNone(policy.required_family(covered))
-                    self.assertIsNone(policy.required_family(successful_state("bpr")))
+                    # Steering now runs while *any* coverage family is missing:
+                    # the old `len(missing) > 1` carve-out stopped exactly where
+                    # the convergence gate starts demanding that family's success.
+                    self.assertEqual(
+                        policy.required_family(successful_state("bpr")), "group_softmax"
+                    )
                     # The stop rule itself, which is what the run hangs on: with
                     # coverage read off `family_names()` this is False forever and
                     # the run can only end on a budget, never `converged`.
@@ -565,6 +579,7 @@ def card_config(
         "generated_root": str(root / "generated"),
         "method_catalog": str(REPO_ROOT / "research" / "methods"),
         "discovery_store": str(root / "discoveries.json"),
+        "campaign_log": str(root / "campaign_log.md"),
         "official_validation_baseline": 0.6016,
         "llm": {"max_total_tokens": 1000},
         "budgets": {
@@ -936,6 +951,7 @@ def training_failure_loop(*outcomes: ExperimentOutcome):
             "generated_root": str(root / "generated"),
             "method_catalog": str(REPO_ROOT / "research" / "methods"),
             "discovery_store": str(root / "discoveries.json"),
+            "campaign_log": str(root / "campaign_log.md"),
             "official_validation_baseline": 0.6016,
             "llm": {"max_total_tokens": 1000},
             "budgets": {

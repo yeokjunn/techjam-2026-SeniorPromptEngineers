@@ -47,13 +47,16 @@ rows only, so no validation or test path exists and none may be added:
 `build_aux_labels` raises for any other split rather than returning something a
 scorer could misuse.
 
-Keep `k == 16` and the standard field set; this family varies the *supervision*,
-not the capacity or the features.
+Keep `k == 16` and the standard field set: this family's grid names no other value, so that
+the *supervision* — the thing under test — stays attributable. That is a design choice about
+this family, not a verdict on capacity: the kit's flat k-sweep (k = 8/16/32 gives
+0.5895/0.5902/0.5887, `kuairand-starter-kit/README.en.md:133-139`) was measured under **pointwise
+logloss**, and `bpr`/`group_softmax` reopen the axis on that basis.
 
 ## Safe initial search space
 
 - Either trusted same-user sampler; `build_aux_labels` is mandatory
-- FM embedding dimension fixed at 16 for attribution
+- FM embedding dimension fixed at 16 — this family's grid names no other value (see above)
 - Learning rate: 0.0003, 0.0005, or 0.001
 - Batch size: 2048 or 4096; one or two negatives per positive
 - `aux_weight`: 0.05, 0.1, 0.3, or 1.0

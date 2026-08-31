@@ -147,7 +147,9 @@ class StubTests(unittest.TestCase):
     def test_history_features_return_one_column_per_enabled_group(self):
         train = [(20220408, "u", "v", "a", "1", 1.0, 1)]
         spec = {"split": "train", "history_rows": {"train": train}}
-        self.assertEqual(build_features(np.zeros((1, 5)), spec).shape, (1, 6))
+        # 7 groups since the train-only `video_rate` group joined the family
+        # (the sanctioned <=5-line pinning update for a grown stub).
+        self.assertEqual(build_features(np.zeros((1, 5)), spec).shape, (1, 7))
 
 
 class ResearchConfigTests(unittest.TestCase):

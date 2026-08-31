@@ -14,6 +14,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _NR = "not reported"
+
+# Official baseline, per-metric, from the problem statement (docs/problem_statement.md, the
+# "Official baseline" bullet) and echoed in kuairand-starter-kit/README.en.md. Judging scores
+# `mean over m of (score_agent(m) - score_baseline(m))`, so a primary-only baseline cannot
+# produce the graded number. `official_validation_metrics` in the run config overrides these.
+OFFICIAL_VALIDATION_BASELINE = {"GAUC": 0.6674, "nDCG@5": 0.5357, "primary": 0.6016}
+OFFICIAL_TEST_BASELINE = {"GAUC": 0.6610, "nDCG@5": 0.5282, "primary": 0.5946}
+#: The attainable ceiling on the hidden test: a perfect ranking scores this, not 1.0, because
+#: 27.1% of users have no positive and 9.2% are all-positive. Random scoring sits at 0.4753.
+ORACLE_TEST_PRIMARY = 0.8645
+RANDOM_TEST_PRIMARY = 0.4753
 _SEED_SUFFIX = re.compile(r"_seed\d+$")
 
 
@@ -497,15 +508,51 @@ def _render_results_full(summary: dict | None, run_config: dict | None,
 
     lines.append("## Validation Performance")
     lines.append("")
-    lines.append("| Metric | Baseline | Best | Δ |")
+    # Per-metric baselines: the judged score is the mean of per-metric deltas, so a
+    # primary-only baseline cannot produce it. Config may override the published numbers.
+    baselines = dict(OFFICIAL_VALIDATION_BASELINE)
+    baselines.update(run_config.get("official_validation_metrics") or {})
+    baselines["primary"] = baseline_primary
+
+    lines.append("| Metric | Official baseline | Best | Δ |")
     lines.append("|---|---|---|---|")
+    scored_deltas: list[float] = []
     for key in ("GAUC", "nDCG@5", "primary"):
         bval = best_metrics.get(key)
+        base = baselines.get(key)
         bval_str = f"{bval:.4f}" if bval is not None else _NR
-        delta = _fmt_delta(bval - baseline_primary if bval is not None and key == "primary" else None)
-        base_str = f"{baseline_primary:.4f}" if key == "primary" else "—"
-        lines.append(f"| {key} | {base_str} | {bval_str} | {delta} |")
+        base_str = f"{base:.4f}" if base is not None else "—"
+        delta_value = bval - base if (bval is not None and base is not None) else None
+        if delta_value is not None and key in ("GAUC", "nDCG@5"):
+            scored_deltas.append(delta_value)
+        lines.append(f"| {key} | {base_str} | {bval_str} | {_fmt_delta(delta_value)} |")
     lines.append("")
+    if scored_deltas:
+        # score_dataset = mean over m of delta(m), over the two scored metrics.
+        mean_delta = sum(scored_deltas) / len(scored_deltas)
+        lines.append(
+            f"**Validation score_dataset (mean of GAUC and nDCG@5 deltas): {mean_delta:+.4f}**"
+        )
+        lines.append("")
+        lines.append(
+            "This applies the judging formula to validation. The ranked score uses the same "
+            "formula on the hidden test, which is scored once and is not computable here; the "
+            f"official test baseline is primary {OFFICIAL_TEST_BASELINE['primary']:.4f} "
+            f"(GAUC {OFFICIAL_TEST_BASELINE['GAUC']:.4f} / nDCG@5 "
+            f"{OFFICIAL_TEST_BASELINE['nDCG@5']:.4f})."
+        )
+        lines.append("")
+        primary_best = best_metrics.get("primary")
+        if primary_best is not None:
+            # Progress is judged against the 0.8645 attainable ceiling, not against 1.0.
+            span = ORACLE_TEST_PRIMARY - OFFICIAL_TEST_BASELINE["primary"]
+            captured = (primary_best - baselines["primary"]) / span * 100.0
+            lines.append(
+                f"- Headroom context: the attainable ceiling is primary "
+                f"{ORACLE_TEST_PRIMARY:.4f} (random {RANDOM_TEST_PRIMARY:.4f}); this run's "
+                f"validation gain covers {captured:.1f}% of the baseline-to-ceiling span."
+            )
+            lines.append("")
 
     lines.append("## Test Submission")
     lines.append("")

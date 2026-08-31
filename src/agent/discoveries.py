@@ -238,3 +238,145 @@ class DiscoveryStore:
                 )[:900]
             )
         return "\n".join(lines)
+
+
+# --- Cross-run campaign memory -------------------------------------------------
+#
+# Why this is not a `DiscoveryStore` field. The store above is *hypothesis*-grained
+# and evidence-gated: `_upsert_proposal` returns None unless the decision was
+# web-searched AND carries at least one URL, so a run whose proposals cited only
+# curated method cards leaves no record in it at all. It also has no run
+# dimension — nothing in `DiscoveryRecord` says which campaign a record came
+# from, and `prompt_text` ranks records globally by delta. A cross-run digest
+# needs the opposite grain: one entry per *run*, unconditional, ordered in time,
+# carrying the run's verdict rather than any single hypothesis.
+#
+# So the campaign log is a sibling of the discovery store, not a duplicate of it:
+# same module, same `research/` home, same "persistent notes that seed later
+# proposals" job, and deliberately zero overlap in content — the digest carries
+# families, score bands and a verdict, and never restates a hypothesis, its
+# evidence, or its parameters, because `DiscoveryStore` already persists those
+# and both blocks reach the same prompt.
+
+CAMPAIGN_LOG_HEADER = """# Campaign log
+
+One five-line digest per research run, appended at run end and read back into the
+Researcher's stable prompt prefix (last 3). Written by
+`src/agent/discoveries.py::append_campaign_digest`; the per-hypothesis detail
+lives in the discovery store beside it. Safe to prune from the top — the reader
+only ever takes the most recent entries.
+"""
+
+CAMPAIGN_ENTRY_PREFIX = "## run "
+
+#: Per-field cap on a digest line (see ``campaign_digest._line``).
+CAMPAIGN_FIELD_CHAR_LIMIT = 400
+
+
+def campaign_digest(
+    run_id: str,
+    *,
+    families: str,
+    verdict: str,
+    falsified: str,
+    note: str,
+) -> str:
+    """The five lines one run contributes: id, families, verdict, falsified, note.
+
+    Every field is flattened to a single line, so a digest is exactly five lines
+    however the caller assembled it — the reader splits on the ``## run`` marker
+    and the prompt block is budgeted on that shape.
+    """
+
+    def _line(value: str) -> str:
+        # Capped like its two neighbours in the prompt (`prompt_text`'s 900,
+        # `MEASURED_PROFILE_CHAR_LIMIT`): the verdict line embeds
+        # `best_experiment_id`, an unbounded model-authored string, into a file
+        # read back into every later run's stable prefix.
+        return (" ".join(str(value).split()) or "none")[:CAMPAIGN_FIELD_CHAR_LIMIT]
+
+    return "\n".join(
+        [
+            f"{CAMPAIGN_ENTRY_PREFIX}{_line(run_id)}",
+            f"- families: {_line(families)}",
+            f"- verdict: {_line(verdict)}",
+            f"- falsified: {_line(falsified)}",
+            f"- note: {_line(note)}",
+        ]
+    )
+
+
+def _campaign_entries(path: Path) -> list[str]:
+    """Every digest in the log, oldest first. A missing/unreadable log is empty."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return []
+    entries: list[str] = []
+    current: list[str] | None = None
+    for line in text.splitlines():
+        if line.startswith(CAMPAIGN_ENTRY_PREFIX):
+            if current is not None:
+                entries.append("\n".join(current).rstrip())
+            current = [line]
+        elif current is not None:
+            current.append(line)
+    if current is not None:
+        entries.append("\n".join(current).rstrip())
+    return entries
+
+
+def campaign_log_has_run(path: Path, run_id: str) -> bool:
+    marker = f"{CAMPAIGN_ENTRY_PREFIX}{run_id}"
+    return any(
+        entry.splitlines()[0].strip() == marker for entry in _campaign_entries(path) if entry
+    )
+
+
+def append_campaign_digest(path: Path, run_id: str, digest: str) -> bool:
+    """Append one run's digest, creating the log with its header if absent.
+
+    Idempotent per run id: a resumed run that reaches the end twice contributes
+    one entry, not two. Returns whether anything was written.
+    """
+    path = Path(path)
+    if campaign_log_has_run(path, run_id):
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Append, never rewrite. This is the one file in the design that cannot be
+    # regenerated from a run directory, and a read-modify-write would lose the
+    # earlier of two runs finishing together and would truncate the whole
+    # accumulated memory on a crash mid-write. Same convention as
+    # ``ResearchAudit.append_jsonl``: concurrent writers at worst interleave
+    # entries. The header is written only into a file that has no content yet.
+    if not (path.is_file() and path.read_text(encoding="utf-8").strip()):
+        path.write_text(CAMPAIGN_LOG_HEADER, encoding="utf-8")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n{digest.rstrip()}\n")
+    return True
+
+
+def recent_campaign_digests(path: Path, limit: int = 3) -> list[str]:
+    """The most recent ``limit`` digests, newest first."""
+    entries = [entry for entry in _campaign_entries(Path(path)) if entry.strip()]
+    return list(reversed(entries[-limit:])) if limit > 0 else []
+
+
+def campaign_prompt_block(path: Path | None, limit: int = 3) -> str:
+    """The ``PRIOR CAMPAIGNS`` prompt block, or ``""`` when there is no log.
+
+    An empty string is the signal to omit the heading entirely: a heading with
+    nothing under it is prompt bytes that teach the model nothing, and it would
+    sit in the cacheable stable prefix where it is charged on every call.
+    """
+    if path is None:
+        return ""
+    digests = recent_campaign_digests(Path(path), limit)
+    if not digests:
+        return ""
+    body = "\n".join(digests)
+    return (
+        "PRIOR CAMPAIGNS (most recent first; earlier runs of this same agent on this same "
+        "task -- do not re-test what they already measured flat):\n"
+        f"{body}"
+    )

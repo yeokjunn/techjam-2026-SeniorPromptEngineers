@@ -8,7 +8,10 @@ import time
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 from typing import Any
+
+import numpy as np
 
 from ..evaluation.datacard import render_data_card
 from ..evaluation.gate import run_gate
@@ -17,7 +20,8 @@ from .audit import ResearchAudit
 from .candidate_runner import CandidateExecutor, CandidateWorkspace, repaired_manifest
 from .catalog import MethodCatalog
 from .convergence import official_converged
-from .discoveries import DiscoveryStore
+from .discoveries import DiscoveryStore, append_campaign_digest, campaign_digest
+from .falsified import flat_families, write_falsified
 from .controller import (
     REPO_ROOT,
     _count_interventions,
@@ -28,13 +32,15 @@ from .controller import (
 from .errors import LLMError
 from .llm import LLMProvider, build_provider
 from .policy import (
+    DEFAULT_PROMOTION_MARGIN,
     SearchPolicy,
+    coverage_complete,
     required_family,
     sanitize_parameters,
     scored_primaries,
 )
 from .report import render_reports
-from .roles import ResearchRoles
+from .roles import DEFAULT_MEASURED_PROFILE_PATH, ResearchRoles
 from .types import (
     CandidateManifest,
     CriticDecision,
@@ -140,6 +146,87 @@ def _official_convergence_iteration(
     return None
 
 
+ENSEMBLE_DIR_NAME = "_ensemble"
+
+
+def _average_ranks(values: np.ndarray) -> np.ndarray:
+    """Ranks of ``values`` (1 = smallest), ties sharing their average rank.
+
+    ``scipy.stats.rankdata(method="average")`` without scipy — the repo's
+    trusted stack is numpy only. Averaging *ranks* rather than scores is what
+    makes the ensemble scale-free: two members trained under different losses
+    put their scores on different scales, and a plain mean would then be a
+    weighted mean with weights nobody chose. Ties get the average of the ranks
+    the tied block occupies, so a member that cannot separate two rows does not
+    silently break the tie by row order.
+    """
+    values = np.asarray(values, dtype=np.float64)
+    count = values.size
+    if count == 0:
+        return np.empty(0, dtype=np.float64)
+    order = np.argsort(values, kind="stable")
+    ordered = values[order]
+    starts_group = np.empty(count, dtype=bool)
+    starts_group[0] = True
+    np.not_equal(ordered[1:], ordered[:-1], out=starts_group[1:])
+    group_index = np.cumsum(starts_group) - 1
+    positions = np.arange(1, count + 1, dtype=np.float64)
+    group_mean = np.bincount(group_index, weights=positions) / np.bincount(group_index)
+    ranks = np.empty(count, dtype=np.float64)
+    ranks[order] = group_mean[group_index]
+    return ranks
+
+
+def _rank_mean(arrays: list[np.ndarray]) -> np.ndarray:
+    """The rank-mean ensemble of equally weighted members (report 6, P1).
+
+    Measured at 0.60363 against 0.60339 for the better of the two members on the
+    validation split — +0.00024 for no extra training — and indistinguishable
+    from a z-score mean (0.60362) while needing no per-member calibration.
+    """
+    if not arrays:
+        raise ValueError("_rank_mean needs at least one member array.")
+    total = _average_ranks(arrays[0])
+    for member in arrays[1:]:
+        total = total + _average_ranks(member)
+    return total / float(len(arrays))
+
+
+def _group_median_primary(nodes: list[ExperimentNode]) -> float:
+    """The median primary of one replication group (P2's selection key)."""
+    return median(float(node.metrics["primary"]) for node in nodes)
+
+
+def _replication_groups(state: RunState) -> list[list[ExperimentNode]]:
+    """Successful nodes bucketed by replication lineage, in first-seen order.
+
+    A configuration measured under three seeds is *one* result with three draws,
+    not three results. ``_replication`` records the source in ``replicated_from``
+    (:1328), so the lineage root is that field when it is set and the node's own
+    id otherwise — the same keying ``_best_replication`` already uses for
+    reporting. Insertion-ordered so every consumer below breaks ties the same
+    deterministic way (earliest group wins).
+    """
+    groups: dict[str, list[ExperimentNode]] = {}
+    for node in state.nodes:
+        if node.status != "success" or not node.metrics:
+            continue
+        groups.setdefault(node.replicated_from or node.experiment_id, []).append(node)
+    return list(groups.values())
+
+
+def _group_original(group: list[ExperimentNode]) -> ExperimentNode:
+    """The node a group's replicas were copied from, else its earliest member.
+
+    The original is the one whose ``candidate_dir`` the replicas were built from,
+    so it is the artifact that is certain to exist. The fallback covers a group
+    whose root never made it onto ``state.nodes`` as a success (a source that was
+    later pruned, or a hand-edited state).
+    """
+    root = group[0].replicated_from or group[0].experiment_id
+    return next((node for node in group if node.experiment_id == root), group[0])
+
+
 def _is_budget_error(exc: BaseException) -> bool:
     return False
 
@@ -234,6 +321,40 @@ def _baseline_skip_reason(
     if not artifact or not _resolve_repo_path(str(artifact)).is_file():
         return "artifact_missing"
     return None
+
+
+def _calibration_summary(
+    records: list[dict[str, Any]], epsilon: float
+) -> dict[str, Any] | None:
+    """Score the run's pre-registered predictions against what it measured.
+
+    ``None`` — not a zero-filled dict — when nothing was pre-registered: "this run
+    made no predictions" and "this run predicted perfectly" are opposite claims
+    and must not render the same.
+
+    ``mean_signed_error`` is mean(predicted - realized), so a positive value means
+    the agent was systematically *optimistic*; ``mean_abs_error`` is the size of a
+    typical miss, and is only meaningful next to the seed sigma (0.00091) it is
+    printed beside in ``falsified.md``. ``within_epsilon_rate`` is the share of
+    predictions that landed within the run's own convergence epsilon, which is the
+    threshold the loop already treats as "a difference that matters".
+    """
+    errors = [
+        float(record["predicted_delta"]) - float(record["realized_delta"])
+        for record in records
+        if record.get("predicted_delta") is not None
+        and record.get("realized_delta") is not None
+    ]
+    if not errors:
+        return None
+    count = len(errors)
+    return {
+        "n": count,
+        "mean_abs_error": sum(abs(error) for error in errors) / count,
+        "mean_signed_error": sum(errors) / count,
+        "within_epsilon_rate": sum(1 for error in errors if abs(error) <= epsilon) / count,
+        "epsilon": float(epsilon),
+    }
 
 
 def _latest_valid_baseline(
@@ -346,6 +467,11 @@ class ResearchLoop:
         self.discovery_store = DiscoveryStore(
             _resolve_repo_path(config.get("discovery_store", "research/discoveries/discoveries.json"))
         )
+        # Cross-run memory, configured exactly like the discovery store beside it
+        # so a test or a throwaway run can point it somewhere disposable.
+        self.campaign_log_path = _resolve_repo_path(
+            config.get("campaign_log", "research/campaign_log.md")
+        )
         self.budgets = config["budgets"]
         max_iterations = int(self.budgets["max_iterations"])
         raw_max_training_attempts = self.budgets.get("max_training_attempts")
@@ -357,6 +483,9 @@ class ResearchLoop:
         self.max_proposals = int(self.budgets.get("max_proposals", max_iterations * 2))
         self.convergence = config["convergence"]
         llm_config = config["llm"]
+        # Kept on the loop because P3 spends *leftover* budget: the re-seeding
+        # decision needs the ceiling, and until now only ``ResearchRoles`` did.
+        self.max_total_tokens = int(llm_config["max_total_tokens"])
         self.provider = provider or build_provider(config)
         research_config = dict(config.get("research") or {})
         eda_config = dict(config.get("eda") or {})
@@ -370,6 +499,20 @@ class ResearchLoop:
             eda_config.get("builder_max_output_tokens", 1200)
         )
         self.eda_max_retries = int(eda_config.get("max_retries", 1))
+        # The one measured source the EDA roles could not see: aggregate
+        # train/valid statistics ``src/ui/profile_data.py`` already wrote. An
+        # operator may name another file with ``eda.profile_path``; a missing one
+        # is not an error, exactly as a missing data card is not (``roles.py``),
+        # so a checkout without ``artifacts/`` still runs.
+        configured_profile = eda_config.get("profile_path", DEFAULT_MEASURED_PROFILE_PATH)
+        profile_path = (
+            _resolve_repo_path(configured_profile)
+            if isinstance(configured_profile, str) and configured_profile
+            else None
+        )
+        self.measured_profile_path = (
+            profile_path if profile_path is not None and profile_path.is_file() else None
+        )
         self.researcher_web_first_pass_requested = bool(
             research_config.get("allow_web_search_first_pass", False)
         )
@@ -460,12 +603,20 @@ class ResearchLoop:
             eda_researcher_max_output_tokens=self.eda_researcher_max_output_tokens,
             eda_builder_max_output_tokens=self.eda_builder_max_output_tokens,
             eda_max_retries=self.eda_max_retries,
+            measured_profile_path=self.measured_profile_path,
             discovery_store=self.discovery_store,
+            campaign_log_path=self.campaign_log_path,
         )
         self.policy = SearchPolicy(
             epsilon=float(self.convergence["epsilon"]),
             patience=int(self.convergence["patience"]),
             replication_seeds=list(config.get("replication_seeds", [1, 2])),
+            # Configured exactly like epsilon/patience, and optional so no
+            # existing config file has to change: the default is the documented
+            # 0.001 in `policy.py`.
+            promotion_margin=float(
+                self.convergence.get("promotion_margin", DEFAULT_PROMOTION_MARGIN)
+            ),
         )
         self.executor = CandidateExecutor(
             REPO_ROOT,
@@ -481,6 +632,11 @@ class ResearchLoop:
         # resume re-logs it, which costs a duplicate journal line and no
         # correctness (`summary.json` is recomputed from the nodes).
         self._official_converged_iteration: int | None = None
+        # P3's attempts guard. Session-local rather than run state on purpose: it
+        # bounds *this* process's re-seeding passes, and a resume that still has
+        # budget left is entitled to its own two (the per-seed node check inside
+        # ``_maybe_enqueue_final_replications`` is what stops it repeating work).
+        self._final_replication_passes = 0
         initialized = self.audit.start_activity(
             0,
             "initializing",
@@ -1055,7 +1211,7 @@ class ResearchLoop:
             metrics = outcome.metrics
             # T11: B's worker reports the checkpoint by its absolute path. Recorded
             # repo-relative, because this string is copied onto
-            # ``state.best_artifact_path`` (``policy.py:280``) and from there into
+            # ``state.best_artifact_path`` (``policy.py:439``) and from there into
             # ``state.json``, ``best.json`` and ``summary.json`` — files that are
             # committed and read back on another machine.
             artifact = (
@@ -1092,6 +1248,26 @@ class ResearchLoop:
             node,
             self.state.baseline_primary,
         )
+        # Pre-registration ledger. Recorded *before* ``observe_success`` so the
+        # reference is the incumbent the Researcher was actually shown when it
+        # predicted (``_state_summary`` renders ``state.best_metrics``), not the
+        # one this very node may be about to become. Only scored nodes whose
+        # decision carried a prediction produce a pair — an unscored candidate has
+        # no realized delta, and an un-pre-registered one has nothing to score.
+        # Contained: a calibration record is worth strictly less than the
+        # iteration it would otherwise cost.
+        try:
+            self._record_calibration(iteration, decision, node)
+        except Exception as exc:
+            self.audit.append_jsonl(
+                self.run_dir / "research_memory.jsonl",
+                {
+                    "type": "calibration_error",
+                    "iteration": iteration,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
         if status == "success":
             self.policy.observe_success(self.state, node)
             self._note_official_convergence()
@@ -1213,6 +1389,439 @@ class ResearchLoop:
             replicated_from=source.experiment_id,
         )
 
+    def _may_stop_for_convergence(self) -> bool:
+        """Is the run allowed to end on ``converged`` yet? (the breadth guarantee)
+
+        ``policy.coverage_complete`` states the guarantee — every family in
+        ``policy._coverage_families()`` has at least one successful node — but
+        nothing called it, so a run could satisfy the epsilon/N ratchet while
+        several families had never been tried once and still report
+        ``stop_reason="converged"``. A converged verdict over one family is not
+        a verdict about the search space, so the claim was unsupported.
+
+        Reconnected here rather than inside ``should_stop`` because it is a
+        property of *this run's budget*, not of the policy: coverage stops being
+        reachable once the proposal budget is spent, and at that point the loop
+        must be allowed to finish. That second clause is also what bounds this —
+        every pass that is not a replication charges a proposal
+        (``run()``: ``proposal_attempts += 1``), so an unreachable family can
+        cost at most the remaining proposal budget, never a spin.
+
+        The other stop reasons are untouched: a wall-clock, attempt, candidate or
+        proposal budget still ends the run immediately, covered or not.
+        """
+        return coverage_complete(self.state) or (
+            self.state.proposal_attempts >= self.max_proposals
+        )
+
+    def _best_group(self, state: RunState) -> list[ExperimentNode] | None:
+        """The replication group with the highest **median** primary (P2).
+
+        The old rule here was a global argmax over every successful node, which
+        made replication actively harmful to the selection: scheduling two extra
+        seeds of a good config added two more draws to the maximum, so the
+        submission rode the luckiest seed rather than the best configuration.
+        With sigma_seed ~= 9e-4 and 6-10 scored nodes, report 6 puts that
+        inflation at +0.0011 to +0.0014 of validation score that does not
+        transfer to test.
+
+        The median is the fix and it costs nothing: replicas of one config are a
+        single result with several draws, so they are pooled and counted once.
+        An unreplicated node is a group of one, whose median is its own score —
+        so a run with no replications selects exactly what the argmax did.
+
+        Ties go to the earliest group: ``_replication_groups`` is insertion
+        ordered and ``max`` keeps the first maximal element.
+        """
+        groups = _replication_groups(state)
+        if not groups:
+            return None
+        return max(groups, key=_group_median_primary)
+
+    def _submission_candidate(self, state: RunState) -> ExperimentNode | None:
+        """The node whose artifact the gate submits — was ``_argmax_candidate``.
+
+        ``state.best_*`` is margin-gated on purpose (``policy.DEFAULT_PROMOTION_MARGIN``):
+        the margin is measured against the incumbent, so a monotone chain of sub-margin
+        improvements (0.6030 -> 0.6039 -> 0.6048 ...) never promotes and the ledger's
+        incumbent can end a run measurably below a candidate the run actually measured.
+        That is the right rule for what the run *claims* and for which family it
+        exploits — it is what stops ``best_*`` being a maximum over noise — and the
+        wrong one for what it *submits*, because the organizers score the file.
+
+        So the two are split: the claims keep the margin, and the gate takes the
+        best measured *configuration* (``_best_group``, P2) rather than the best
+        single draw. The group's **original** node is what is returned, because
+        that is the artifact directory the replicas were copied from and the one
+        certain to exist. Derived from ``state.nodes`` at gate time — no new state
+        field, nothing persisted.
+        """
+        group = self._best_group(state)
+        return None if group is None else _group_original(group)
+
+    # ----------------------------------------------------------------- P1 --
+    def _member_scores_path(self, node: ExperimentNode) -> Path | None:
+        """Where a successful node's validated ``test_scores.npy`` lives.
+
+        ``ExperimentOutcome`` carries the worker's own ``test_scores_path``
+        (``types.py:53``, set from ``run_candidate.py:128``), but that field is
+        recorded on the *ledger* line rather than on ``ExperimentNode`` — the
+        node keeps ``artifact_path``, which is ``<artifact_dir>/model.npz`` in the
+        same directory the worker saved the scores into. That sibling is the whole
+        linkage: ``run_candidate.py:102,128`` is the only writer of the file in the
+        repo and it writes both into the same ``artifact_dir``, so a candidate
+        workspace never holds one and looking there would be a dead branch.
+        """
+        base = node.artifact_path
+        if not base:
+            return None
+        directory = _resolve_repo_path(str(base))
+        if str(base).endswith(".npz"):
+            directory = directory.parent
+        path = directory / "test_scores.npy"
+        return path if path.is_file() else None
+
+    def _ensemble_members(
+        self,
+        state: RunState,
+        expected_rows: int | None,
+        floor: float | None,
+        epsilon: float,
+    ) -> list[tuple[ExperimentNode, Path, np.ndarray]]:
+        """Every successful node whose test scores are on disk, usable and good.
+
+        ``expected_rows`` is the length of the node the run would have submitted
+        on its own. A member of any other length is dropped rather than
+        reconciled: the gate validates the submitted vector against
+        ``load_test_meta`` (``gate.py:141-152``), so ensembling must never be able
+        to turn a passing gate into ``bad_test_scores``.
+
+        ``floor`` is report 6's membership guard: *"only ensemble members within
+        epsilon of the argmax on validation"*. Equal weights make a member's vote
+        independent of its quality, so at the K = 2-3 that P3's own rationale says
+        is the common case a weak-but-successful node takes a third to a half of
+        the vote — a loss that dwarfs the +0.0003 the ensemble is chasing. On the
+        run observed in report 6 the filter is a no-op (all seven nodes span
+        0.0011, inside ``epsilon = 0.002``), which is exactly what makes it cheap
+        insurance. Members are still drawn from every group rather than only the
+        winning one: report 6's 6a puts the gain at ``1 - rho``, so a member from
+        another family is worth more than another seed of the same config.
+        """
+        members: list[tuple[ExperimentNode, Path, np.ndarray]] = []
+        for node in state.nodes:
+            if node.status != "success" or not node.metrics:
+                continue
+            if floor is not None and float(node.metrics["primary"]) < floor - epsilon:
+                continue
+            path = self._member_scores_path(node)
+            if path is None:
+                continue
+            try:
+                scores = np.load(path)
+            except (OSError, ValueError):
+                continue
+            scores = np.asarray(scores, dtype=np.float64)
+            if scores.ndim != 1 or scores.size == 0 or not np.all(np.isfinite(scores)):
+                continue
+            if expected_rows is not None and scores.size != expected_rows:
+                continue
+            members.append((node, path, scores))
+        return members
+
+    def _ensemble_submission(
+        self, candidate: ExperimentNode | None
+    ) -> tuple[Path, int] | None:
+        """Write the rank-mean ensemble; return its ``node_dir`` and member count.
+
+        ``None`` when fewer than two members qualify, which leaves the single-node
+        path of the previous behaviour untouched byte for byte — including the
+        case where the quality floor leaves only one.
+
+        The layout is chosen so B's ``gate.py`` needs no edit: it looks for
+        ``node_dir/test_scores.npy`` first and
+        ``run_dir/artifacts/<node_dir.name>/test_scores.npy`` second
+        (``gate.py:129-132``), and writing the ensemble to
+        ``<run_dir>/artifacts/_ensemble/test_scores.npy`` satisfies *both* with
+        one file. The manifest sits beside it so the submitted vector can be
+        reproduced from the run directory alone.
+        """
+        reference = None
+        if candidate is not None:
+            path = self._member_scores_path(candidate)
+            if path is not None:
+                try:
+                    reference = int(np.asarray(np.load(path)).size)
+                except (OSError, ValueError):
+                    reference = None
+        floor = max(scored_primaries(self.state), default=None)
+        members = self._ensemble_members(
+            self.state, reference, floor, float(self.convergence["epsilon"])
+        )
+        if len(members) < 2:
+            return None
+        ensemble = _rank_mean([scores for _, _, scores in members])
+        directory = self.run_dir / "artifacts" / ENSEMBLE_DIR_NAME
+        directory.mkdir(parents=True, exist_ok=True)
+        temporary = directory / "test_scores.npy.tmp"
+        with temporary.open("wb") as handle:
+            np.save(handle, ensemble)
+        temporary.replace(directory / "test_scores.npy")
+        self.audit.write_json_atomic(
+            directory / "ensemble_manifest.json",
+            {
+                "method": "rank_mean",
+                "weights": "equal",
+                "n_members": len(members),
+                "rows": int(ensemble.size),
+                "members": [
+                    {
+                        "experiment_id": node.experiment_id,
+                        "family": node.family,
+                        "primary": float(node.metrics["primary"]),
+                        "test_scores_path": _repo_relative(path),
+                    }
+                    for node, path, _ in members
+                ],
+            },
+        )
+        return directory, len(members)
+
+    # ----------------------------------------------------------------- P3 --
+    def _maybe_enqueue_final_replications(self) -> bool:
+        """Convert leftover budget into seeds of the top-2 configs (P3).
+
+        The last full run used 33 of 360 minutes and 177k of 600k tokens and
+        stopped on ``converged``: wall clock was never the binding constraint,
+        the stop rule was. Meanwhile ``policy.observe_success`` schedules replicas
+        only for a gain of more than ``epsilon`` **over the baseline**, and the
+        whole observed result band is +0.0003..+0.0027 — so most runs reach the
+        gate with no replication group at all, which leaves P2 with nothing to
+        take a median of and P1 with correlated members. Re-seeding the two best
+        configs is the highest-value use of the budget that is left, because
+        further exploration is measured at near zero while variance reduction on
+        a one-shot submission is a sure thing.
+
+        Returns whether anything was enqueued; ``run()`` continues the loop when
+        it did. The eventual stop is still ``converged`` — this only defers it —
+        but only because the queue is trimmed to ``room`` below. The wall clock is
+        the one budget that cannot be reserved against, so that caveat is real;
+        the two counted budgets are.
+
+        Four things bound it: the session attempts guard, the per-seed check
+        against nodes that already exist (so a second pass over the same two
+        configs enqueues nothing and the run stops), the budget fractions, and
+        that room.
+        """
+        if self._final_replication_passes >= 2:
+            return False
+        # Each drained task charges an iteration *and* a training attempt, and
+        # ``run()`` checks both budgets **before** the convergence branch — so
+        # enqueue at most what leaves one of each free for the pass that takes the
+        # ``converged`` exit. Without that reserved pass the run ends on
+        # ``candidate_budget_reached`` (or ``training_attempt_budget_reached``)
+        # with tasks still pending, which is a different stop reason rather than
+        # the deferral this is meant to be.
+        room = int(self.budgets["max_iterations"]) - self.state.iteration_count - 1
+        if self.max_training_attempts is not None:
+            room = min(
+                room, self.max_training_attempts - self.state.training_attempts - 1
+            )
+        if room <= 0:
+            return False
+        max_wall_clock = float(self.budgets["max_wall_clock_seconds"])
+        if self.max_total_tokens <= 0 or max_wall_clock <= 0:
+            return False
+        # Deliberately kept even though ``_replication`` makes no provider call
+        # (it synthesises its own decisions): report 6's P3 conditions the
+        # re-seeding on *both* budgets, and a run near its token ceiling is one
+        # whose remaining passes should stay cheap.
+        if self.state.token_usage.total_tokens >= 0.6 * self.max_total_tokens:
+            return False
+        if self._elapsed() >= 0.5 * max_wall_clock:
+            return False
+        seeds = self.policy.replication_seeds
+        if not seeds:
+            return False
+        ranked = sorted(_replication_groups(self.state), key=_group_median_primary, reverse=True)
+        pending = {
+            (item.get("source_experiment"), item.get("seed"))
+            for item in self.state.pending_replications
+        }
+        known = {node.experiment_id for node in self.state.nodes}
+        enqueued: list[dict[str, Any]] = []
+        for group in ranked[:2]:
+            source = _group_original(group)
+            # A replication rebuilds the candidate from its workspace
+            # (``_replication``: manifest, candidate.py, test_candidate.py). A
+            # source whose workspace is gone cannot be replicated, and enqueuing
+            # it would turn a converged run into ``harness_error_breaker`` at the
+            # very last step, so it is skipped here instead.
+            if not source.candidate_dir:
+                continue
+            workspace = _resolve_repo_path(str(source.candidate_dir))
+            if not all(
+                (workspace / name).is_file()
+                for name in ("manifest.json", "candidate.py", "test_candidate.py")
+            ):
+                continue
+            for seed in seeds:
+                # Same id ``_replication`` derives; it returns early on a
+                # collision, so enqueuing one would cost a pass and produce
+                # nothing.
+                if f"{source.experiment_id[:65]}_seed{seed}" in known:
+                    continue
+                if (source.experiment_id, seed) in pending:
+                    continue
+                enqueued.append({"source_experiment": source.experiment_id, "seed": seed})
+        if not enqueued:
+            return False
+        # Only what the counted budgets can actually run (see the docstring): the
+        # seeds are ordered best-config-first, so a trim drops the least valuable
+        # tasks.
+        enqueued = enqueued[:room]
+        self.state.pending_replications.extend(enqueued)
+        self._final_replication_passes += 1
+        self.audit.append_jsonl(
+            self.run_dir / "research_memory.jsonl",
+            {
+                "type": "final_replications_enqueued",
+                "pass": self._final_replication_passes,
+                "tasks": enqueued,
+                "token_usage": self.state.token_usage.total_tokens,
+                "max_total_tokens": self.max_total_tokens,
+                "elapsed_seconds": self._elapsed(),
+                "max_wall_clock_seconds": max_wall_clock,
+            },
+        )
+        self._save()
+        return True
+
+    def _record_calibration(
+        self, iteration: int, decision: ResearchDecision, node: ExperimentNode
+    ) -> None:
+        """Pair this candidate's pre-registered prediction with what it measured.
+
+        Silent no-op in the two cases that are not failures: the candidate was not
+        scored (no realized delta exists), or the decision carried no
+        ``predicted_delta`` (nothing was pre-registered). The reference is the
+        incumbent's primary — the quantity the prompt asks the Researcher to
+        predict against — falling back to the baseline only if there is somehow no
+        incumbent, which is the same number ``__init__`` seeds ``best_metrics``
+        with on a fresh run.
+        """
+        predicted = decision.predicted_delta
+        if predicted is None or node.status != "success" or not node.metrics:
+            return
+        best = self.state.best_metrics or {}
+        reference = float(best.get("primary", self.state.baseline_primary))
+        self.state.calibration.append(
+            {
+                "iteration": iteration,
+                "experiment_id": node.experiment_id,
+                "predicted_delta": float(predicted),
+                "realized_delta": float(node.metrics["primary"]) - reference,
+                "reference_primary": reference,
+            }
+        )
+
+    def _record_run_end_error(self, kind: str, exc: Exception) -> None:
+        """Log a contained run-end fault where ``render_reports``' faults go."""
+        self.audit.append_jsonl(
+            self.run_dir / "research_memory.jsonl",
+            {"type": kind, "error": str(exc), "error_type": type(exc).__name__},
+        )
+
+    def _append_campaign_digest(self, summary: dict[str, Any]) -> bool:
+        """Add this run's five-line digest to the cross-run campaign log.
+
+        Idempotent per run id (``append_campaign_digest``), so a resumed run that
+        reaches the end a second time refreshes nothing and duplicates nothing.
+        The falsified list is ``falsified.flat_families`` -- the same helper that
+        renders ``falsified.md`` -- so the two artifacts cannot disagree about
+        what this run ruled out. The score bands are recomputed here, in the one
+        line-oriented shape the digest needs.
+        """
+        baseline = float(self.state.baseline_primary)
+        margin = self.policy.promotion_margin
+        bands: dict[str, list[float]] = {}
+        for node in self.state.nodes:
+            if node.status == "success" and node.metrics and "primary" in node.metrics:
+                bands.setdefault(node.family, []).append(float(node.metrics["primary"]))
+        families = (
+            "; ".join(
+                f"{name} {min(scores):.6f}-{max(scores):.6f} (n={len(scores)}, "
+                f"best d={max(scores) - baseline:+.6f})"
+                for name, scores in sorted(bands.items())
+            )
+            or "none scored"
+        )
+        best_primary = (self.state.best_metrics or {}).get("primary")
+        if best_primary is None:
+            verdict = "no best recorded"
+        else:
+            delta = float(best_primary) - baseline
+            verdict = (
+                f"best {self.state.best_experiment_id} primary {float(best_primary):.6f} "
+                f"(d={delta:+.6f} vs baseline {baseline:.6f}); margin {margin:.4f} "
+                f"{'CLEARED' if delta >= margin else 'NOT cleared'}"
+            )
+        flat = flat_families(self.state, promotion_margin=margin)
+        digest = campaign_digest(
+            self.state.run_id,
+            families=families,
+            verdict=verdict,
+            falsified=", ".join(flat) or "none",
+            note=(
+                f"{sum(len(scores) for scores in bands.values())} scored / "
+                f"{self.state.iteration_count} iterations; "
+                f"stop_reason={self.state.stop_reason}; "
+                f"calibration_n={(summary.get('calibration') or {}).get('n', 0)}"
+            ),
+        )
+        return append_campaign_digest(self.campaign_log_path, self.state.run_id, digest)
+
+    def _best_replication(self) -> dict[str, Any] | None:
+        """Spread of the best experiment's replicate seeds, or ``None``.
+
+        ``summary["best"]`` reports a single draw. When that draw was replicated
+        (``replication_seeds``, scheduled by ``policy.observe_success``), the
+        run holds two or three measurements of the *same* configuration and
+        reporting only the largest of them is the same selection bias the
+        promotion margin exists to stop. So the summary also carries the group:
+        how many measurements there are, their median, and their spread — which
+        is the number that says whether the headline delta is bigger than the
+        run's own noise.
+
+        Grouped by the replication *root* rather than by the best id, because
+        the best node may itself be a replica: ``_replication`` records the
+        source in ``replicated_from`` (:1328), so the root is that field when it
+        is set and the node's own id otherwise. Purely a reporting function —
+        replication scheduling is unchanged.
+        """
+        best_id = self.state.best_experiment_id
+        if not best_id:
+            return None
+        best_node = next(
+            (node for node in self.state.nodes if node.experiment_id == best_id), None
+        )
+        if best_node is None:
+            return None
+        root = best_node.replicated_from or best_node.experiment_id
+        primaries = sorted(
+            float(node.metrics["primary"])
+            for node in self.state.nodes
+            if node.status == "success"
+            and node.metrics
+            and (node.experiment_id == root or node.replicated_from == root)
+        )
+        if len(primaries) < 2:
+            return None
+        return {
+            "n": len(primaries),
+            "median_primary": median(primaries),
+            "spread": primaries[-1] - primaries[0],
+        }
+
     def run(self) -> Path:
         max_iterations = int(self.budgets["max_iterations"])
         max_wall_clock = float(self.budgets["max_wall_clock_seconds"])
@@ -1231,7 +1840,17 @@ class ResearchLoop:
             if self.state.iteration_count >= max_iterations:
                 self.state.stop_reason = "candidate_budget_reached"
                 break
-            if self.policy.should_stop(self.state):
+            if self.policy.should_stop(self.state) and self._may_stop_for_convergence():
+                # P3: the run is entitled to stop, but budget it will otherwise
+                # never spend buys measurements of the configs it already has.
+                # ``should_stop`` is False while replications are pending, so the
+                # loop drains them and returns here. The stop it eventually takes
+                # is still ``converged`` *because* the enqueue is trimmed to the
+                # iterations left (``_maybe_enqueue_final_replications``): an
+                # untrimmed queue would exit through the ``max_iterations`` check
+                # above instead, with tasks still pending.
+                if self._maybe_enqueue_final_replications():
+                    continue
                 self.state.stop_reason = "converged"
                 break
             # Bound before the try so the error handler can always name the pass,
@@ -1260,7 +1879,11 @@ class ResearchLoop:
                     lambda fb, seq=0: self.roles.research(
                         self.state,
                         iteration,
-                        required_family(self.state, float(self.convergence["epsilon"])),
+                        required_family(
+                            self.state,
+                            float(self.convergence["epsilon"]),
+                            self.policy.promotion_margin,
+                        ),
                         feedback=fb,
                         sequence=seq,
                         eda_report=eda_report,
@@ -1381,6 +2004,7 @@ class ResearchLoop:
         epsilon = float(self.convergence["epsilon"])
         patience = int(self.convergence["patience"])
         official_sequence = [self.state.baseline_primary] + scored_primaries(self.state)
+        best_group = self._best_group(self.state)
         summary = {
             "run_id": self.state.run_id,
             "status": self.state.status,
@@ -1400,11 +2024,53 @@ class ResearchLoop:
                 "artifact_path": self.state.best_artifact_path,
                 "candidate_dir": self.state.best_candidate_dir,
             },
+            # `null` when the best draw was never replicated — the honest answer
+            # to "how repeatable is this?" is then "unknown", not an invented
+            # zero spread. Outside `best` so `best.json`, which the reports and
+            # the gate read, keeps exactly its shape.
+            "best_replicated": self._best_replication(),
+            # The margin-gated `best` above is what the run *claims*; this is the
+            # largest primary it actually measured. Kept raw — a maximum over every
+            # draw, replicas included — for transparency, and reported beside the
+            # claim so the gap the margin creates is visible rather than silent.
+            "max_scored_primary": max(scored_primaries(self.state), default=None),
+            # P2: what the gate below actually selects on. The two differ exactly
+            # when the largest draw is a lucky replica of a config whose median is
+            # not the best — the selection bias replication used to *add*.
+            "best_group_median_primary": (
+                None if best_group is None else _group_median_primary(best_group)
+            ),
         }
+        # Three run-end extras, each behind its own containment for the same
+        # reason ``render_reports`` is: every artifact they read is already
+        # final, and none of them is worth the run's ``summary.json``. They are
+        # separate ``try`` blocks on purpose — a fault in the calibration
+        # arithmetic must not also cost the negative-result artifact.
+        try:
+            summary["calibration"] = _calibration_summary(self.state.calibration, epsilon)
+        except Exception as exc:
+            summary["calibration"] = None
+            self._record_run_end_error("calibration_error", exc)
+        try:
+            summary["falsified_path"] = _repo_relative(
+                write_falsified(
+                    self.run_dir,
+                    self.state,
+                    promotion_margin=self.policy.promotion_margin,
+                    epsilon=epsilon,
+                )
+            )
+        except Exception as exc:
+            summary["falsified_path"] = None
+            self._record_run_end_error("falsified_error", exc)
+        try:
+            self._append_campaign_digest(summary)
+        except Exception as exc:
+            self._record_run_end_error("campaign_log_error", exc)
         # I-1. Two separate concerns, both the loop's and neither the gate's.
         #
         # ``best_candidate_dir`` is stored **repo-relative** (``_execute`` at
-        # :363, copied onto the state by ``policy.py:87``), so the old
+        # :1088, copied onto the state by ``policy.py:440``), so the old
         # ``Path(...)`` resolved it against the *process* working directory and
         # the gate looked for ``test_scores.npy`` under wherever the run was
         # launched from. ``_resolve_repo_path`` is this module's own resolver —
@@ -1417,11 +2083,52 @@ class ResearchLoop:
         # ``summary.json`` is the one file the organizers read, and its survival
         # must not depend on another module keeping that promise. Keyword
         # arguments so a signature change cannot silently reorder the four paths.
-        node_dir = (
-            _resolve_repo_path(self.state.best_candidate_dir)
-            if self.state.best_candidate_dir
-            else self.run_dir
+        #
+        # The submitted candidate is the best measured *configuration*, not the
+        # margin-gated incumbent (see ``_submission_candidate``): the margin
+        # protects the *claim*, and submitting a candidate measurably worse than
+        # the best one measured would be paying its cost twice.
+        # ``best_candidate_dir`` stays the fallback for a node that carries no
+        # candidate directory of its own.
+        candidate = self._submission_candidate(self.state)
+        submission_dir = (
+            candidate.candidate_dir if candidate is not None else None
+        ) or self.state.best_candidate_dir
+        single_node_dir = (
+            _resolve_repo_path(submission_dir) if submission_dir else self.run_dir
         )
+        # P1: every successful node already wrote a validated, row-order-checked
+        # ``test_scores.npy``, so the rank-mean of them costs no training at all
+        # — measured +0.00024 over the best single member on validation, and it
+        # divides the independent part of the submitted draw's sigma by sqrt(K),
+        # which is the larger half of the prize for a one-shot submission. Fewer
+        # than two members on disk leaves the single-node path exactly as it was.
+        #
+        # Behind its own ``try`` for the same reason as the gate call below, and a
+        # stronger one: this is A's *own* code doing filesystem work (mkdir,
+        # np.save, replace, write_json_atomic) between the state being final and
+        # ``summary.json`` being written, so an OSError here would cost the run
+        # summary.json, best.json, results.json and the reports together. A run
+        # that cannot build an ensemble submits what it always did.
+        try:
+            ensemble = self._ensemble_submission(candidate)
+        except Exception as exc:
+            ensemble = None
+            self.audit.append_jsonl(
+                self.run_dir / "research_memory.jsonl",
+                {
+                    "type": "ensemble_error",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
+        node_dir = single_node_dir if ensemble is None else ensemble[0]
+        summary["submission"] = {
+            "method": "single" if ensemble is None else "rank_mean_ensemble",
+            # 0 only for a run with no candidate directory at all, where the gate
+            # is handed the run directory and will report ``missing_test_scores``.
+            "n_members": (1 if submission_dir else 0) if ensemble is None else ensemble[1],
+        }
         try:
             gate_result = run_gate(
                 run_dir=self.run_dir,
@@ -1429,6 +2136,32 @@ class ResearchLoop:
                 data_dir=self.data_dir,
                 kit_dir=REPO_ROOT / "kuairand-starter-kit",
             )
+            # Never let the new path cost the run its submission: if the gate
+            # refuses the ensemble for any reason, fall back to the single node
+            # it would have submitted before P1 existed. ``gate.py`` writes its
+            # ``gate_done.json`` marker on success only, so the retry is a real
+            # second attempt rather than the refusal read back.
+            #
+            # Pre-existing and worth knowing: that same marker makes ``run_gate``
+            # short-circuit on a *resume* (``gate.py:118-127``), so a run resumed
+            # across an already-successful gate rebuilds the ensemble file but
+            # keeps the ``submission.csv`` it already had. Not introduced here and
+            # not fixed here — it is B's file — so do not resume across a
+            # successful gate and expect the submission to change.
+            if gate_result.status != "ok" and node_dir != single_node_dir:
+                gate_result = run_gate(
+                    run_dir=self.run_dir,
+                    node_dir=single_node_dir,
+                    data_dir=self.data_dir,
+                    kit_dir=REPO_ROOT / "kuairand-starter-kit",
+                )
+                summary["submission"] = {
+                    "method": "single",
+                    # Same rule as the assignment above: 0 when there is no
+                    # candidate directory to fall back to.
+                    "n_members": 1 if submission_dir else 0,
+                    "ensemble_rejected": True,
+                }
             summary["gate"] = asdict(gate_result)
         except Exception as exc:
             # ``reason`` is not in the brief's literal dict, but B's gate sets one

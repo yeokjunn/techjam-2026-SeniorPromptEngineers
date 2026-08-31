@@ -71,6 +71,41 @@ class EDAArtifact:
 
 
 @dataclass(frozen=True)
+class LLMCall:
+    """One recorded model call from ``runs/<id>/passes/*.json``."""
+
+    iteration: int
+    role: str
+    family: str
+    sequence: int
+    recorded_at: str
+    model: str
+    latency_seconds: float
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cached_tokens: int = 0
+    retries: int = 0
+    gist: str = ""
+    prompt: str = ""
+    data: dict[str, Any] = field(default_factory=dict)
+    sources: tuple[dict[str, str], ...] = ()
+    path: Path | None = None
+
+
+@dataclass(frozen=True)
+class MemoryEvent:
+    """A typed event from ``research_memory.jsonl`` (retries and failures)."""
+
+    kind: str
+    iteration: int
+    label: str = ""
+    error: str = ""
+    error_type: str | None = None
+    reprompt: int = 0
+
+
+@dataclass(frozen=True)
 class DebuggerEvent:
     iteration: int
     stage: str
@@ -94,6 +129,8 @@ class IterationSnapshot:
     metrics: dict[str, float] | None = None
     duration_seconds: float | None = None
     repairs: int = 0
+    failure_class: str | None = None
+    error: str | None = None
     change_summary: ChangeSummary | None = None
     agent_notes: dict[str, Any] = field(default_factory=dict)
     candidate_dir: str | None = None
@@ -134,3 +171,16 @@ class RunSnapshot:
     live_role_passes: tuple[RolePass, ...] = ()
     live_eda: EDAArtifact | None = None
     debugger_events: tuple[DebuggerEvent, ...] = ()
+    # Honest-story fields recorded by the harness (summary.json is written at
+    # completion, so every one of these may legitimately be None mid-run).
+    converged_official: bool | None = None
+    converged_official_iteration: int | None = None
+    max_scored_primary: float | None = None
+    best_replicated: dict[str, Any] | None = None
+    interventions: tuple[dict[str, Any], ...] = ()
+    interventions_recorded: bool = False
+    baseline_selection: dict[str, Any] | None = None
+    data_card_markdown: str | None = None
+    token_cap: int | None = None
+    llm_calls: tuple[LLMCall, ...] = ()
+    memory_events: tuple[MemoryEvent, ...] = ()

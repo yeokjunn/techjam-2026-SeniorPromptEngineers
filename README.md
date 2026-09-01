@@ -300,19 +300,13 @@ Install the optional UI dependencies:
 python -m pip install -r requirements-ui.txt
 ```
 
-Optionally generate the aggregate-only train/validation EDA profile:
-
-```bash
-python -m src.ui.profile_data --config configs/ui.json
-```
-
 Then launch the dashboard from the repository root:
 
 ```bash
 python -m streamlit run streamlit_app.py
 ```
 
-Launching the nested file directly is also supported:
+OR Launching the nested file directly is also supported:
 
 ```bash
 python -m streamlit run src/ui/app.py

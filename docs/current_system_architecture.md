@@ -2,9 +2,8 @@
 
 Generated on 2026-08-31 from the current repository implementation.
 
-Style-matched editable diagram: `docs/architecture_diagram_current_style.svg`
-
-Style-matched presentation PNG: `docs/architecture_diagram_current_style.png`
+Rendered diagram: [`architecture_diagram.png`](architecture_diagram.png) (the same image the
+2-minute deck shows). The mermaid source below is the editable form.
 
 ## High-Level Architecture
 

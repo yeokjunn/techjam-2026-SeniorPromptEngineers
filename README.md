@@ -514,6 +514,11 @@ rationale, evidence links, and code diff).
 
 ## Architecture
 
+![Agent architecture: controller, LLM roles, sandbox, evaluation and audit trail](docs/architecture_diagram.png)
+
+The same diagram in editable mermaid form, with the innovation notes, is in
+[`docs/current_system_architecture.md`](docs/current_system_architecture.md).
+
 ```text
 Conductor: research_controller.ResearchLoop
   ├─ Steward: official.load_train_valid + datacard.render_data_card

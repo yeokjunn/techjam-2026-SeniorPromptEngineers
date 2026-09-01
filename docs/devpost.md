@@ -13,8 +13,8 @@ Everything that touches correctness lives in trusted code the LLM can't modify: 
 Early on we noticed our results clustered suspiciously close to the baseline, so we investigated instead of shipping the best number we'd seen. It turned out identical experiments with identical seeds were scoring ±0.001 apart (a Python hash-randomization bug in our sampler), and our loop was keeping the max of dozens of noisy tries. The expected max of pure noise was almost exactly the "improvement" we'd been reporting. That was uncomfortable, and we rebuilt around it:
 
 - The harness now measures its own noise floor and only promotes a result that clears it. Promising candidates get replicated across seeds, and the summary reports the honest claim, the raw max, and the spread separately.
-- The **Researcher agent**'s predictions get scored. On our evidence run it landed within epsilon 75% of the time, with a slight optimism bias, which we report rather than hide.
-- Each run writes a `falsified.md` listing what was tried and measured flat. Each run also leaves a short digest that the next run reads; we watched the following run skip every dead end and go straight for the one family nobody had explored.
+- Nothing picks the next experiment by vibes. The search policy scores every frontier candidate with a closed-form expected-improvement acquisition against the incumbent plus its noise margin, then adjusts for uncertainty, novelty, the family's observed failure rate and expected cost (`src/agent/policy.py`). All four terms are written into the run's audit files, so the decision to try one branch over another can be replayed after the fact.
+- Dead ends are kept, not quietly dropped. Findings persist to a discovery store across runs (`research/discoveries/discoveries.json`, 78 records, 19 with a measured delta and 6 of those negative -- the multi-task attempt sits there at -0.0196), and the Researcher reads it before proposing, so a later run inherits what an earlier one falsified. Per-iteration hypothesis, critic verdict and outcome are in [`runs/final/journal.md`](../runs/final/journal.md).
 - The final submission is a blend of the near-best candidates, since that's the one place a free half-point of variance reduction matters.
 
 ## Results
@@ -33,7 +33,7 @@ Honest context: these gains look small until you know that published models on K
 
 ## Tools, APIs, libraries, data
 
-- **Tools:** Git/GitHub with per-owner branches and reviewed PRs, VS Code, pytest/unittest run with `-W error` (400+ tests), Playwright for dashboard QA, and a read-only Streamlit dashboard that shows the run's story, every LLM call, and the audit trail.
+- **Tools:** Git/GitHub with per-owner branches and reviewed PRs, VS Code, pytest/unittest run with `-W error` (291 tests, 742 checks counting subtests), Playwright for dashboard QA, and a read-only Streamlit dashboard that shows the run's story, every LLM call, and the audit trail.
 - **APIs:** DeepSeek (`deepseek-v4-flash`) over its OpenAI-compatible chat API; the exact config is frozen in [`runs/final/run_config.json`](../runs/final/run_config.json). The endpoint ignores server-side structured outputs, so we validate JSON schemas client-side and re-prompt on bad replies. The OpenAI Responses API is supported too. Offline, a scripted provider stands in for the model, so the whole test suite runs without a key.
 - **Libraries:** NumPy, the `openai` SDK, `jsonschema`, `python-dotenv`, and the standard library (`ast` for the code-safety validator, `subprocess` for the sandbox). No pandas, PyTorch, or scikit-learn in the training path; pandas and Streamlit only in the dashboard.
 - **Data:** the organizer-provided KuaiRand-Pure dataset and starter kit, nothing external, no manual labels. All learned features come from the train window only: we audited the platform's pre-aggregated video statistics file, found its window spans the test dates, and dropped it even though it scored better.

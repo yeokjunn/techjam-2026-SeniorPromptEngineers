@@ -289,7 +289,7 @@ There is not yet an `intervene` CLI. Operator actions must be recorded manually;
 adding an append-only intervention command and derived counter is listed below as
 a limitation.
 
-## Run the read-only research dashboard
+## Run the frontend research dashboard
 
 For the complete two-terminal UI and live-agent walkthrough, see
 [`docs/UI_QUICKSTART.md`](docs/UI_QUICKSTART.md).
